@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun NumberFinderApp(modifier: Modifier = Modifier) {
     var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Phone Lookup", "Username & Email OSINT")
+    val tabs = listOf("Phone Lookup", "Username & Email OSINT", "GitHub OSINT")
 
     Column(modifier = modifier.fillMaxSize()) {
         SecondaryTabRow(selectedTabIndex = selectedTabIndex) {
@@ -58,6 +58,7 @@ fun NumberFinderApp(modifier: Modifier = Modifier) {
         when (selectedTabIndex) {
             0 -> PhoneLookupTab()
             1 -> UsernameAndEmailOsintTab()
+            else -> GitHubOsintTab()
         }
     }
 }
@@ -70,6 +71,10 @@ fun PhoneLookupTab() {
     var searchResults by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
     var hasSearched by remember { mutableStateOf(false) }
+    var spamReport by remember { mutableStateOf<SpamReport?>(null) }
+    var isSpamScanning by remember { mutableStateOf(false) }
+    var reputationReports by remember { mutableStateOf<List<ReputationReport>>(emptyList()) }
+    var isReputationScanning by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -89,7 +94,7 @@ fun PhoneLookupTab() {
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Text(
-            text = "Integrated tools: PhoneInfoga, Phonia, IntelBase & DuckDuckGo",
+            text = "Integrated tools: PhoneInfoga, Phonia, tellows & live web search",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -124,7 +129,11 @@ fun PhoneLookupTab() {
                         resultNumber = phoneNumberInput
                         hasSearched = true
                         isSearching = true
+                        isSpamScanning = true
                         searchResults = emptyList()
+                        spamReport = null
+                        reputationReports = emptyList()
+                        isReputationScanning = true
 
                         val normalized = PhoneNumberUtils.normalize(phoneNumberInput)
                         val localFormat = if (normalized.startsWith("+44")) "0" + normalized.removePrefix("+44") else normalized
@@ -133,6 +142,16 @@ fun PhoneLookupTab() {
                             val items = SearchRepository.searchWeb(normalized, localFormat)
                             searchResults = items
                             isSearching = false
+                        }
+
+                        coroutineScope.launch {
+                            spamReport = SpamScanner.lookup(normalized)
+                            isSpamScanning = false
+                        }
+
+                        coroutineScope.launch {
+                            reputationReports = PhoneReputation.lookup(normalized)
+                            isReputationScanning = false
                         }
                     }
                 },
@@ -148,6 +167,10 @@ fun PhoneLookupTab() {
                     hasSearched = false
                     searchResults = emptyList()
                     isSearching = false
+                    spamReport = null
+                    isSpamScanning = false
+                    reputationReports = emptyList()
+                    isReputationScanning = false
                 },
                 modifier = Modifier.weight(1f).padding(start = 8.dp)
             ) {
@@ -192,6 +215,101 @@ fun PhoneLookupTab() {
                     ResultRow("Time Zone", timezone)
                     if (isUk && areaInfo != null) {
                         ResultRow("UK Region", areaInfo)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Live Spam / Caller Reputation Scan (tellows free JSON API, no key)
+            OsintToolSectionCard(
+                toolTitle = "Live Spam Database Scan",
+                subtitle = "Real-time crowd-sourced caller reputation from tellows",
+                containerColor = MaterialTheme.colorScheme.errorContainer
+            ) {
+                when {
+                    isSpamScanning -> {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Querying tellows caller database...", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    spamReport != null -> {
+                        val report = spamReport!!
+                        if (report.score == null && report.error != null) {
+                            Text(report.error, style = MaterialTheme.typography.bodyMedium)
+                        } else {
+                            ResultRow("Source", report.source)
+                            ResultRow("Spam Score", report.scoreLabel)
+                            ResultRow("Verdict", report.riskLabel)
+                            report.comments?.let { ResultRow("Community Reports", it.toString()) }
+                            report.searches?.let { ResultRow("Times Searched", it.toString()) }
+                            report.location?.let { ResultRow("Reported Location", it) }
+                            report.country?.let { ResultRow("Country", it) }
+                            report.callerType?.let { ResultRow("Caller Type", it) }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Extra community caller-report databases (each verified live, no API key)
+            OsintToolSectionCard(
+                toolTitle = "Community Report Databases",
+                subtitle = if (PhoneReputation.supportedSources(normalized).isEmpty())
+                    "WhoCallsMe & 800notes only index North American (+1) numbers"
+                else "Live user reports from WhoCallsMe and 800notes",
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+            ) {
+                when {
+                    isReputationScanning -> Row(
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Querying community call databases...", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    reputationReports.isEmpty() -> Text(
+                        "No additional no-key source applies to this number. tellows remains the primary lookup above.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    else -> reputationReports.forEach { rep ->
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(rep.source, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Surface(
+                                    shape = MaterialTheme.shapes.extraSmall,
+                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Text(
+                                        text = if (rep.hasReports) "${rep.reportCount} report(s)" else "No reports",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            rep.error?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            }
+                            rep.samples.forEach { sample ->
+                                Text("• $sample", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
+                            }
+                            if (rep.hasReports) {
+                                TextButton(onClick = { openUrl(context, rep.url) }) {
+                                    Text("Open ${rep.source} ↗")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -319,7 +437,28 @@ fun UsernameAndEmailOsintTab() {
     var targetInput by remember { mutableStateOf("") }
     var activeTarget by remember { mutableStateOf<String?>(null) }
 
+    var liveHits by remember { mutableStateOf<List<UsernameHit>>(emptyList()) }
+    var liveSitesChecked by remember { mutableIntStateOf(0) }
+    var isLiveScanning by remember { mutableStateOf(false) }
+    var liveError by remember { mutableStateOf<String?>(null) }
+    var breachReport by remember { mutableStateOf<BreachReport?>(null) }
+    var isBreachScanning by remember { mutableStateOf(false) }
+
+    // Username scan state
+    var scanDepth by remember { mutableIntStateOf(0) }
+    var scanProgress by remember { mutableIntStateOf(0) }
+    var scanTotal by remember { mutableIntStateOf(0) }
+    var datasetSizes by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var unreachableCount by remember { mutableIntStateOf(0) }
+
+    // Email registration (accounts found for the address) state
+    var registeredSites by remember { mutableStateOf<List<RegistrationHit>>(emptyList()) }
+    var isRegistrationScanning by remember { mutableStateOf(false) }
+    var registrationChecked by remember { mutableIntStateOf(0) }
+    var emailUnreachable by remember { mutableIntStateOf(0) }
+
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
     Column(
@@ -336,7 +475,7 @@ fun UsernameAndEmailOsintTab() {
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Text(
-            text = "Integrated: Blackbird, Tookie-OSINT, Brib & IntelBase",
+            text = "Site databases ported from Sherlock, Blackbird, Tookie-OSINT & WhatsMyName",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -350,14 +489,38 @@ fun UsernameAndEmailOsintTab() {
         ) {
             FilterChip(
                 selected = subTabState == 0,
-                onClick = { subTabState = 0; targetInput = ""; activeTarget = null },
+                onClick = {
+                    subTabState = 0; targetInput = ""; activeTarget = null
+                    liveHits = emptyList(); liveError = null; liveSitesChecked = 0
+                },
                 label = { Text("Username OSINT") }
             )
             FilterChip(
                 selected = subTabState == 1,
-                onClick = { subTabState = 1; targetInput = ""; activeTarget = null },
+                onClick = {
+                    subTabState = 1; targetInput = ""; activeTarget = null
+                    breachReport = null; registeredSites = emptyList()
+                    liveHits = emptyList(); liveSitesChecked = 0
+                },
                 label = { Text("Email OSINT") }
             )
+        }
+
+        if (subTabState == 0) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("Quick (150)" to 0, "Standard (300)" to 1, "Full sweep" to 2).forEach { (label, index) ->
+                    FilterChip(
+                        selected = scanDepth == index,
+                        onClick = { scanDepth = index },
+                        label = { Text(label, style = MaterialTheme.typography.labelMedium) }
+                    )
+                }
+            }
         }
 
         OutlinedTextField(
@@ -380,13 +543,76 @@ fun UsernameAndEmailOsintTab() {
 
         Button(
             onClick = {
-                if (targetInput.isNotBlank()) {
-                    activeTarget = targetInput.trim()
+                val target = targetInput.trim()
+                if (target.isNotBlank()) {
+                    activeTarget = target
+                    if (subTabState == 0) {
+                        isLiveScanning = true
+                        liveHits = emptyList()
+                        liveSitesChecked = 0
+                        liveError = null
+                        scanProgress = 0
+                        scanTotal = 0
+                        coroutineScope.launch {
+                            val limit = when (scanDepth) {
+                                0 -> 150
+                                1 -> UsernameScanner.DEFAULT_LIMIT
+                                else -> UsernameScanner.FULL_SCAN
+                            }
+                            val outcome = UsernameScanner.scan(target, limit = limit) { checked, total ->
+                                scanProgress = checked
+                                scanTotal = total
+                            }
+                            liveHits = outcome.confirmed
+                            liveSitesChecked = outcome.sitesChecked
+                            datasetSizes = outcome.datasetSizes
+                            unreachableCount = outcome.unreachable
+                            if (outcome.sitesChecked == 0) {
+                                liveError = "Could not load any site database. Check your connection and retry."
+                            }
+                            isLiveScanning = false
+                        }
+                    } else {
+                        isBreachScanning = true
+                        breachReport = null
+                        isRegistrationScanning = true
+                        registeredSites = emptyList()
+                        registrationChecked = 0
+                        emailUnreachable = 0
+                        liveHits = emptyList()
+                        liveSitesChecked = 0
+
+                        coroutineScope.launch {
+                            val outcome = EmailRegistrationScanner.scan(target) { checked, _ ->
+                                registrationChecked = checked
+                            }
+                            registeredSites = outcome.registered
+                            emailUnreachable = outcome.unreachable
+                            if (outcome.error != null) liveError = outcome.error
+                            isRegistrationScanning = false
+                        }
+
+                        coroutineScope.launch {
+                            breachReport = EmailScanner.check(target)
+                            isBreachScanning = false
+                        }
+
+                        // The handle before the @ is very often reused as a username elsewhere.
+                        EmailRegistrationScanner.localPart(target)?.let { handle ->
+                            coroutineScope.launch {
+                                isLiveScanning = true
+                                val outcome = UsernameScanner.scan(handle, limit = 150)
+                                liveHits = outcome.confirmed
+                                liveSitesChecked = outcome.sitesChecked
+                                isLiveScanning = false
+                            }
+                        }
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (subTabState == 0) "Run Blackbird & Tookie Username Scan" else "Run Blackbird & Epieos Email Scan")
+            Text(if (subTabState == 0) "Run Live Username Scanner" else "Run Live Breach Check")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -397,9 +623,114 @@ fun UsernameAndEmailOsintTab() {
                 val platforms = OsintTools.getBlackbirdUsernameScan(target)
                 val tookieDorks = OsintTools.getTookieBribDorks(target)
 
+                // Live enumeration across hundreds of sites (What's My Name? dataset)
                 OsintToolSectionCard(
-                    toolTitle = "Blackbird Username Scanner ($target)",
-                    subtitle = "Checked across 15+ major platforms & social networks",
+                    toolTitle = "Live Username Scan ($target)",
+                    subtitle = if (liveSitesChecked > 0)
+                        "$liveSitesChecked real HTTP checks across the merged WhatsMyName, Sherlock and Tookie databases"
+                    else "Real HTTP checks across the merged community site databases",
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                ) {
+                    when {
+                        isLiveScanning -> Row(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                if (scanTotal > 0) "Scanned $scanProgress of $scanTotal sites..."
+                                else "Downloading site databases...",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        liveError != null -> Text(liveError!!, style = MaterialTheme.typography.bodyMedium)
+                        liveHits.isEmpty() -> Column {
+                            Text(
+                                "No public profiles matched this username.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                "Scanned $liveSitesChecked sites" +
+                                    if (unreachableCount > 0) ", $unreachableCount unreachable." else ".",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        else -> {
+                            Text(
+                                "${liveHits.size} profile(s) found",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            if (unreachableCount > 0) {
+                                Text(
+                                    "$unreachableCount site(s) blocked the request and were not counted.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
+                            liveHits.forEach { hit ->
+                                OutlinedCard(
+                                    onClick = { openUrl(context, hit.profileUrl) },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            hit.site,
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = MaterialTheme.shapes.extraSmall,
+                                            color = MaterialTheme.colorScheme.primaryContainer
+                                        ) {
+                                            Text(
+                                                text = hit.source,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = MaterialTheme.shapes.extraSmall,
+                                            color = MaterialTheme.colorScheme.secondaryContainer
+                                        ) {
+                                            Text(
+                                                text = hit.category,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            if (datasetSizes.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "Databases: " + datasetSizes.entries.joinToString(", ") { "${it.key} ${it.value}" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OsintToolSectionCard(
+                    toolTitle = "Manual Profile Links ($target)",
+                    subtitle = "Opens the platform profile pages in a browser - the live scan above already checked these",
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     platforms.forEach { platform ->
@@ -432,8 +763,8 @@ fun UsernameAndEmailOsintTab() {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 OsintToolSectionCard(
-                    toolTitle = "Tookie-OSINT & Brib Target Scanner",
-                    subtitle = "Alias footprinting across forums & paste dumps",
+                    toolTitle = "Saved Alias Searches (Tookie / Brib)",
+                    subtitle = "Runs a web query for the alias - these open a browser, they do not scan",
                     containerColor = MaterialTheme.colorScheme.secondaryContainer
                 ) {
                     tookieDorks.forEach { dork ->
@@ -445,8 +776,186 @@ fun UsernameAndEmailOsintTab() {
                 val emailDorks = OsintTools.getBlackbirdEmailScan(target)
 
                 OsintToolSectionCard(
-                    toolTitle = "Blackbird Email Scanner ($target)",
-                    subtitle = "Leak databases, HaveIBeenPwned & Epieos reverse lookup",
+                    toolTitle = "Accounts Registered ($target)",
+                    subtitle = "Signup & availability endpoints queried directly - the same method Holehe and Blackbird use",
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                ) {
+                    when {
+                        isRegistrationScanning -> Row(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                "Checking signup endpoints ($registrationChecked done)...",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        registeredSites.isEmpty() -> Text(
+                            "No service reported an existing account for this address.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        else -> {
+                            Text(
+                                "${registeredSites.size} service(s) already have an account for this email",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            registeredSites.forEach { hit ->
+                                OutlinedCard(
+                                    onClick = { openUrl(context, hit.profileUrl) },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            hit.site,
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = MaterialTheme.shapes.extraSmall,
+                                            color = MaterialTheme.colorScheme.primaryContainer
+                                        ) {
+                                            Text(
+                                                text = hit.source,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (emailUnreachable > 0 && !isRegistrationScanning) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "$emailUnreachable site(s) blocked the request and were not counted.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OsintToolSectionCard(
+                    toolTitle = "Live Breach Check ($target)",
+                    subtitle = "Real breach lookup via the free XposedOrNot API",
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                ) {
+                    val report = breachReport
+                    when {
+                        isBreachScanning -> Row(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Checking breach databases...", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        report == null -> Text(
+                            "Run a scan to check this email against known data breaches.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        report.error != null -> Text(report.error, style = MaterialTheme.typography.bodyMedium)
+                        report.breached -> {
+                            Text(
+                                "Exposed in ${report.breachNames.size} breach(es):",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            report.breachNames.forEach { name ->
+                                Text("• $name", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
+                            }
+                        }
+                        else -> Text(
+                            "No breaches found in the XposedOrNot database.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // The handle before the @ is frequently reused, so scan it as a username too.
+                OsintToolSectionCard(
+                    toolTitle = "Handle Footprint",
+                    subtitle = "The part before the @ scanned as a username across every site database",
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    val handle = EmailRegistrationScanner.localPart(target)
+                    when {
+                        handle == null -> Text("Could not derive a handle from this address.", style = MaterialTheme.typography.bodyMedium)
+                        isLiveScanning -> Row(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Scanning sites for \"$handle\"...", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        liveHits.isEmpty() -> Text(
+                            "No public profile matched the handle \"$handle\". (Scanned $liveSitesChecked sites.)",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        else -> {
+                            Text(
+                                "${liveHits.size} profile(s) found for \"$handle\"",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            liveHits.forEach { hit ->
+                                OutlinedCard(
+                                    onClick = { openUrl(context, hit.profileUrl) },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            hit.site,
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = MaterialTheme.shapes.extraSmall,
+                                            color = MaterialTheme.colorScheme.primaryContainer
+                                        ) {
+                                            Text(
+                                                text = hit.source,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OsintToolSectionCard(
+                    toolTitle = "Manual Third-Party Lookups ($target)",
+                    subtitle = "Opens outside lookup services in a browser - no data is fetched in-app",
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     emailDorks.forEach { dork ->
