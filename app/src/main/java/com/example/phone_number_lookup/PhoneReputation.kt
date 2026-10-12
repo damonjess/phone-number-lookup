@@ -32,34 +32,48 @@ data class ReputationReport(
     val callTypes: List<String>,
     /** Short excerpts from the most recent user reports. */
     val samples: List<String>,
-    val error: String? = null
+    val error: String? = null,
 )
 
 object PhoneReputation {
 
     private const val MAX_SAMPLES = 4
 
+    private val DIGITS_REGEX = Regex("[^0-9]")
+    private val CALL_TYPE_REGEX = Regex("call type:\\s*([^\\n|]{2,40})", RegexOption.IGNORE_CASE)
+    private val CALLER_REGEX = Regex("caller:\\s*([^\\n|]{2,40})", RegexOption.IGNORE_CASE)
+
+    private val SCRIPT_REGEX = Regex("<script.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val STYLE_REGEX = Regex("<style.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val COMMENT_REGEX = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL)
+    private val TAG_REGEX = Regex("<[^>]+>")
+    private val WHITESPACE_REGEX = Regex("\\s+")
+
     /** Queries every supported source in parallel and returns one row per source. */
     suspend fun lookup(e164: String): List<ReputationReport> = withContext(Dispatchers.IO) {
-        val digits = e164.replace(Regex("[^0-9]"), "")
+        val digits = e164.replace(DIGITS_REGEX, "")
         val northAmerica = digits.length == 11 && digits.startsWith("1")
 
         val jobs = ArrayList<Pair<String, () -> ReputationReport>>()
         if (northAmerica) {
             val national = digits.substring(1)              // 8554208313
             val dashed = "1-${national.substring(0, 3)}-${national.substring(3, 6)}-${national.substring(6)}"
-            jobs.add("WhoCallsMe" to {
-                queryHtml(
-                    source = "WhoCallsMe",
-                    url = "https://whocallsme.com/Phone-Number.aspx/$national"
-                )
-            })
-            jobs.add("800notes" to {
-                queryHtml(
-                    source = "800notes",
-                    url = "https://800notes.com/Phone.aspx/$dashed"
-                )
-            })
+            jobs.add(
+                "WhoCallsMe" to {
+                    queryHtml(
+                        source = "WhoCallsMe",
+                        url = "https://whocallsme.com/Phone-Number.aspx/$national",
+                    )
+                }
+            )
+            jobs.add(
+                "800notes" to {
+                    queryHtml(
+                        source = "800notes",
+                        url = "https://800notes.com/Phone.aspx/$dashed",
+                    )
+                }
+            )
         }
 
         jobs.map { (_, job) -> async { job() } }.awaitAll()
@@ -67,7 +81,7 @@ object PhoneReputation {
 
     /** Sources that are applicable to [e164], for labelling the UI. */
     fun supportedSources(e164: String): List<String> {
-        val digits = e164.replace(Regex("[^0-9]"), "")
+        val digits = e164.replace(DIGITS_REGEX, "")
         return if (digits.length == 11 && digits.startsWith("1")) {
             listOf("WhoCallsMe", "800notes")
         } else {
@@ -87,18 +101,18 @@ object PhoneReputation {
         if (!response.isOk) {
             return ReputationReport(
                 source, url, false, 0, emptyList(), emptyList(),
-                "HTTP ${response.code}"
+                "HTTP ${response.code}",
             )
         }
 
         val text = htmlToText(response.body)
-        val callTypes = Regex("call type:\\s*([^\\n|]{2,40})", RegexOption.IGNORE_CASE)
+        val callTypes = CALL_TYPE_REGEX
             .findAll(text)
             .map { it.groupValues[1].trim().trimEnd('.', ',', ' ') }
             .filter { it.isNotEmpty() }
             .toList()
 
-        val callers = Regex("caller:\\s*([^\\n|]{2,40})", RegexOption.IGNORE_CASE)
+        val callers = CALLER_REGEX
             .findAll(text)
             .map { it.groupValues[1].trim() }
             .filter { it.isNotEmpty() && !it.equals("unknown", true) }
@@ -118,20 +132,18 @@ object PhoneReputation {
             hasReports = callTypes.isNotEmpty() || callers.isNotEmpty(),
             reportCount = maxOf(callTypes.size, callers.size),
             callTypes = callTypes.distinct(),
-            samples = samples.toList()
+            samples = samples.toList(),
         )
     }
 
     /** Strips scripts/styles/tags so the report text can be pattern-matched. */
     internal fun htmlToText(html: String): String {
-        var text = Regex("<script.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            .replace(html, " ")
-        text = Regex("<style.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            .replace(text, " ")
-        text = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL).replace(text, " ")
-        text = Regex("<[^>]+>").replace(text, " ")
+        var text = SCRIPT_REGEX.replace(html, " ")
+        text = STYLE_REGEX.replace(text, " ")
+        text = COMMENT_REGEX.replace(text, " ")
+        text = TAG_REGEX.replace(text, " ")
         text = text.replace("&nbsp;", " ").replace("&amp;", "&")
             .replace("&#39;", "'").replace("&quot;", "\"").replace("&apos;", "'")
-        return Regex("\\s+").replace(text, " ")
+        return WHITESPACE_REGEX.replace(text, " ")
     }
 }

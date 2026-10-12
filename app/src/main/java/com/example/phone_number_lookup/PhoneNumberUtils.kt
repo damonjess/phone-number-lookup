@@ -9,9 +9,32 @@ data class NumberFormats(
 
 object PhoneNumberUtils {
 
+    private val CLEAN_REGEX = Regex("[\\s()\\-.]")
+    private val UK_VALID_REGEX = Regex("^\\+44\\d{10}$")
+    private val NON_DIGITS_REGEX = Regex("[^0-9]")
+
+    private val UK_AREA_CODES = mapOf(
+        "01782" to "Stoke-on-Trent",
+        "020" to "London",
+        "0161" to "Manchester",
+        "0121" to "Birmingham",
+        "0113" to "Leeds",
+        "0114" to "Sheffield",
+        "0151" to "Liverpool",
+        "0131" to "Edinburgh",
+        "0141" to "Glasgow",
+        "029" to "Cardiff",
+        "028" to "Northern Ireland",
+        "0117" to "Bristol",
+        "0115" to "Nottingham",
+        "0191" to "Newcastle upon Tyne",
+        "01865" to "Oxford",
+        "01223" to "Cambridge"
+    )
+
     fun normalize(input: String): String {
         // Remove spaces, dashes, parentheses, dots
-        var cleaned = input.replace(Regex("[\\s\\-\\(\\)\\.]"), "")
+        var cleaned = input.replace(CLEAN_REGEX, "")
         
         // If it starts with 0 and is 10-11 digits, assume UK default (+44)
         if (cleaned.startsWith("0") && cleaned.length >= 10) {
@@ -24,8 +47,7 @@ object PhoneNumberUtils {
     }
 
     fun isValidUk(normalized: String): Boolean {
-        val ukRegex = Regex("^\\+44\\d{10}$")
-        return ukRegex.matches(normalized)
+        return UK_VALID_REGEX.matches(normalized)
     }
 
     fun getCountry(normalized: String): String {
@@ -81,29 +103,10 @@ object PhoneNumberUtils {
         
         val localPart = "0" + normalized.removePrefix("+44")
         
-        val areaCodes = mapOf(
-            "01782" to "Stoke-on-Trent",
-            "020" to "London",
-            "0161" to "Manchester",
-            "0121" to "Birmingham",
-            "0113" to "Leeds",
-            "0114" to "Sheffield",
-            "0151" to "Liverpool",
-            "0131" to "Edinburgh",
-            "0141" to "Glasgow",
-            "029" to "Cardiff",
-            "028" to "Northern Ireland",
-            "0117" to "Bristol",
-            "0115" to "Nottingham",
-            "0191" to "Newcastle upon Tyne",
-            "01865" to "Oxford",
-            "01223" to "Cambridge"
-        )
-        
         for (i in 5 downTo 3) {
             if (localPart.length >= i) {
                 val prefix = localPart.substring(0, i)
-                areaCodes[prefix]?.let { return it }
+                UK_AREA_CODES[prefix]?.let { return it }
             }
         }
         
@@ -118,7 +121,7 @@ object PhoneNumberUtils {
     }
 
     fun getFormattedFormats(normalized: String, localNumber: String): NumberFormats {
-        val digitsOnly = normalized.replace("+", "").replace(Regex("[^0-9]"), "")
+        val digitsOnly = normalized.replace("+", "").replace(NON_DIGITS_REGEX, "")
         val e164 = "+$digitsOnly"
         
         val intlFormatted = if (normalized.startsWith("+44") && digitsOnly.length == 12) {
@@ -137,4 +140,3 @@ object PhoneNumberUtils {
         )
     }
 }
-

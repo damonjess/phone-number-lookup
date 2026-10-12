@@ -91,7 +91,8 @@ The **dork and link buttons** (PhoneInfoga, Phonia, IntelBase, pastebin/document
 
 ## ✅ Verification
 
-* **32 unit tests pass**, including offline parsing tests for every dataset format and detection tests that drive the real request path against a local HTTP server (found, missing, body-signal, POST-body and redirect cases).
+* **41 unit tests pass**, including offline parsing tests for every dataset format, detection tests that drive the real request path against a local HTTP server (found, missing, body-signal, POST-body and redirect cases), and scan-coordination tests covering overlapping scans.
+* **Overlapping scans cannot corrupt each other.** Starting a new scan cancels the previous one and retires its token, so a slow sweep finishing last cannot replace a newer scan's results. Verified on device: a full 1,239-site sweep for `blue` started, then overtaken by a 150-site `qzwx` scan, now correctly leaves qzwx's own results on screen — previously it displayed 563 profiles belonging to blue under the qzwx heading.
 * **Live smoke tests** (skipped automatically when offline) assert that the datasets actually download and that a real account is found while a made-up one is not:
   * Merged username database: **1,239 probes** (WhatsMyName 694, Sherlock 310, Tookie 235), with no duplicates after the merge.
   * `blue` (Sherlock's own example account) → 27 profiles; a random handle → 4. A random handle never out-scores a real one.
@@ -105,6 +106,7 @@ The **dork and link buttons** (PhoneInfoga, Phonia, IntelBase, pastebin/document
 * **Language:** Kotlin
 * **UI Framework:** Jetpack Compose with Material 3
 * **Concurrency:** Kotlin Coroutines (`Dispatchers.IO`, `async` + `Semaphore` for bounded parallel scans)
+* **Architecture:** MVVM — `ui/viewmodels/` holds one ViewModel per tab so inputs and results survive rotation and configuration changes, `ui/screens/` holds the tab composables, and `ui/components/` holds shared widgets
 * **Networking:** Dependency-free HTTP (`HttpURLConnection`, GET and POST) and Android's built-in `org.json` — no third-party SDKs, no API keys, no accounts
 * **Datasets:** downloaded at runtime from GitHub raw URLs and cached in memory ([`OsintDatasets.kt`](app/src/main/java/com/example/phone_number_lookup/OsintDatasets.kt)), so site coverage updates without an app release
 * **Target SDK:** `compileSdk`/`targetSdk` 37, `minSdk` 26 (Android 8.0+)
@@ -121,6 +123,9 @@ The **dork and link buttons** (PhoneInfoga, Phonia, IntelBase, pastebin/document
 | [`SpamScanner.kt`](app/src/main/java/com/example/phone_number_lookup/SpamScanner.kt) | tellows caller-reputation lookup |
 | [`PhoneReputation.kt`](app/src/main/java/com/example/phone_number_lookup/PhoneReputation.kt) | WhoCallsMe and 800notes report parsing |
 | [`GitHubOsint.kt`](app/src/main/java/com/example/phone_number_lookup/GitHubOsint.kt) | GitHub public REST API queries |
+| [`ui/viewmodels/ScanCoordinator.kt`](app/src/main/java/com/example/phone_number_lookup/ui/viewmodels/ScanCoordinator.kt) | Cancels superseded scans and stamps results so stale ones are discarded |
+| [`ui/screens/`](app/src/main/java/com/example/phone_number_lookup/ui/screens) | One composable screen per tab |
+| [`ui/viewmodels/`](app/src/main/java/com/example/phone_number_lookup/ui/viewmodels) | Scan state that survives rotation |
 
 ---
 
