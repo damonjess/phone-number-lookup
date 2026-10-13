@@ -23,7 +23,12 @@ data class UsernameHit(
     val site: String,
     val category: String,
     val source: String,
-    val profileUrl: String
+    val profileUrl: String,
+    val statusCode: Int = 200,
+    val finalUrl: String = "",
+    val evidence: String = "Matched a site-specific positive marker",
+    val confidence: String = "Medium",
+    val verificationStatus: String = "Matched"
 )
 
 data class UsernameScanOutcome(
@@ -83,7 +88,12 @@ object UsernameScanner {
                     site = it.site.name,
                     category = it.site.category,
                     source = it.site.source,
-                    profileUrl = it.profileUrl
+                    profileUrl = it.profileUrl,
+                    statusCode = it.statusCode,
+                    finalUrl = it.finalUrl,
+                    evidence = it.evidence,
+                    confidence = confidenceFor(it),
+                    verificationStatus = statusFor(it)
                 )
             }
             .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() }))
@@ -94,6 +104,34 @@ object UsernameScanner {
             datasetSizes = OsintDatasets.cachedUsernameBreakdown(),
             unreachable = unreachable.get()
         )
+    }
+
+    suspend fun recheck(username: String, siteName: String): UsernameHit? = withContext(Dispatchers.IO) {
+        val probe = OsintDatasets.findUsernameProbe(siteName) ?: return@withContext null
+        val result = OsintDatasets.evaluate(probe, username, timeoutMs = 12_000)
+        UsernameHit(
+            site = result.site.name,
+            category = result.site.category,
+            source = result.site.source,
+            profileUrl = result.profileUrl,
+            statusCode = result.statusCode,
+            finalUrl = result.finalUrl,
+            evidence = result.evidence,
+            confidence = confidenceFor(result),
+            verificationStatus = statusFor(result)
+        )
+    }
+
+    private fun confidenceFor(result: ProbeResult): String = when (result.verdict) {
+        ProbeVerdict.FOUND -> if (result.evidence.contains("site-specific")) "High" else "Medium"
+        ProbeVerdict.UNKNOWN -> "Uncertain"
+        ProbeVerdict.NOT_FOUND -> "None"
+    }
+
+    private fun statusFor(result: ProbeResult): String = when (result.verdict) {
+        ProbeVerdict.FOUND -> "Matched"
+        ProbeVerdict.NOT_FOUND -> "Not found"
+        ProbeVerdict.UNKNOWN -> "Unavailable / uncertain"
     }
 
     /** Total probes available across every merged database (0 until first load). */

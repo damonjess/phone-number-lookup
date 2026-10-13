@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.phone_number_lookup.BreachReport
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.EmailScanner
+import com.example.phone_number_lookup.EmailDomainReport
+import com.example.phone_number_lookup.EmailDomainScanner
 import com.example.phone_number_lookup.RegistrationHit
 import com.example.phone_number_lookup.UsernameHit
 import com.example.phone_number_lookup.UsernameScanner
@@ -33,6 +35,11 @@ data class UsernameAndEmailOsintUiState(
     val isRegistrationScanning: Boolean = false,
     val registrationChecked: Int = 0,
     val emailUnreachable: Int = 0,
+    val recheckingSite: String? = null,
+    val domainReport: EmailDomainReport? = null,
+    val isDomainScanning: Boolean = false,
+    val publicSuggestions: List<String> = emptyList(),
+    val correlationHints: List<String> = emptyList(),
 )
 
 class UsernameAndEmailOsintViewModel : ViewModel() {
@@ -79,6 +86,10 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                 registeredSites = emptyList(),
                 registrationChecked = 0,
                 emailUnreachable = 0,
+                domainReport = null,
+                isDomainScanning = false,
+                publicSuggestions = emptyList(),
+                correlationHints = emptyList(),
             )
         }
 
@@ -122,7 +133,7 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
     }
 
     private fun runEmailScan(target: String, token: Int) {
-        _uiState.update { it.copy(isRegistrationScanning = true, isBreachScanning = true) }
+        _uiState.update { it.copy(isRegistrationScanning = true, isBreachScanning = true, isDomainScanning = true) }
 
         scans.start(token) { active ->
             val outcome = EmailRegistrationScanner.scan(target) { checked, _ ->
@@ -149,6 +160,13 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
             }
         }
 
+        scans.start(token) { active ->
+            val report = EmailDomainScanner.check(target)
+            if (scans.isCurrent(active)) {
+                _uiState.update { it.copy(domainReport = report, isDomainScanning = false) }
+            }
+        }
+
         // The handle before the @ is frequently reused, so scan it as a username too.
         val handle = EmailRegistrationScanner.localPart(target) ?: return
         scans.start(token) { active ->
@@ -159,6 +177,12 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                     it.copy(
                         liveHits = outcome.confirmed,
                         liveSitesChecked = outcome.sitesChecked,
+                        publicSuggestions = outcome.confirmed.take(8).map { "${it.site}: ${it.profileUrl}" },
+                        correlationHints = buildList {
+                            val categories = outcome.confirmed.map { it.category }.distinct()
+                            if (outcome.confirmed.size >= 2) add("The handle matched ${outcome.confirmed.size} public profiles across ${categories.size} category group(s).")
+                            if (outcome.confirmed.map { it.source }.distinct().size >= 2) add("Independent public datasets reported overlapping matches; this is a correlation hint, not identity proof.")
+                        },
                         isLiveScanning = false,
                     )
                 }
@@ -171,5 +195,41 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
         val currentSubTab = _uiState.value.subTabState
         val depth = _uiState.value.scanDepth
         _uiState.value = UsernameAndEmailOsintUiState(subTabState = currentSubTab, scanDepth = depth)
+    }
+
+    fun recheckUsername(site: String) {
+        val target = _uiState.value.activeTarget ?: return
+        _uiState.update { it.copy(recheckingSite = site) }
+        viewModelScope.launch {
+            val updated = UsernameScanner.recheck(target, site)
+            if (updated != null) {
+                _uiState.update { state ->
+                    state.copy(
+                        liveHits = state.liveHits.filterNot { it.site.equals(site, true) } + updated,
+                        recheckingSite = null
+                    )
+                }
+            } else {
+                _uiState.update { it.copy(recheckingSite = null) }
+            }
+        }
+    }
+
+    fun recheckEmail(site: String) {
+        val target = _uiState.value.activeTarget ?: return
+        _uiState.update { it.copy(recheckingSite = site) }
+        viewModelScope.launch {
+            val updated = EmailRegistrationScanner.recheck(target, site)
+            if (updated != null) {
+                _uiState.update { state ->
+                    state.copy(
+                        registeredSites = state.registeredSites.filterNot { it.site.equals(site, true) } + updated,
+                        recheckingSite = null
+                    )
+                }
+            } else {
+                _uiState.update { it.copy(recheckingSite = null) }
+            }
+        }
     }
 }

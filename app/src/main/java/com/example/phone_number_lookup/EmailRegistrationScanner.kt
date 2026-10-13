@@ -30,7 +30,11 @@ data class RegistrationHit(
     val category: String,
     val source: String,
     val profileUrl: String,
-    val statusCode: Int
+    val statusCode: Int,
+    val finalUrl: String = "",
+    val evidence: String = "Matched a site-specific positive marker",
+    val confidence: String = "Medium",
+    val verificationStatus: String = "Registered response"
 )
 
 data class EmailRegistrationOutcome(
@@ -91,7 +95,11 @@ object EmailRegistrationScanner {
                     category = it.site.category,
                     source = it.site.source,
                     profileUrl = it.profileUrl,
-                    statusCode = it.statusCode
+                    statusCode = it.statusCode,
+                    finalUrl = it.finalUrl,
+                    evidence = it.evidence,
+                    confidence = confidenceFor(it),
+                    verificationStatus = "Registered response"
                 )
             }
             .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() }))
@@ -102,5 +110,31 @@ object EmailRegistrationScanner {
             registered = registered,
             unreachable = unreachable.get()
         )
+    }
+
+    suspend fun recheck(email: String, siteName: String): RegistrationHit? = withContext(Dispatchers.IO) {
+        val probe = OsintDatasets.findEmailProbe(siteName) ?: return@withContext null
+        val result = OsintDatasets.evaluate(probe, email, timeoutMs = 12_000)
+        RegistrationHit(
+            site = result.site.name,
+            category = result.site.category,
+            source = result.site.source,
+            profileUrl = result.profileUrl,
+            statusCode = result.statusCode,
+            finalUrl = result.finalUrl,
+            evidence = result.evidence,
+            confidence = confidenceFor(result),
+            verificationStatus = when (result.verdict) {
+                ProbeVerdict.FOUND -> "Registered response"
+                ProbeVerdict.NOT_FOUND -> "Not registered response"
+                ProbeVerdict.UNKNOWN -> "Unavailable / uncertain"
+            }
+        )
+    }
+
+    private fun confidenceFor(result: ProbeResult): String = when (result.verdict) {
+        ProbeVerdict.FOUND -> if (result.evidence.contains("site-specific")) "High" else "Medium"
+        ProbeVerdict.UNKNOWN -> "Uncertain"
+        ProbeVerdict.NOT_FOUND -> "None"
     }
 }

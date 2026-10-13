@@ -53,7 +53,9 @@ data class ProbeResult(
     val site: SiteProbe,
     val verdict: ProbeVerdict,
     val profileUrl: String,
-    val statusCode: Int
+    val statusCode: Int,
+    val finalUrl: String = "",
+    val evidence: String = ""
 )
 
 object OsintDatasets {
@@ -94,7 +96,9 @@ object OsintDatasets {
         }
 
         if (response.isNetworkError) {
-            return ProbeResult(probe, ProbeVerdict.UNKNOWN, profileUrl, -1)
+            return ProbeResult(
+                probe, ProbeVerdict.UNKNOWN, profileUrl, -1, evidence = "Network error or timeout"
+            )
         }
 
         val text = response.body
@@ -103,7 +107,15 @@ object OsintDatasets {
         val missing = response.code in probe.missingCodes ||
             probe.missingStrings.any { it.isNotEmpty() && text.contains(it, ignoreCase = true) } ||
             probe.missingUrls.any { it.isNotEmpty() && finalUrl.contains(it, ignoreCase = true) }
-        if (missing) return ProbeResult(probe, ProbeVerdict.NOT_FOUND, profileUrl, response.code)
+        if (missing) {
+            val evidence = when {
+                response.code == 404 -> "HTTP 404 — profile not found"
+                probe.missingUrls.any { it.isNotEmpty() && finalUrl.contains(it, ignoreCase = true) } ->
+                    "Redirected to a missing or login page"
+                else -> "Site-specific missing marker"
+            }
+            return ProbeResult(probe, ProbeVerdict.NOT_FOUND, profileUrl, response.code, finalUrl, evidence)
+        }
 
         val hasFoundSignals = probe.foundCodes.isNotEmpty() || probe.foundStrings.isNotEmpty()
         val found = if (!hasFoundSignals) {
@@ -116,10 +128,22 @@ object OsintDatasets {
         val verdict = when {
             found -> ProbeVerdict.FOUND
             response.isOk -> ProbeVerdict.UNKNOWN
-            else -> ProbeVerdict.NOT_FOUND
+            else -> ProbeVerdict.UNKNOWN
         }
-        return ProbeResult(probe, verdict, profileUrl, response.code)
+        val evidence = when {
+            found && hasFoundSignals -> "Matched a site-specific positive marker"
+            found -> "HTTP ${response.code} response; this site has no positive marker"
+            response.isOk -> "HTTP ${response.code} response but no positive marker"
+            else -> "HTTP ${response.code} response"
+        }
+        return ProbeResult(probe, verdict, profileUrl, response.code, finalUrl, evidence)
     }
+
+    suspend fun findUsernameProbe(siteName: String): SiteProbe? =
+        loadUsernameDatabases().firstOrNull { it.name.equals(siteName, ignoreCase = true) }
+
+    suspend fun findEmailProbe(siteName: String): SiteProbe? =
+        loadEmailDatabase().firstOrNull { it.name.equals(siteName, ignoreCase = true) }
 
     fun transformAccount(account: String, mode: AccountMode): String = when (mode) {
         AccountMode.RAW, AccountMode.APPEND -> account

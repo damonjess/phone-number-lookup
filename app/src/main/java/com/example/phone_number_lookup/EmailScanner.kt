@@ -19,7 +19,8 @@ data class BreachReport(
     val email: String,
     val breached: Boolean,
     val breachNames: List<String>,
-    val error: String? = null
+    val error: String? = null,
+    val checkedAt: Long = System.currentTimeMillis()
 )
 
 object EmailScanner {

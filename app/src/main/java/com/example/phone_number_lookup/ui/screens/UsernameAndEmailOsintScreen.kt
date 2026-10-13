@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,8 +42,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.UsernameScanner
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
+import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.UsernameAndEmailOsintViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun UsernameAndEmailOsintScreen(
@@ -174,7 +179,7 @@ fun UsernameAndEmailOsintScreen(
                         }
                         else -> {
                             Text(
-                                "${uiState.liveHits.size} profile(s) found",
+                                "${uiState.liveHits.count { it.verificationStatus == "Matched" }} confirmed profile(s) • ${uiState.liveHits.size} result(s)",
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium,
                                 modifier = Modifier.padding(bottom = 4.dp)
@@ -227,6 +232,24 @@ fun UsernameAndEmailOsintScreen(
                                             )
                                         }
                                     }
+                                    Text(
+                                        "${hit.verificationStatus} • Confidence: ${hit.confidence} • HTTP ${if (hit.statusCode < 0) "network error" else hit.statusCode}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp)
+                                    )
+                                    Text(
+                                        hit.evidence,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                                    )
+                                    TextButton(
+                                        onClick = { viewModel.recheckUsername(hit.site) },
+                                        enabled = uiState.recheckingSite != hit.site
+                                    ) {
+                                        Text(if (uiState.recheckingSite == hit.site) "Rechecking..." else "Recheck result")
+                                    }
                                 }
                             }
                             if (uiState.datasetSizes.isNotEmpty()) {
@@ -266,7 +289,7 @@ fun UsernameAndEmailOsintScreen(
                         )
                         else -> {
                             Text(
-                                "${uiState.registeredSites.size} service(s) already have an account for this email",
+                                "${uiState.registeredSites.count { it.verificationStatus == "Registered response" }} confirmed registration(s) • ${uiState.registeredSites.size} result(s)",
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium,
                                 modifier = Modifier.padding(bottom = 4.dp)
@@ -300,6 +323,24 @@ fun UsernameAndEmailOsintScreen(
                                             )
                                         }
                                     }
+                                    Text(
+                                        "${hit.verificationStatus} • Confidence: ${hit.confidence} • HTTP ${if (hit.statusCode < 0) "network error" else hit.statusCode}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp)
+                                    )
+                                    Text(
+                                        hit.evidence,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                                    )
+                                    TextButton(
+                                        onClick = { viewModel.recheckEmail(hit.site) },
+                                        enabled = uiState.recheckingSite != hit.site
+                                    ) {
+                                        Text(if (uiState.recheckingSite == hit.site) "Rechecking..." else "Recheck result")
+                                    }
                                 }
                             }
                         }
@@ -311,6 +352,52 @@ fun UsernameAndEmailOsintScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OsintToolSectionCard(
+                    toolTitle = "Email Domain Intelligence",
+                    subtitle = "Public DNS checks and an explained local assessment; no IntelBase account or API is used",
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    when {
+                        uiState.isDomainScanning -> Row(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Checking MX, SPF and DMARC records...", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        uiState.domainReport?.error != null -> Text(
+                            uiState.domainReport!!.error!!,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        uiState.domainReport != null -> {
+                            val domain = uiState.domainReport!!
+                            ResultRow("Domain", domain.domain)
+                            ResultRow("Accepts mail", domain.acceptsMail?.toString() ?: "Unknown")
+                            ResultRow("MX provider", domain.mxProvider ?: "Not returned")
+                            ResultRow("SPF", domain.spf?.toString() ?: "Unknown")
+                            ResultRow("DMARC", domain.dmarc?.toString() ?: "Unknown")
+                            ResultRow("Free provider", domain.freeProvider.toString())
+                            ResultRow("Disposable-like", domain.disposable.toString())
+                            ResultRow("Role mailbox", domain.roleAddress.toString())
+                            domain.qualityScore?.let { ResultRow("Local quality assessment", "$it / 100") }
+                            if (domain.reasons.isNotEmpty()) {
+                                Text("Why", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                                domain.reasons.forEach { reason -> Text("• $reason", style = MaterialTheme.typography.bodySmall) }
+                            }
+                            Text(
+                                "This is an email/domain quality assessment, not proof that the mailbox belongs to anyone or that it is safe.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
                     }
                 }
 
@@ -346,6 +433,19 @@ fun UsernameAndEmailOsintScreen(
                             report.breachNames.forEach { name ->
                                 Text("• $name", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
                             }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("Evidence timeline", fontWeight = FontWeight.Bold)
+                            Text(
+                                "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(report.checkedAt))} — XposedOrNot lookup returned these breach names",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "Breach publication dates and exposed fields were not returned by this endpoint, so the app does not invent them.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
                         }
                         else -> Text(
                             "No breaches found in the XposedOrNot database.",
@@ -383,6 +483,20 @@ fun UsernameAndEmailOsintScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
+                            uiState.correlationHints.forEach { hint ->
+                                Text(
+                                    "• $hint",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                )
+                            }
+                            if (uiState.publicSuggestions.isNotEmpty()) {
+                                Text("Public signals to review", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                                uiState.publicSuggestions.forEach { suggestion ->
+                                    Text("• $suggestion", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
+                                }
+                            }
                             uiState.liveHits.forEach { hit ->
                                 OutlinedCard(
                                     onClick = { openUrl(context, hit.profileUrl) },
