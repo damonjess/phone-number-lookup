@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,6 +32,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -39,6 +44,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.phone_number_lookup.HistoryEntry
 import com.example.phone_number_lookup.OsintTools
 import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.PhoneNumberUtils
@@ -55,6 +61,7 @@ fun PhoneLookupScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+    var note by rememberSaveable { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -156,11 +163,45 @@ fun PhoneLookupScreen(
                     ResultRow("National Format", formats.national)
                     ResultRow("RFC3966 Link", formats.rfc3966)
                     ResultRow("Country", country)
-                    ResultRow("Line / Network Type", lineType)
-                    ResultRow("Time Zone", timezone)
+                    ResultRow("Estimated number type", lineType)
+                    ResultRow("Country time-zone group", timezone)
+                    Text(
+                        "Type and time zone are estimates from public numbering data; they do not prove the current carrier or caller location.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
                     if (isUk && areaInfo != null) {
                         ResultRow("UK Region", areaInfo)
                     }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Save to private history", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Stored only on this phone. No contacts, call log, or upload is used.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                    OutlinedTextField(
+                        value = note,
+                        onValueChange = { note = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Personal note (optional)") },
+                        placeholder = { Text("What did the caller say?") },
+                        minLines = 2,
+                        maxLines = 4
+                    )
+                    Button(
+                        onClick = {
+                            viewModel.saveCurrentToHistory(note)
+                            note = ""
+                        },
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) { Text("Save scan") }
                 }
             }
 
@@ -191,6 +232,7 @@ fun PhoneLookupScreen(
                             ResultRow("Source", report.source)
                             ResultRow("Spam Score", report.scoreLabel)
                             ResultRow("Verdict", report.riskLabel)
+                            ResultRow("Evidence confidence", report.confidenceLabel)
                             report.comments?.let { ResultRow("Community Reports", it.toString()) }
                             report.searches?.let { ResultRow("Times Searched", it.toString()) }
                             report.location?.let { ResultRow("Reported Location", it) }
@@ -328,13 +370,24 @@ fun PhoneLookupScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Text("Searching public databases...")
                 }
+            } else if (uiState.searchError != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Text(
+                        text = uiState.searchError!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
             } else if (uiState.hasSearched && uiState.searchResults.isEmpty()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
                     Text(
-                        text = "No direct web matches found for this number.",
+                        text = "No indexed web matches found for this number in this search.",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(16.dp)
                     )
@@ -373,5 +426,114 @@ fun PhoneLookupScreen(
                 }
             }
         }
+
+        if (uiState.history.isNotEmpty()) {
+            HistorySection(
+                entries = uiState.history,
+                onClear = viewModel::clearHistory,
+                onDelete = viewModel::deleteHistoryEntry,
+                onStatusChange = viewModel::updateHistoryStatus,
+                onNoteChange = viewModel::updateHistoryNote,
+                onRescan = viewModel::rescanHistoryEntry
+            )
+        }
+    }
+}
+
+@Composable
+private fun HistorySection(
+    entries: List<HistoryEntry>,
+    onClear: () -> Unit,
+    onDelete: (Long) -> Unit,
+    onStatusChange: (Long, String) -> Unit,
+    onNoteChange: (Long, String) -> Unit,
+    onRescan: (String) -> Unit
+) {
+    val formatter = remember {
+        java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale.getDefault())
+    }
+    var showClearDialog by remember { mutableStateOf(false) }
+    var editingEntry by remember { mutableStateOf<HistoryEntry?>(null) }
+    var editedNote by remember { mutableStateOf("") }
+    Spacer(modifier = Modifier.height(20.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Saved history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        TextButton(onClick = { showClearDialog = true }) { Text("Clear all") }
+    }
+    Text(
+        "Local-only history, maximum 50 entries.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    entries.forEach { entry ->
+        Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(entry.number, fontWeight = FontWeight.Bold)
+                Text(entry.label, style = MaterialTheme.typography.bodySmall)
+                Text("Status: ${entry.status}", style = MaterialTheme.typography.bodySmall)
+                Text(formatter.format(java.util.Date(entry.createdAt)), style = MaterialTheme.typography.bodySmall)
+                if (entry.note.isNotBlank()) {
+                    Text("Note: ${entry.note}", modifier = Modifier.padding(top = 4.dp))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { onRescan(entry.number) }) { Text("Scan again") }
+                    TextButton(onClick = {
+                        val next = when (entry.status) {
+                            "Unknown" -> "Suspected spam"
+                            "Suspected spam" -> "Trusted"
+                            else -> "Unknown"
+                        }
+                        onStatusChange(entry.id, next)
+                    }) { Text("Status") }
+                    TextButton(onClick = {
+                        editedNote = entry.note
+                        editingEntry = entry
+                    }) { Text("Edit note") }
+                    TextButton(onClick = { onDelete(entry.id) }) { Text("Delete") }
+                }
+            }
+        }
+    }
+
+    if (showClearDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            title = { Text("Clear saved history?") },
+            text = { Text("This permanently removes all locally saved numbers and notes from this phone.") },
+            confirmButton = {
+                TextButton(onClick = { onClear(); showClearDialog = false }) { Text("Clear all") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    editingEntry?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { editingEntry = null },
+            title = { Text("Edit note") },
+            text = {
+                OutlinedTextField(
+                    value = editedNote,
+                    onValueChange = { editedNote = it },
+                    label = { Text("Personal note") },
+                    minLines = 3
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onNoteChange(entry.id, editedNote)
+                    editingEntry = null
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingEntry = null }) { Text("Cancel") }
+            }
+        )
     }
 }

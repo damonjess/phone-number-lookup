@@ -23,7 +23,7 @@ object OsintTools {
         val qSocial = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:facebook.com OR site:linkedin.com OR site:instagram.com OR site:twitter.com OR site:x.com OR site:tiktok.com)")
         val qPastes = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:pastebin.com OR site:ghostbin.com OR site:justpaste.it OR site:github.com OR site:gitlab.com)")
         val qDocuments = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (filetype:pdf OR filetype:doc OR filetype:docx OR filetype:xls OR filetype:xlsx)")
-        val qSpam = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:whocalled.co.uk OR site:shouldicall.co.uk OR site:tellws.co.uk OR site:who-called.co.uk OR site:spamcalls.net)")
+        val qSpam = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:whocalled.co.uk OR site:shouldicall.co.uk OR site:tellows.co.uk OR site:who-called.co.uk OR site:spamcalls.net)")
         val qCompanies = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:gov.uk OR site:company-information.service.gov.uk OR site:yell.com OR site:companieshouse.gov.uk)")
 
         return listOf(
@@ -67,19 +67,19 @@ object OsintTools {
         return listOf(
             OsintDork(
                 title = "NumLookup (Free Reverse Lookup)",
-                description = "Global phone lookup for carrier, owner name, and location info.",
+                description = "Open an external lookup page; coverage and identity results are not guaranteed.",
                 url = "https://www.numlookup.com/number/$digits",
                 toolSource = "PhoneInfoga"
             ),
             OsintDork(
                 title = "SpyDialer Caller Search",
-                description = "Reverse phone lookup tool for mobile, landline, and VoIP numbers.",
+                description = "Open an external reverse-lookup page; it may be region-limited or unavailable.",
                 url = "https://www.spydialer.com/search.aspx?s=$digits",
                 toolSource = "PhoneInfoga"
             ),
             OsintDork(
                 title = "Sync.ME Directory Search",
-                description = "Searches public caller ID and social network profile connections.",
+                description = "Open an external caller-ID search; any result is crowd-sourced and unverified.",
                 url = "https://sync.me/search/?number=%2B$digits",
                 toolSource = "PhoneInfoga"
             ),
@@ -107,25 +107,25 @@ object OsintTools {
         return listOf(
             OsintDork(
                 title = "Phonia: WhatsApp Direct (wa.me)",
-                description = "Opens official WhatsApp profile chat link without saving contacts.",
+                description = "Opens a WhatsApp contact link; an account match does not prove identity.",
                 url = "https://wa.me/$digits",
                 toolSource = "Phonia"
             ),
             OsintDork(
                 title = "Phonia: Telegram Direct (t.me)",
-                description = "Check or open Telegram direct username/phone handler link.",
+                description = "Opens a Telegram link; availability and identity are not guaranteed.",
                 url = "https://t.me/+$digits",
                 toolSource = "Phonia"
             ),
             OsintDork(
                 title = "Phonia: Truecaller Web Lookup",
-                description = "Queries Truecaller public search engine for caller name and spam rating.",
+                description = "Open Truecaller web search; sign-in, region limits, or no result may apply.",
                 url = "https://www.truecaller.com/search/$countryCode/$digits",
                 toolSource = "Phonia"
             ),
             OsintDork(
                 title = "Phonia: Viber Direct Trigger",
-                description = "Deep link to launch Viber contact lookup for this number.",
+                description = "Open Viber contact lookup if the app supports this link on your device.",
                 url = "viber://chat?number=%2B$digits",
                 toolSource = "Phonia"
             )

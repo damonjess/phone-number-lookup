@@ -51,7 +51,7 @@ object UsernameScanner {
     suspend fun scan(
         username: String,
         limit: Int = DEFAULT_LIMIT,
-        concurrency: Int = 16,
+        concurrency: Int = 6,
         onProgress: (checked: Int, total: Int) -> Unit = { _, _ -> }
     ): UsernameScanOutcome = withContext(Dispatchers.IO) {
         val clean = username.trim().removePrefix("@")
@@ -99,6 +99,6 @@ object UsernameScanner {
     /** Total probes available across every merged database (0 until first load). */
     fun availableSiteCount(): Int = OsintDatasets.cachedUsernameCount()
 
-    const val DEFAULT_LIMIT = 300
+    const val DEFAULT_LIMIT = 100
     const val FULL_SCAN = 0
 }

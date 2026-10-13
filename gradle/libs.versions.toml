@@ -1,4 +1,5 @@
 [versions]
+libphonenumber = "8.13.55"
 agp = "9.4.1"
 coreKtx = "1.19.1"
 junit = "4.13.2"
@@ -11,6 +12,7 @@ kotlin = "2.2.10"
 composeBom = "2026.02.01"
 
 [libraries]
+libphonenumber = { group = "com.googlecode.libphonenumber", name = "libphonenumber", version.ref = "libphonenumber" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 json = { group = "org.json", name = "json", version.ref = "json" }

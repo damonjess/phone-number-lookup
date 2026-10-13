@@ -3,6 +3,7 @@ package com.example.phone_number_lookup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Real, live spam / caller reputation lookup against the tellows crowd-sourced
@@ -23,7 +24,8 @@ data class SpamReport(
     val location: String?,
     val country: String?,
     val callerType: String?,
-    val error: String? = null
+    val error: String? = null,
+    val checkedAt: Long = System.currentTimeMillis()
 ) {
     /**
      * Human readable verdict derived from the tellows score (1..9).
@@ -56,11 +58,23 @@ data class SpamReport(
             hasCommunityReports -> "$score / 9"
             else -> "$score / 9 (tellows default - not yet rated)"
         }
+
+    val confidenceLabel: String
+        get() = when {
+            hasCommunityReports && (comments ?: 0) >= 3 -> "Moderate — multiple community reports"
+            hasCommunityReports -> "Low — limited community reports"
+            else -> "None — no report evidence"
+        }
 }
 
 object SpamScanner {
+    private data class Cached(val report: SpamReport, val expiresAt: Long)
+    private val cache = ConcurrentHashMap<String, Cached>()
+    private const val CACHE_MS = 24L * 60L * 60L * 1000L
 
     suspend fun lookup(normalizedNumber: String): SpamReport = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        cache[normalizedNumber]?.takeIf { it.expiresAt > now }?.let { return@withContext it.report }
         val digits = normalizedNumber.replace(Regex("[^0-9]"), "")
         val e164 = "+$digits"
         val encoded = java.net.URLEncoder.encode(e164, "UTF-8")
@@ -86,7 +100,10 @@ object SpamScanner {
             }
 
             val parsed = parseReport(response.body, normalizedNumber, host)
-            if (parsed != null) return@withContext parsed
+            if (parsed != null) {
+                cache[normalizedNumber] = Cached(parsed, now + CACHE_MS)
+                return@withContext parsed
+            }
             lastError = "No rating found in tellows response"
         }
 
@@ -100,7 +117,10 @@ object SpamScanner {
             country = null,
             callerType = null,
             error = lastError
-        )
+        ).also { report ->
+            // A network/service error must be retried next time, not hidden for 24 hours.
+            if (report.error == null) cache[normalizedNumber] = Cached(report, now + CACHE_MS)
+        }
     }
 
     internal fun parseReport(body: String, normalizedNumber: String, host: String): SpamReport? {
