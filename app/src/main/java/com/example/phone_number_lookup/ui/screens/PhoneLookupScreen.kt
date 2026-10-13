@@ -16,11 +16,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,13 +42,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.HistoryEntry
-import com.example.phone_number_lookup.OsintTools
 import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.PhoneNumberUtils
-import com.example.phone_number_lookup.ui.components.DorkButton
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.openUrl
@@ -62,6 +61,7 @@ fun PhoneLookupScreen(
     val context = LocalContext.current
     val scrollState = rememberScrollState()
     var note by rememberSaveable { mutableStateOf("") }
+    var numverifyKey by rememberSaveable { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -77,7 +77,7 @@ fun PhoneLookupScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Text(
-            text = "Integrated tools: PhoneInfoga, Phonia, tellows & live web search",
+            text = "Native in-app checks: numbering data, caller reports & live web search",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -173,6 +173,59 @@ fun PhoneLookupScreen(
                     )
                     if (isUk && areaInfo != null) {
                         ResultRow("UK Region", areaInfo)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OsintToolSectionCard(
+                toolTitle = "PhoneInfoga Native Scan",
+                subtitle = "Local PhoneInfoga data is automatic. Numverify carrier data requires your apilayer key and is fetched inside the app.",
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Text("Local scanner", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                ResultRow("Country", country)
+                ResultRow("Area / region", areaInfo ?: "Not available")
+                ResultRow("Estimated line type", lineType)
+                ResultRow("E.164", formats.e164)
+                Text(
+                    "PhoneInfoga's public Google scanner generates links rather than fetching results. This app uses its native public web-search request below instead, so returned matches are displayed here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+                OutlinedTextField(
+                    value = numverifyKey,
+                    onValueChange = { numverifyKey = it },
+                    label = { Text("Numverify / apilayer API key (optional)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                )
+                Button(
+                    onClick = { viewModel.runPhoneInfogaNumverify(numverifyKey) },
+                    enabled = numverifyKey.isNotBlank() && !uiState.isPhoneInfogaScanning,
+                    modifier = Modifier.padding(top = 8.dp)
+                ) { Text("Run native Numverify") }
+                when {
+                    uiState.isPhoneInfogaScanning -> CircularProgressIndicator(
+                        modifier = Modifier.padding(top = 10.dp).size(20.dp), strokeWidth = 2.dp
+                    )
+                    uiState.phoneInfogaResult?.error != null -> Text(
+                        uiState.phoneInfogaResult!!.error!!,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    uiState.phoneInfogaResult != null -> {
+                        val result = uiState.phoneInfogaResult!!
+                        ResultRow("Numverify valid", result.valid?.toString() ?: "Not returned")
+                        result.carrier?.let { ResultRow("Carrier", it) }
+                        result.lineType?.let { ResultRow("Line type", it) }
+                        result.countryName?.let { ResultRow("Country name", it) }
+                        result.location?.let { ResultRow("Location", it) }
                     }
                 }
             }
@@ -302,55 +355,6 @@ fun PhoneLookupScreen(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-
-            // PhoneInfoga Section
-            OsintToolSectionCard(
-                toolTitle = "PhoneInfoga OSINT Engine",
-                subtitle = "Footprinting, Google dorks & external reverse lookups",
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            ) {
-                val dorks = OsintTools.getPhoneInfogaDorks(normalized, localFormat)
-                val extTools = OsintTools.getPhoneInfogaExternalTools(normalized, localFormat)
-
-                Text("PhoneInfoga Google Dorks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 6.dp))
-                dorks.forEach { dork ->
-                    DorkButton(dork, context)
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("PhoneInfoga External Lookups", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 6.dp))
-                extTools.forEach { tool ->
-                    DorkButton(tool, context)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Phonia Section
-            OsintToolSectionCard(
-                toolTitle = "Phonia OSINT Engine",
-                subtitle = "Messaging profiles & Truecaller web query",
-                containerColor = MaterialTheme.colorScheme.secondaryContainer
-            ) {
-                val phoniaTools = OsintTools.getPhoniaTools(normalized)
-                phoniaTools.forEach { tool ->
-                    DorkButton(tool, context)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // IntelBase Section
-            OsintToolSectionCard(
-                toolTitle = "IntelBase OSINT Portal",
-                subtitle = "Multi-source intelligence query hub",
-                containerColor = MaterialTheme.colorScheme.tertiaryContainer
-            ) {
-                val intelDork = OsintTools.getIntelBaseDork(normalized)
-                DorkButton(intelDork, context)
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
 
             // DuckDuckGo Web Results
             Text(

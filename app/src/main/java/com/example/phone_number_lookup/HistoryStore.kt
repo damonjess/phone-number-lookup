@@ -1,6 +1,7 @@
 package com.example.phone_number_lookup
 
 import android.content.Context
+import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -15,14 +16,18 @@ data class HistoryEntry(
 )
 
 class HistoryStore(context: Context) {
-    private val preferences = runCatching {
+    // Local JVM tests do not provide Android's SharedPreferences implementation. Keep a
+    // process-local fallback there; on a real device this always uses private app storage.
+    private val preferences: SharedPreferences? = runCatching {
         context.getSharedPreferences("number_finder_history", Context.MODE_PRIVATE)
     }.getOrNull()
+    private var inMemoryEntries: List<HistoryEntry> = emptyList()
     private val key = "entries"
 
     fun load(): List<HistoryEntry> = runCatching {
-        val prefs = preferences ?: return emptyList()
-        val array = JSONArray(prefs.getString(key, "[]"))
+        val stored = preferences?.getString(key, null)
+        if (stored == null && preferences == null) return@runCatching inMemoryEntries
+        val array = JSONArray(stored ?: "[]")
         (0 until array.length()).mapNotNull { index ->
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             HistoryEntry(
@@ -62,11 +67,11 @@ class HistoryStore(context: Context) {
     }
 
     fun clear() {
+        inMemoryEntries = emptyList()
         preferences?.edit()?.remove(key)?.apply()
     }
 
     private fun save(entries: List<HistoryEntry>) {
-        val prefs = preferences ?: return
         val array = JSONArray()
         entries.forEach { entry ->
             array.put(JSONObject().apply {
@@ -78,7 +83,8 @@ class HistoryStore(context: Context) {
                 put("createdAt", entry.createdAt)
             })
         }
-        prefs.edit().putString(key, array.toString()).apply()
+        inMemoryEntries = entries
+        preferences?.edit()?.putString(key, array.toString())?.apply()
     }
 
     private companion object {

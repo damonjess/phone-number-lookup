@@ -27,3 +27,18 @@ The project still needs Android Studio with Android SDK 37 to create an APK. No 
 - Saves the normalized number, area/country label, timestamp, and an optional personal note.
 - Keeps the latest 50 entries and provides a clear-all control.
 - Adds per-entry delete, status cycling (Unknown / Suspected spam / Trusted), note editing, rescan, and clear-all confirmation.
+
+## Native-only OSINT UI build
+
+- Removed PhoneInfoga, Phonia, IntelBase, Google-dork, manual-profile, and third-party lookup launcher sections from the visible UI.
+- Phone, username, email, and GitHub tabs now show only results returned by native in-app HTTP/API checks.
+- Unsupported sources are not replaced with fake placeholders; the app reports unavailable, blocked, or empty results honestly.
+
+## Native PhoneInfoga and GitHub-tool integration
+
+- Added a native PhoneInfoga-compatible local scanner section.
+- Added an optional in-app Numverify/apilayer request for carrier and line-type data; the API key is entered into a masked field and is not hard-coded.
+- The existing native username scanner uses the merged WhatsMyName, Sherlock, and Tookie datasets.
+- The existing native email scanner uses Blackbird-style registration probes plus the XposedOrNot breach API.
+- GitHub OSINT remains a direct GitHub REST API integration.
+- Phonia shortcuts and IntelBase launcher behavior remain excluded because no supported public API is available for an honest native result.

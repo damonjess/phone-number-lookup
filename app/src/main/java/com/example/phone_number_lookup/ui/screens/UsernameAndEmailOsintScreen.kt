@@ -39,9 +39,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.EmailRegistrationScanner
-import com.example.phone_number_lookup.OsintTools
 import com.example.phone_number_lookup.UsernameScanner
-import com.example.phone_number_lookup.ui.components.DorkButton
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.UsernameAndEmailOsintViewModel
@@ -68,7 +66,7 @@ fun UsernameAndEmailOsintScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Text(
-            text = "Site databases ported from Sherlock, Blackbird, Tookie-OSINT & WhatsMyName",
+            text = "Native HTTP checks with results displayed in this app",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -141,9 +139,6 @@ fun UsernameAndEmailOsintScreen(
         uiState.activeTarget?.let { target ->
             if (uiState.subTabState == 0) {
                 // Username Scan
-                val platforms = OsintTools.getBlackbirdUsernameScan(target)
-                val tookieDorks = OsintTools.getTookieBribDorks(target)
-
                 OsintToolSectionCard(
                     toolTitle = "Live Username Scan ($target)",
                     subtitle = if (uiState.liveSitesChecked > 0)
@@ -246,55 +241,8 @@ fun UsernameAndEmailOsintScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OsintToolSectionCard(
-                    toolTitle = "Manual Profile Links ($target)",
-                    subtitle = "Opens the platform profile pages in a browser - the live scan above already checked these",
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    platforms.forEach { platform ->
-                        OutlinedCard(
-                            onClick = { openUrl(context, platform.profileUrl) },
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(platform.platformName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                                Surface(
-                                    shape = MaterialTheme.shapes.extraSmall,
-                                    color = MaterialTheme.colorScheme.secondaryContainer
-                                ) {
-                                    Text(
-                                        text = platform.category,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OsintToolSectionCard(
-                    toolTitle = "Saved Alias Searches (Tookie / Brib)",
-                    subtitle = "Runs a web query for the alias - these open a browser, they do not scan",
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                ) {
-                    tookieDorks.forEach { dork ->
-                        DorkButton(dork, context)
-                    }
-                }
             } else {
                 // Email Scan
-                val emailDorks = OsintTools.getBlackbirdEmailScan(target)
-
                 OsintToolSectionCard(
                     toolTitle = "Accounts Registered ($target)",
                     subtitle = "Signup & availability endpoints queried directly - the same method Holehe and Blackbird use",
@@ -470,17 +418,6 @@ fun UsernameAndEmailOsintScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OsintToolSectionCard(
-                    toolTitle = "Manual Third-Party Lookups ($target)",
-                    subtitle = "Opens outside lookup services in a browser - no data is fetched in-app",
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    emailDorks.forEach { dork ->
-                        DorkButton(dork, context)
-                    }
-                }
             }
         }
     }

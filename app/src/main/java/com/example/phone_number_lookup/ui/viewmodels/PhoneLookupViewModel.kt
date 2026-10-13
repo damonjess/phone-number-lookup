@@ -7,6 +7,8 @@ import com.example.phone_number_lookup.HistoryEntry
 import com.example.phone_number_lookup.HistoryStore
 import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.PhoneNumberUtils
+import com.example.phone_number_lookup.PhoneInfogaNative
+import com.example.phone_number_lookup.PhoneInfogaNumverifyResult
 import com.example.phone_number_lookup.ReputationReport
 import com.example.phone_number_lookup.SearchRepository
 import com.example.phone_number_lookup.SearchResultItem
@@ -29,6 +31,8 @@ data class PhoneLookupUiState(
     val isSpamScanning: Boolean = false,
     val reputationReports: List<ReputationReport> = emptyList(),
     val isReputationScanning: Boolean = false,
+    val phoneInfogaResult: PhoneInfogaNumverifyResult? = null,
+    val isPhoneInfogaScanning: Boolean = false,
     val history: List<HistoryEntry> = emptyList(),
 )
 
@@ -64,6 +68,8 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                 searchError = null,
                 spamReport = null,
                 reputationReports = emptyList(),
+                phoneInfogaResult = null,
+                isPhoneInfogaScanning = false,
             )
         }
 
@@ -137,5 +143,16 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
     fun rescanHistoryEntry(number: String) {
         onPhoneNumberInputChanged(number)
         scanNumber()
+    }
+
+    fun runPhoneInfogaNumverify(apiKey: String) {
+        val raw = _uiState.value.resultNumber ?: _uiState.value.phoneNumberInput
+        val normalized = PhoneNumberUtils.normalize(raw)
+        if (normalized.isBlank()) return
+        _uiState.update { it.copy(isPhoneInfogaScanning = true, phoneInfogaResult = null) }
+        viewModelScope.launch {
+            val result = PhoneInfogaNative.queryNumverify(normalized, apiKey)
+            _uiState.update { it.copy(phoneInfogaResult = result, isPhoneInfogaScanning = false) }
+        }
     }
 }

@@ -8,7 +8,7 @@ import kotlinx.coroutines.withContext
 /**
  * Extra caller-reputation sources that return real per-number data over plain HTTP,
  * no API key, no JavaScript — the community databases that sites like who-called.co.uk
- * and the PhoneInfoga "reputation" links point at.
+ * and the old external reputation links pointed at.
  *
  * Verified live before being written here:
  *   - WhoCallsMe  HTTP 200 with user reports for a reported number, 404 when clean.

@@ -1,6 +1,5 @@
 package com.example.phone_number_lookup
 
-import android.app.Application
 import com.example.phone_number_lookup.ui.viewmodels.GitHubOsintViewModel
 import com.example.phone_number_lookup.ui.viewmodels.PhoneLookupViewModel
 import com.example.phone_number_lookup.ui.viewmodels.ScanCoordinator
@@ -18,7 +17,7 @@ class ViewModelTest {
 
     @Test
     fun phoneLookupViewModel_updatesInputAndClearsState() {
-        val viewModel = PhoneLookupViewModel(Application())
+        val viewModel = PhoneLookupViewModel(android.app.Application())
         assertEquals("", viewModel.uiState.value.phoneNumberInput)
 
         viewModel.onPhoneNumberInputChanged("01782 447307")
