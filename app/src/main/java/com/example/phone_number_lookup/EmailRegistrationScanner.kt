@@ -42,7 +42,11 @@ data class EmailRegistrationOutcome(
     val sitesChecked: Int,
     val registered: List<RegistrationHit>,
     val unreachable: Int = 0,
-    val error: String? = null
+    val error: String? = null,
+    /** Sites that said "account exists" even for a made-up address, so their hits were discarded. */
+    val discarded: List<String> = emptyList(),
+    /** Non-fatal warning, e.g. only the built-in checks ran because the full list failed to download. */
+    val notice: String? = null
 )
 
 object EmailRegistrationScanner {
@@ -87,8 +91,19 @@ object EmailRegistrationScanner {
             }
         }.awaitAll()
 
-        val registered = results
-            .filter { it.verdict == ProbeVerdict.FOUND }
+        // Control check: a made-up address at the same domain must come back "not registered".
+        // A site that still says "exists" answers yes to everything, so its hit is meaningless.
+        val domain = clean.substringAfter('@')
+        val found = results.filter { it.verdict == ProbeVerdict.FOUND }
+        val (kept, dropped) = HitVerifier.splitByControl(found, concurrency) { hit ->
+            OsintDatasets.evaluate(
+                hit.site,
+                HitVerifier.randomLocalPart() + "@" + domain,
+                timeoutMs = 12_000
+            ).verdict == ProbeVerdict.FOUND
+        }
+
+        val registered = kept
             .map {
                 RegistrationHit(
                     site = it.site.name,
@@ -97,18 +112,25 @@ object EmailRegistrationScanner {
                     profileUrl = it.profileUrl,
                     statusCode = it.statusCode,
                     finalUrl = it.finalUrl,
-                    evidence = it.evidence,
+                    evidence = it.evidence + " • control check passed",
                     confidence = confidenceFor(it),
+                    // The UI counts hits by this exact string, so it must stay unchanged.
                     verificationStatus = "Registered response"
                 )
             }
             .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() }))
 
+        val fullListLoaded = probes.any { it.source == OsintDatasets.SRC_BLACKBIRD }
+
         EmailRegistrationOutcome(
             email = clean,
             sitesChecked = probes.size,
             registered = registered,
-            unreachable = unreachable.get()
+            unreachable = unreachable.get(),
+            discarded = dropped.map { it.site.name },
+            notice = if (fullListLoaded) null else
+                "Only ${probes.size} built-in checks ran because the full site list could not be downloaded. " +
+                    "Check your connection and scan again for complete coverage."
         )
     }
 

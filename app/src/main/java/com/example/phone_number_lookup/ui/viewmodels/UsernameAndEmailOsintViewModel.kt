@@ -40,6 +40,13 @@ data class UsernameAndEmailOsintUiState(
     val isDomainScanning: Boolean = false,
     val publicSuggestions: List<String> = emptyList(),
     val correlationHints: List<String> = emptyList(),
+    /** Username sites that said "found" for a made-up name and were ignored as unreliable. */
+    val discardedCount: Int = 0,
+    val registrationDiscarded: Int = 0,
+    /** True when the registration check could not run at all (not "nothing found"). */
+    val registrationFailed: Boolean = false,
+    /** Error or warning for the registration check, e.g. incomplete site list. */
+    val registrationNotice: String? = null,
 )
 
 class UsernameAndEmailOsintViewModel : ViewModel() {
@@ -90,6 +97,10 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                 isDomainScanning = false,
                 publicSuggestions = emptyList(),
                 correlationHints = emptyList(),
+                discardedCount = 0,
+                registrationDiscarded = 0,
+                registrationFailed = false,
+                registrationNotice = null,
             )
         }
 
@@ -120,6 +131,7 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                         liveSitesChecked = outcome.sitesChecked,
                         datasetSizes = outcome.datasetSizes,
                         unreachableCount = outcome.unreachable,
+                        discardedCount = outcome.discarded.size,
                         liveError = if (outcome.sitesChecked == 0) {
                             "Could not load any site database. Check your connection and retry."
                         } else {
@@ -146,7 +158,9 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                     it.copy(
                         registeredSites = outcome.registered,
                         emailUnreachable = outcome.unreachable,
-                        liveError = outcome.error,
+                        registrationFailed = outcome.error != null,
+                        registrationNotice = outcome.error ?: outcome.notice,
+                        registrationDiscarded = outcome.discarded.size,
                         isRegistrationScanning = false,
                     )
                 }
@@ -171,7 +185,7 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
         val handle = EmailRegistrationScanner.localPart(target) ?: return
         scans.start(token) { active ->
             _uiState.update { it.copy(isLiveScanning = true) }
-            val outcome = UsernameScanner.scan(handle, limit = 150)
+            val outcome = UsernameScanner.scanWithVariants(handle, limit = 150)
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(
@@ -179,6 +193,7 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                         liveSitesChecked = outcome.sitesChecked,
                         publicSuggestions = outcome.confirmed.take(8).map { "${it.site}: ${it.profileUrl}" },
                         correlationHints = buildList {
+                            if (outcome.namesChecked.size > 1) add("Also tried likely spellings on popular sites: ${outcome.namesChecked.drop(1).joinToString(", ")}.")
                             val categories = outcome.confirmed.map { it.category }.distinct()
                             if (outcome.confirmed.size >= 2) add("The handle matched ${outcome.confirmed.size} public profiles across ${categories.size} category group(s).")
                             if (outcome.confirmed.map { it.source }.distinct().size >= 2) add("Independent public datasets reported overlapping matches; this is a correlation hint, not identity proof.")

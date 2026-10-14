@@ -5,11 +5,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.phone_number_lookup.HistoryEntry
 import com.example.phone_number_lookup.HistoryStore
+import com.example.phone_number_lookup.NumberFactsProvider
 import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.PhoneNumberUtils
 import com.example.phone_number_lookup.PhoneInfogaNative
 import com.example.phone_number_lookup.PhoneInfogaNumverifyResult
 import com.example.phone_number_lookup.ReputationReport
+import com.example.phone_number_lookup.RiskAssessor
+import com.example.phone_number_lookup.RiskVerdict
 import com.example.phone_number_lookup.SearchRepository
 import com.example.phone_number_lookup.SearchResultItem
 import com.example.phone_number_lookup.SpamReport
@@ -34,6 +37,7 @@ data class PhoneLookupUiState(
     val phoneInfogaResult: PhoneInfogaNumverifyResult? = null,
     val isPhoneInfogaScanning: Boolean = false,
     val history: List<HistoryEntry> = emptyList(),
+    val verdict: RiskVerdict? = null,
 )
 
 class PhoneLookupViewModel(application: Application) : AndroidViewModel(application) {
@@ -77,6 +81,9 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         val localFormat = if (normalized.startsWith("+44")) "0" + normalized.removePrefix("+44") else normalized
         val formats = PhoneNumberUtils.getFormattedFormats(normalized, localFormat)
 
+        // Offline numbering-rule verdict appears instantly; online sources refine it below.
+        refreshVerdict()
+
         // Scanning a second number while the first is still running must not let the
         // older lookup's answer land under the newer number's heading.
         val token = scans.supersede()
@@ -100,6 +107,7 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
             val report = SpamScanner.lookup(normalized)
             if (scans.isCurrent(active)) {
                 _uiState.update { it.copy(spamReport = report, isSpamScanning = false) }
+                refreshVerdict()
             }
         }
 
@@ -107,6 +115,7 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
             val reports = PhoneReputation.lookup(normalized)
             if (scans.isCurrent(active)) {
                 _uiState.update { it.copy(reputationReports = reports, isReputationScanning = false) }
+                refreshVerdict()
             }
         }
     }
@@ -121,15 +130,18 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         val normalized = PhoneNumberUtils.normalize(raw)
         val label = PhoneNumberUtils.getAreaInfo(normalized) ?: PhoneNumberUtils.getCountry(normalized)
         _uiState.update { it.copy(history = historyStore.add(normalized, label, note)) }
+        refreshVerdict()
     }
 
     fun clearHistory() {
         historyStore.clear()
         _uiState.update { it.copy(history = emptyList()) }
+        refreshVerdict()
     }
 
     fun deleteHistoryEntry(id: Long) {
         _uiState.update { it.copy(history = historyStore.delete(id)) }
+        refreshVerdict()
     }
 
     fun updateHistoryNote(id: Long, note: String) {
@@ -138,11 +150,30 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
 
     fun updateHistoryStatus(id: Long, status: String) {
         _uiState.update { it.copy(history = historyStore.update(id, status = status)) }
+        refreshVerdict()
     }
 
     fun rescanHistoryEntry(number: String) {
         onPhoneNumberInputChanged(number)
         scanNumber()
+    }
+
+    /** Recomputes the combined verdict from whatever has arrived so far. */
+    private fun refreshVerdict() {
+        _uiState.update { s ->
+            val raw = s.resultNumber ?: return@update s
+            val normalized = PhoneNumberUtils.normalize(raw)
+            val userStatus = s.history.firstOrNull { it.number == normalized }?.status
+            s.copy(
+                verdict = RiskAssessor.assess(
+                    facts = NumberFactsProvider.from(normalized),
+                    spam = s.spamReport,
+                    reputation = s.reputationReports,
+                    userStatus = userStatus,
+                    stillChecking = s.isSpamScanning || s.isReputationScanning,
+                )
+            )
+        }
     }
 
     fun runPhoneInfogaNumverify(apiKey: String) {

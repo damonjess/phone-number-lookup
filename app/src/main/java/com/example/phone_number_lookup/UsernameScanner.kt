@@ -3,6 +3,7 @@ package com.example.phone_number_lookup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -18,6 +19,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * Coverage comes from [OsintDatasets], which merges the community lists the Termux
  * tools use (WhatsMyName + Sherlock + Tookie-OSINT). A site appearing in more than one
  * list is probed once.
+ *
+ * Accuracy measures:
+ *  - Sites are scanned in [SitePriority] order, so Quick/Standard scans cover popular sites
+ *    instead of whichever categories sort first alphabetically.
+ *  - Every hit is re-checked with a made-up username ([HitVerifier]). A site that says
+ *    "found" for that too answers yes to everything, so its hit is discarded.
+ *  - [scanWithVariants] also tries likely spellings of the handle on the most popular sites.
  */
 data class UsernameHit(
     val site: String,
@@ -28,7 +36,9 @@ data class UsernameHit(
     val finalUrl: String = "",
     val evidence: String = "Matched a site-specific positive marker",
     val confidence: String = "Medium",
-    val verificationStatus: String = "Matched"
+    val verificationStatus: String = "Matched",
+    /** The spelling that produced this hit (differs from the typed name for variant matches). */
+    val queriedName: String = ""
 )
 
 data class UsernameScanOutcome(
@@ -37,7 +47,11 @@ data class UsernameScanOutcome(
     /** How many sites each source contributed to the merged database. */
     val datasetSizes: Map<String, Int> = emptyMap(),
     /** Requests that failed outright (timeout, DNS, blocked) rather than answering. */
-    val unreachable: Int = 0
+    val unreachable: Int = 0,
+    /** Sites that said "found" even for a made-up username, so their hits were thrown away. */
+    val discarded: List<String> = emptyList(),
+    /** Every spelling that was searched, original first. */
+    val namesChecked: List<String> = emptyList()
 ) {
     val databasesLoaded: Boolean get() = sitesChecked > 0
 }
@@ -47,6 +61,48 @@ object UsernameScanner {
     /** How many sites each bundled database is currently contributing. */
     fun datasetBreakdown(): Map<String, Int> =
         OsintDatasets.cachedUsernameBreakdown()
+
+    private class SiteScan(
+        val hits: List<UsernameHit>,
+        val discarded: List<String>,
+        val unreachable: Int
+    )
+
+    private val HIT_ORDER = compareBy<UsernameHit>({ it.category.lowercase() }, { it.site.lowercase() })
+
+    /** Probes [sites] for [name], then control-checks every hit. */
+    private suspend fun scanSites(
+        sites: List<SiteProbe>,
+        name: String,
+        concurrency: Int,
+        onEach: () -> Unit = {}
+    ): SiteScan = coroutineScope {
+        val semaphore = Semaphore(concurrency)
+        val unreachable = AtomicInteger(0)
+
+        val results = sites.map { site ->
+            async {
+                semaphore.withPermit {
+                    val result = OsintDatasets.evaluate(site, name)
+                    if (result.verdict == ProbeVerdict.UNKNOWN) unreachable.incrementAndGet()
+                    onEach()
+                    result
+                }
+            }
+        }.awaitAll()
+
+        val found = results.filter { it.verdict == ProbeVerdict.FOUND }
+        val (kept, dropped) = HitVerifier.splitByControl(found, concurrency) { hit ->
+            OsintDatasets.evaluate(hit.site, HitVerifier.randomUsername(), timeoutMs = 10_000)
+                .verdict == ProbeVerdict.FOUND
+        }
+
+        SiteScan(
+            hits = kept.map { toHit(it, name) },
+            discarded = dropped.map { it.site.name },
+            unreachable = unreachable.get()
+        )
+    }
 
     /**
      * Scans up to [limit] sites for [username]. Requests run [concurrency] at a time so
@@ -65,44 +121,59 @@ object UsernameScanner {
         val all = OsintDatasets.loadUsernameDatabases()
         if (all.isEmpty()) return@withContext UsernameScanOutcome(0, emptyList())
 
-        val sites = if (limit <= 0) all else all.take(limit)
-        val semaphore = Semaphore(concurrency)
+        val ordered = SitePriority.prioritise(all)
+        val sites = if (limit <= 0) ordered else ordered.take(limit)
         val counter = AtomicInteger(0)
-        val unreachable = AtomicInteger(0)
 
-        val results = sites.map { site ->
-            async {
-                semaphore.withPermit {
-                    val result = OsintDatasets.evaluate(site, clean)
-                    if (result.verdict == ProbeVerdict.UNKNOWN) unreachable.incrementAndGet()
-                    onProgress(counter.incrementAndGet(), sites.size)
-                    result
-                }
-            }
-        }.awaitAll()
-
-        val confirmed = results
-            .filter { it.verdict == ProbeVerdict.FOUND }
-            .map {
-                UsernameHit(
-                    site = it.site.name,
-                    category = it.site.category,
-                    source = it.site.source,
-                    profileUrl = it.profileUrl,
-                    statusCode = it.statusCode,
-                    finalUrl = it.finalUrl,
-                    evidence = it.evidence,
-                    confidence = confidenceFor(it),
-                    verificationStatus = statusFor(it)
-                )
-            }
-            .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() }))
+        val scanned = scanSites(sites, clean, concurrency) {
+            onProgress(counter.incrementAndGet(), sites.size)
+        }
 
         UsernameScanOutcome(
             sitesChecked = sites.size,
-            confirmed = confirmed,
-            datasetSizes = OsintDatasets.cachedUsernameBreakdown(),
-            unreachable = unreachable.get()
+            confirmed = scanned.hits.sortedWith(HIT_ORDER),
+            // Counted from the list actually used, so it is right even when a download was partial.
+            datasetSizes = all.groupingBy { it.source }.eachCount(),
+            unreachable = scanned.unreachable,
+            discarded = scanned.discarded,
+            namesChecked = listOf(clean)
+        )
+    }
+
+    /**
+     * Like [scan], and also tries likely spellings of [handle] (john.smith -> johnsmith, john_smith)
+     * on the [variantSiteLimit] most popular sites.
+     */
+    suspend fun scanWithVariants(
+        handle: String,
+        limit: Int = DEFAULT_LIMIT,
+        variantSiteLimit: Int = VARIANT_SITE_LIMIT,
+        concurrency: Int = 6,
+        onProgress: (checked: Int, total: Int) -> Unit = { _, _ -> }
+    ): UsernameScanOutcome = withContext(Dispatchers.IO) {
+        val names = UsernameVariants.fromHandle(handle)
+        if (names.isEmpty()) return@withContext UsernameScanOutcome(0, emptyList())
+
+        val main = scan(names.first(), limit, concurrency, onProgress)
+        if (names.size == 1 || main.sitesChecked == 0) return@withContext main
+
+        val popular = SitePriority.prioritise(OsintDatasets.loadUsernameDatabases()).take(variantSiteLimit)
+        val extraHits = ArrayList<UsernameHit>()
+        val discarded = ArrayList(main.discarded)
+        var unreachable = main.unreachable
+
+        for (name in names.drop(1)) {
+            val scanned = scanSites(popular, name, concurrency)
+            extraHits += scanned.hits
+            discarded += scanned.discarded
+            unreachable += scanned.unreachable
+        }
+
+        main.copy(
+            confirmed = (main.confirmed + extraHits).sortedWith(HIT_ORDER),
+            unreachable = unreachable,
+            discarded = discarded.distinct(),
+            namesChecked = names
         )
     }
 
@@ -118,9 +189,24 @@ object UsernameScanner {
             finalUrl = result.finalUrl,
             evidence = result.evidence,
             confidence = confidenceFor(result),
-            verificationStatus = statusFor(result)
+            verificationStatus = statusFor(result),
+            queriedName = username
         )
     }
+
+    private fun toHit(result: ProbeResult, name: String) = UsernameHit(
+        site = result.site.name,
+        category = result.site.category,
+        source = result.site.source,
+        profileUrl = result.profileUrl,
+        statusCode = result.statusCode,
+        finalUrl = result.finalUrl,
+        evidence = result.evidence + " • control check passed",
+        confidence = confidenceFor(result),
+        // The UI counts hits by this exact string, so it must stay "Matched".
+        verificationStatus = statusFor(result),
+        queriedName = name
+    )
 
     private fun confidenceFor(result: ProbeResult): String = when (result.verdict) {
         ProbeVerdict.FOUND -> if (result.evidence.contains("site-specific")) "High" else "Medium"
@@ -137,6 +223,8 @@ object UsernameScanner {
     /** Total probes available across every merged database (0 until first load). */
     fun availableSiteCount(): Int = OsintDatasets.cachedUsernameCount()
 
-    const val DEFAULT_LIMIT = 100
+    /** Matches the "Standard (300)" label in the UI; it used to be 100, below "Quick (150)". */
+    const val DEFAULT_LIMIT = 300
     const val FULL_SCAN = 0
+    const val VARIANT_SITE_LIMIT = 40
 }

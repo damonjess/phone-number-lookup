@@ -60,6 +60,9 @@ data class ProbeResult(
 
 object OsintDatasets {
 
+    /** Dataset JSON must never be truncated by the per-page body cap. */
+    private const val DATASET_MAX_CHARS = 16_000_000
+
     const val SRC_WMN = "WhatsMyName"
     const val SRC_SHERLOCK = "Sherlock"
     const val SRC_TOOKIE = "Tookie-OSINT"
@@ -168,9 +171,15 @@ object OsintDatasets {
             val wmn = async { fetch(WMN_URL)?.let { parseWhatsMyName(it) } ?: emptyList() }
             val sherlock = async { fetch(SHERLOCK_URL)?.let { parseSherlock(it) } ?: emptyList() }
             val tookie = async { fetch(TOOKIE_URL)?.let { parseTookie(it) } ?: emptyList() }
-            val merged = wmn.await() + sherlock.await() + tookie.await()
-            val deduped = dedupe(merged)
-            cachedUsername = deduped
+            val fromWmn = wmn.await()
+            val fromSherlock = sherlock.await()
+            val fromTookie = tookie.await()
+            val deduped = dedupe(fromWmn + fromSherlock + fromTookie)
+            // Keep the result for the session only when every source arrived. Caching a failed
+            // or partial download made one bad start (offline, slow network) stick until restart.
+            if (fromWmn.isNotEmpty() && fromSherlock.isNotEmpty() && fromTookie.isNotEmpty()) {
+                cachedUsername = deduped
+            }
             deduped
         }
     }
@@ -192,7 +201,7 @@ object OsintDatasets {
     }
 
     private fun fetch(url: String): String? {
-        val response = ScanHttp.get(url, timeoutMs = 25_000)
+        val response = ScanHttp.get(url, timeoutMs = 25_000, maxBodyChars = DATASET_MAX_CHARS)
         return if (response.isOk && response.body.isNotBlank()) response.body else null
     }
 
@@ -382,7 +391,8 @@ object OsintDatasets {
             // Hand-ported checks that were verified live; they take precedence over
             // same-named dataset rows, which is why they are de-duplicated first.
             val merged = dedupe(CuratedEmailChecks.PROBES + reliable)
-            cachedEmail = merged
+            // Without the Blackbird list only the 3 hand-ported checks run, so do not remember it.
+            if (parsed.isNotEmpty()) cachedEmail = merged
             merged
         }
     }

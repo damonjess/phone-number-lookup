@@ -50,6 +50,7 @@ import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.PhoneNumberUtils
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.ResultRow
+import com.example.phone_number_lookup.ui.components.VerdictCard
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.PhoneLookupViewModel
 
@@ -141,6 +142,12 @@ fun PhoneLookupScreen(
             val lineType = PhoneNumberUtils.getLineType(normalized)
             val localFormat = if (normalized.startsWith("+44")) "0" + normalized.removePrefix("+44") else normalized
             val formats = PhoneNumberUtils.getFormattedFormats(normalized, localFormat)
+
+            // One-glance verdict, with the detailed breakdown underneath
+            uiState.verdict?.let { verdict ->
+                VerdictCard(verdict)
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // Overview Card
             Card(

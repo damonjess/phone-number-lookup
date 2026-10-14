@@ -3,6 +3,7 @@ package com.example.phone_number_lookup
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.io.Reader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -35,8 +36,9 @@ object ScanHttp {
     fun get(
         url: String,
         timeoutMs: Int = 12_000,
-        headers: Map<String, String> = emptyMap()
-    ): HttpResponse = request("GET", url, null, timeoutMs, headers)
+        headers: Map<String, String> = emptyMap(),
+        maxBodyChars: Int = DEFAULT_MAX_BODY_CHARS
+    ): HttpResponse = request("GET", url, null, timeoutMs, headers, maxBodyChars)
 
     /** Performs a POST request with an optional raw body. */
     fun post(
@@ -44,10 +46,11 @@ object ScanHttp {
         body: String? = null,
         contentType: String? = "application/json",
         timeoutMs: Int = 12_000,
-        headers: Map<String, String> = emptyMap()
+        headers: Map<String, String> = emptyMap(),
+        maxBodyChars: Int = DEFAULT_MAX_BODY_CHARS
     ): HttpResponse {
         val merged = if (contentType != null) headers + ("Content-Type" to contentType) else headers
-        return request("POST", url, body, timeoutMs, merged)
+        return request("POST", url, body, timeoutMs, merged, maxBodyChars)
     }
 
     /** Performs a request. Returns [HttpResponse] with code -1 when it fails outright. */
@@ -56,7 +59,8 @@ object ScanHttp {
         url: String,
         body: String?,
         timeoutMs: Int = 12_000,
-        headers: Map<String, String> = emptyMap()
+        headers: Map<String, String> = emptyMap(),
+        maxBodyChars: Int = DEFAULT_MAX_BODY_CHARS
     ): HttpResponse {
         var connection: HttpURLConnection? = null
         return try {
@@ -81,7 +85,7 @@ object ScanHttp {
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.let {
-                BufferedReader(InputStreamReader(it, "UTF-8")).use { reader -> reader.readText() }
+                BufferedReader(InputStreamReader(it, "UTF-8")).use { reader -> readCapped(reader, maxBodyChars) }
             } ?: ""
             HttpResponse(code, text, connection.url?.toString().orEmpty())
         } catch (e: Exception) {
@@ -93,6 +97,24 @@ object ScanHttp {
                 // ignore
             }
         }
+    }
+
+    /**
+     * Profile pages can be several MB each and a scan fires hundreds of them. The "found / not found"
+     * markers sit in the first part of the page, so reading is capped. Dataset downloads pass a
+     * much larger cap so the JSON is never truncated.
+     */
+    const val DEFAULT_MAX_BODY_CHARS = 512_000
+
+    private fun readCapped(reader: Reader, maxChars: Int): String {
+        val sb = StringBuilder()
+        val buffer = CharArray(8192)
+        while (sb.length < maxChars) {
+            val n = reader.read(buffer, 0, minOf(buffer.size, maxChars - sb.length))
+            if (n < 0) break
+            sb.append(buffer, 0, n)
+        }
+        return sb.toString()
     }
 
     /** URL-encodes a path/query component. */

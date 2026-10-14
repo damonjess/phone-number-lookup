@@ -17,7 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -40,7 +39,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.EmailRegistrationScanner
-import com.example.phone_number_lookup.UsernameScanner
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.openUrl
@@ -172,7 +170,8 @@ fun UsernameAndEmailOsintScreen(
                             )
                             Text(
                                 "Scanned ${uiState.liveSitesChecked} sites" +
-                                    if (uiState.unreachableCount > 0) ", ${uiState.unreachableCount} unreachable." else ".",
+                                    (if (uiState.unreachableCount > 0) ", ${uiState.unreachableCount} unreachable" else "") +
+                                    (if (uiState.discardedCount > 0) ", ${uiState.discardedCount} ignored as unreliable" else "") + ".",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -184,6 +183,14 @@ fun UsernameAndEmailOsintScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
+                            if (uiState.discardedCount > 0) {
+                                Text(
+                                    "${uiState.discardedCount} site(s) said \"found\" for a made-up username too, so they were ignored as unreliable.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
                             if (uiState.unreachableCount > 0) {
                                 Text(
                                     "${uiState.unreachableCount} site(s) blocked the request and were not counted.",
@@ -283,6 +290,11 @@ fun UsernameAndEmailOsintScreen(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
+                        uiState.registrationFailed -> Text(
+                            uiState.registrationNotice ?: "The account check could not run. Try again.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
                         uiState.registeredSites.isEmpty() -> Text(
                             "No service reported an existing account for this address.",
                             style = MaterialTheme.typography.bodyMedium
@@ -344,6 +356,22 @@ fun UsernameAndEmailOsintScreen(
                                 }
                             }
                         }
+                    }
+                    if (!uiState.isRegistrationScanning && !uiState.registrationFailed && uiState.registrationNotice != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            uiState.registrationNotice!!,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    if (uiState.registrationDiscarded > 0 && !uiState.isRegistrationScanning) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "${uiState.registrationDiscarded} site(s) also said an account exists for a made-up address, so they were ignored as unreliable.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     if (uiState.emailUnreachable > 0 && !uiState.isRegistrationScanning) {
                         Spacer(modifier = Modifier.height(6.dp))

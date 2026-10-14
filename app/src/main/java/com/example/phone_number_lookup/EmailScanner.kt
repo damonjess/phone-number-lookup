@@ -40,6 +40,16 @@ object EmailScanner {
         if (response.isNetworkError) {
             return@withContext BreachReport(clean, false, emptyList(), "Network error contacting XposedOrNot")
         }
+        // A rate-limited or failing API must never read as "no breaches found".
+        if (response.code == 429) {
+            return@withContext BreachReport(clean, false, emptyList(), "XposedOrNot rate limit reached. Wait a minute and try again.")
+        }
+        if (response.code >= 500) {
+            return@withContext BreachReport(clean, false, emptyList(), "XposedOrNot is having problems (HTTP ${response.code}). Try again later.")
+        }
+        if (response.code == 404 && response.body.isBlank()) {
+            return@withContext BreachReport(clean, false, emptyList())
+        }
         if (response.body.isBlank()) {
             return@withContext BreachReport(clean, false, emptyList(), "Empty response from XposedOrNot")
         }
