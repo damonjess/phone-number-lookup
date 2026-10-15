@@ -32,6 +32,8 @@ data class PhoneInfogaScan(
     val message: String? = null,
     val rows: List<Pair<String, String>> = emptyList(),
     val links: List<String> = emptyList(),
+    /** Links with a readable label (for example the dork text), shown instead of raw URLs when present. */
+    val labeledLinks: List<Pair<String, String>> = emptyList(),
 )
 
 data class PhoneInfogaReport(
@@ -39,6 +41,8 @@ data class PhoneInfogaReport(
     val scans: List<PhoneInfogaScan>,
     /** Set when the server itself couldn't be used (unreachable, wrong address, not PhoneInfoga). */
     val error: String? = null,
+    /** Explains where these results came from, for example that the built-in scanners were used. */
+    val note: String? = null,
 )
 
 data class PhoneInfogaScanners(
@@ -182,6 +186,7 @@ object PhoneInfogaClient {
             message = if (rows.isEmpty() && links.isEmpty()) "The scanner ran but returned nothing." else null,
             rows = rows,
             links = links,
+            labeledLinks = labeledLinks(payload),
         )
     }
 
@@ -193,6 +198,28 @@ object PhoneInfogaClient {
     }
 
     // ------------------------------------------------------------------ flatten
+
+    /** Pairs each link with its dork text when the scanner supplies one (`{"url": ..., "dork": ...}`). */
+    internal fun labeledLinks(tree: Any?): List<Pair<String, String>> {
+        val out = ArrayList<Pair<String, String>>()
+        fun walk(node: Any?) {
+            if (out.size >= MAX_LINKS) return
+            when (node) {
+                is Map<*, *> -> {
+                    val url = node["url"] as? String
+                    if (url != null && isUrl(url)) {
+                        val label = (node["dork"] as? String)?.takeIf { it.isNotBlank() } ?: url
+                        out += label to url
+                    } else {
+                        node.values.forEach(::walk)
+                    }
+                }
+                is List<*> -> node.forEach(::walk)
+            }
+        }
+        walk(tree)
+        return out
+    }
 
     private fun isUrl(text: String) = text.startsWith("http://") || text.startsWith("https://")
 

@@ -55,7 +55,9 @@ data class ProbeResult(
     val profileUrl: String,
     val statusCode: Int,
     val finalUrl: String = "",
-    val evidence: String = ""
+    val evidence: String = "",
+    /** Set when [verdict] is UNKNOWN: why no usable answer came back. */
+    val failure: ProbeFailure? = null
 )
 
 object OsintDatasets {
@@ -100,7 +102,8 @@ object OsintDatasets {
 
         if (response.isNetworkError) {
             return ProbeResult(
-                probe, ProbeVerdict.UNKNOWN, profileUrl, -1, evidence = "Network error or timeout"
+                probe, ProbeVerdict.UNKNOWN, profileUrl, -1, evidence = "Network error or timeout",
+                failure = ProbeFailure.NETWORK
             )
         }
 
@@ -118,6 +121,15 @@ object OsintDatasets {
                 else -> "Site-specific missing marker"
             }
             return ProbeResult(probe, ProbeVerdict.NOT_FOUND, profileUrl, response.code, finalUrl, evidence)
+        }
+
+        // A 404/410 is the ordinary "no such profile" answer. Tookie entries (and some others) declare no
+        // missing codes, so these used to come back inconclusive and were counted as "blocked".
+        if ((response.code == 404 || response.code == 410) && response.code !in probe.foundCodes) {
+            return ProbeResult(
+                probe, ProbeVerdict.NOT_FOUND, profileUrl, response.code, finalUrl,
+                "HTTP ${response.code} — profile not found"
+            )
         }
 
         val hasFoundSignals = probe.foundCodes.isNotEmpty() || probe.foundStrings.isNotEmpty()
@@ -139,7 +151,12 @@ object OsintDatasets {
             response.isOk -> "HTTP ${response.code} response but no positive marker"
             else -> "HTTP ${response.code} response"
         }
-        return ProbeResult(probe, verdict, profileUrl, response.code, finalUrl, evidence)
+        val failure = if (verdict == ProbeVerdict.UNKNOWN) {
+            ProbeFailures.classify(response.code, text, networkError = false)
+        } else {
+            null
+        }
+        return ProbeResult(probe, verdict, profileUrl, response.code, finalUrl, evidence, failure)
     }
 
     suspend fun findUsernameProbe(siteName: String): SiteProbe? =

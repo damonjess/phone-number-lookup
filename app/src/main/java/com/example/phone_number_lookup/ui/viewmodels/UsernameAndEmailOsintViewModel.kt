@@ -8,6 +8,7 @@ import com.example.phone_number_lookup.EmailScanner
 import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EmailDomainScanner
 import com.example.phone_number_lookup.RegistrationHit
+import com.example.phone_number_lookup.SiteIssue
 import com.example.phone_number_lookup.UsernameHit
 import com.example.phone_number_lookup.UsernameScanner
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,9 @@ data class UsernameAndEmailOsintUiState(
     val registrationFailed: Boolean = false,
     /** Error or warning for the registration check, e.g. incomplete site list. */
     val registrationNotice: String? = null,
+    /** Username sites that couldn't be checked automatically, with the reason for each. */
+    val usernameIssues: List<SiteIssue> = emptyList(),
+    val isRetryingIssues: Boolean = false,
 )
 
 class UsernameAndEmailOsintViewModel : ViewModel() {
@@ -101,6 +105,8 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                 registrationDiscarded = 0,
                 registrationFailed = false,
                 registrationNotice = null,
+                usernameIssues = emptyList(),
+                isRetryingIssues = false,
             )
         }
 
@@ -114,11 +120,7 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
     private fun runUsernameScan(target: String, depth: Int, token: Int) {
         _uiState.update { it.copy(isLiveScanning = true) }
         scans.start(token) { active ->
-            val limit = when (depth) {
-                0 -> 150
-                1 -> UsernameScanner.DEFAULT_LIMIT
-                else -> UsernameScanner.FULL_SCAN
-            }
+            val limit = UsernameScanner.limitForDepth(depth)
             val outcome = UsernameScanner.scan(target, limit = limit) { checked, total ->
                 if (scans.isCurrent(active)) {
                     _uiState.update { it.copy(scanProgress = checked, scanTotal = total) }
@@ -131,6 +133,7 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                         liveSitesChecked = outcome.sitesChecked,
                         datasetSizes = outcome.datasetSizes,
                         unreachableCount = outcome.unreachable,
+                        usernameIssues = outcome.issues,
                         discardedCount = outcome.discarded.size,
                         liveError = if (outcome.sitesChecked == 0) {
                             "Could not load any site database. Check your connection and retry."
@@ -185,7 +188,7 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
         val handle = EmailRegistrationScanner.localPart(target) ?: return
         scans.start(token) { active ->
             _uiState.update { it.copy(isLiveScanning = true) }
-            val outcome = UsernameScanner.scanWithVariants(handle, limit = 150)
+            val outcome = UsernameScanner.scanWithVariants(handle, limit = UsernameScanner.QUICK_LIMIT)
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(
@@ -210,6 +213,33 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
         val currentSubTab = _uiState.value.subTabState
         val depth = _uiState.value.scanDepth
         _uiState.value = UsernameAndEmailOsintUiState(subTabState = currentSubTab, scanDepth = depth)
+    }
+
+    /** Re-checks only the sites that failed for a temporary reason, 2 at a time. */
+    fun retryBlockedUsernameSites() {
+        val state = _uiState.value
+        val target = state.activeTarget ?: return
+        val before = state.usernameIssues
+        if (state.isRetryingIssues || before.none { it.retryable }) return
+
+        _uiState.update { it.copy(isRetryingIssues = true) }
+        viewModelScope.launch {
+            val outcome = UsernameScanner.retry(target, before)
+            _uiState.update { s ->
+                // A new scan started meanwhile: don't mix this answer into it.
+                if (s.usernameIssues !== before) return@update s.copy(isRetryingIssues = false)
+                val retried = before.filter { it.retryable }.map { it.site.lowercase() }.toSet()
+                val remaining = s.usernameIssues.filterNot { it.site.lowercase() in retried } + outcome.issues
+                s.copy(
+                    liveHits = (s.liveHits + outcome.confirmed)
+                        .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() })),
+                    usernameIssues = remaining,
+                    unreachableCount = remaining.size,
+                    discardedCount = s.discardedCount + outcome.discarded.size,
+                    isRetryingIssues = false,
+                )
+            }
+        }
     }
 
     fun recheckUsername(site: String) {

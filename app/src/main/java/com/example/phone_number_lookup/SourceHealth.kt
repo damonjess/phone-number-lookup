@@ -51,6 +51,7 @@ object SourceHealth {
             async { timed("800notes (US/CA)") { checkHtml("https://800notes.com/Phone.aspx/1-212-555-0123") } },
             async { timed("DuckDuckGo web search") { checkDuckDuckGo() } },
             async { timed("PhoneInfoga server") { checkPhoneInfoga(phoneInfogaUrl) } },
+            async { timed("OVH Telecom API (built-in scanner)") { checkOvh() } },
             async { timed("Numverify") { checkNumverify(numverifyKey) } },
         ).awaitAll()
     }
@@ -68,7 +69,7 @@ object SourceHealth {
 
     private fun checkTellows(): Pair<HealthState, String> {
         val response = ScanHttp.get("https://www.tellows.co.uk/basic/num/%2B442079460958?json=1", timeoutMs = 12_000)
-        val parsed = SpamScanner.parseReport(response.body, UK_TEST, "https://www.tellows.co.uk")
+        val parsed = SpamScanner.parseReport(response.body, UK_TEST, "www.tellows.co.uk")
         val state = classifyHttp(response.code, formatOk = parsed?.score != null)
         return state to describe(state, response.code)
     }
@@ -88,7 +89,9 @@ object SourceHealth {
         is DdgOutcome.Results -> HealthState.OK to "Returned results."
         DdgOutcome.NoResults -> HealthState.CHANGED to "Said \"no results\" for a very common query, which is unexpected."
         is DdgOutcome.Blocked -> HealthState.BLOCKED to "Bot check (${outcome.reason}). Web results are unavailable until it clears."
-        is DdgOutcome.Unrecognised -> HealthState.CHANGED to "Page not recognised (${outcome.reason}). The site may have changed."
+        is DdgOutcome.Unrecognised -> HealthState.CHANGED to
+            "Page not recognised (${outcome.reason})." +
+            if (outcome.excerpt.isNotEmpty()) " Page began: ${outcome.excerpt}." else ""
         DdgOutcome.Unreachable -> HealthState.UNREACHABLE to "No response (network error or timeout)."
     }
 
@@ -100,8 +103,24 @@ object SourceHealth {
         if (result.error == null) {
             return HealthState.OK to "${result.scanners.size} scanners: ${result.scanners.joinToString { it.name }}."
         }
+        // Nothing listening is normal when no server has been set up: the built-in scanners take over.
+        if (result.httpCode == -1) {
+            return HealthState.NOT_CONFIGURED to
+                "No PhoneInfoga server reachable at $base. The built-in scanners are used instead."
+        }
         val state = classifyHttp(result.httpCode, formatOk = false)
         return state to result.error
+    }
+
+    /** Reads only the start of OVH's range list, enough to confirm it answers in the expected format. */
+    private fun checkOvh(): Pair<HealthState, String> {
+        val response = ScanHttp.get(
+            "https://api.ovh.com/1.0/telephony/number/detailedZones?country=gb",
+            timeoutMs = 20_000,
+            maxBodyChars = 200_000
+        )
+        val state = classifyHttp(response.code, formatOk = response.body.trimStart().startsWith("["))
+        return state to describe(state, response.code)
     }
 
     private suspend fun checkNumverify(key: String): Pair<HealthState, String> {
@@ -111,7 +130,7 @@ object SourceHealth {
         val lower = error.lowercase()
         val state = when {
             "rejected" in lower || "rate" in lower || "quota" in lower || "limit" in lower -> HealthState.BLOCKED
-            "network" in lower || "timed out" in lower || "connect" in lower -> HealthState.UNREACHABLE
+            "network" in lower || "timed out" in lower || "connect" in lower || "unavailable" in lower -> HealthState.UNREACHABLE
             else -> HealthState.CHANGED
         }
         return state to error

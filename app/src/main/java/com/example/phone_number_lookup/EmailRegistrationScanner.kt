@@ -82,11 +82,13 @@ object EmailRegistrationScanner {
 
         val results = probes.map { probe ->
             async {
-                semaphore.withPermit {
-                    val result = OsintDatasets.evaluate(probe, clean, timeoutMs = 12_000)
-                    if (result.verdict == ProbeVerdict.UNKNOWN) unreachable.incrementAndGet()
-                    onProgress(counter.incrementAndGet(), probes.size)
-                    result
+                HostGate.run(HostGate.hostKey(probe.urlTemplate)) {
+                    semaphore.withPermit {
+                        val result = ResilientProbe.evaluate(probe, clean, timeoutMs = 12_000)
+                        if (result.verdict == ProbeVerdict.UNKNOWN) unreachable.incrementAndGet()
+                        onProgress(counter.incrementAndGet(), probes.size)
+                        result
+                    }
                 }
             }
         }.awaitAll()

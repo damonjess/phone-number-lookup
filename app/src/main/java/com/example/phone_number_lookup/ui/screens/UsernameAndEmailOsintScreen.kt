@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.UsernameScanner
+import com.example.phone_number_lookup.ui.components.IssuesSection
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.openUrl
@@ -176,11 +177,17 @@ fun UsernameAndEmailOsintScreen(
                             )
                             Text(
                                 "Scanned ${uiState.liveSitesChecked} sites" +
-                                    (if (uiState.unreachableCount > 0) ", ${uiState.unreachableCount} unreachable" else "") +
+                                    (if (uiState.unreachableCount > 0) ", ${uiState.unreachableCount} couldn't be checked" else "") +
                                     (if (uiState.discardedCount > 0) ", ${uiState.discardedCount} ignored as unreliable" else "") + ".",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            IssuesSection(
+                                    issues = uiState.usernameIssues,
+                                    isRetrying = uiState.isRetryingIssues,
+                                    onRetry = viewModel::retryBlockedUsernameSites,
+                                    onOpen = { url -> openUrl(context, url) }
+                                )
                         }
                         else -> {
                             Text(
@@ -197,14 +204,12 @@ fun UsernameAndEmailOsintScreen(
                                     modifier = Modifier.padding(bottom = 4.dp)
                                 )
                             }
-                            if (uiState.unreachableCount > 0) {
-                                Text(
-                                    "${uiState.unreachableCount} site(s) blocked the request and were not counted.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(bottom = 4.dp)
+                            IssuesSection(
+                                    issues = uiState.usernameIssues,
+                                    isRetrying = uiState.isRetryingIssues,
+                                    onRetry = viewModel::retryBlockedUsernameSites,
+                                    onOpen = { url -> openUrl(context, url) }
                                 )
-                            }
                             uiState.liveHits.forEach { hit ->
                                 OutlinedCard(
                                     onClick = { openUrl(context, hit.profileUrl) },
@@ -382,7 +387,7 @@ fun UsernameAndEmailOsintScreen(
                     if (uiState.emailUnreachable > 0 && !uiState.isRegistrationScanning) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            "${uiState.emailUnreachable} site(s) blocked the request and were not counted.",
+                            "${uiState.emailUnreachable} site(s) couldn't be checked automatically (blocked, timed out or no clear answer) and were not counted.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -2,6 +2,7 @@ package com.example.phone_number_lookup.ui.viewmodels
 
 import android.app.Application
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.phone_number_lookup.HistoryEntry
@@ -9,6 +10,7 @@ import com.example.phone_number_lookup.HistoryStore
 import com.example.phone_number_lookup.NumberFactsProvider
 import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.PhoneNumberUtils
+import com.example.phone_number_lookup.PhoneInfogaBuiltIn
 import com.example.phone_number_lookup.PhoneInfogaClient
 import com.example.phone_number_lookup.PhoneInfogaNative
 import com.example.phone_number_lookup.PhoneInfogaNumverifyResult
@@ -59,7 +61,7 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
     private val _uiState = MutableStateFlow(PhoneLookupUiState())
     val uiState: StateFlow<PhoneLookupUiState> = _uiState.asStateFlow()
 
-    private val prefs = runCatching {
+    private val prefs: SharedPreferences? = runCatching {
         application.getSharedPreferences("phoneinfoga_prefs", Context.MODE_PRIVATE)
     }.getOrNull()
 
@@ -192,30 +194,28 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         _uiState.update { it.copy(phoneInfogaUrl = url) }
     }
 
-    /** Runs the real PhoneInfoga project through its REST API on the configured server. */
+    /**
+     * Runs PhoneInfoga: through the configured server when one is reachable, otherwise with the
+     * built-in versions of its Google-dork and OVH scanners, so the button always gives a result.
+     */
     fun runPhoneInfogaServer() {
         val state = _uiState.value
         val normalized = PhoneNumberUtils.normalize(state.resultNumber ?: state.phoneNumberInput)
         if (normalized.isBlank()) return
 
         val base = PhoneInfogaClient.normaliseBaseUrl(state.phoneInfogaUrl)
-        if (base == null) {
-            _uiState.update {
-                it.copy(
-                    phoneInfogaReport = PhoneInfogaReport(
-                        state.phoneInfogaUrl,
-                        emptyList(),
-                        "That server address doesn't look valid. Example: http://127.0.0.1:5000"
-                    )
-                )
-            }
-            return
-        }
-
         phoneInfogaJob?.cancel()
         _uiState.update { it.copy(isPhoneInfogaServerRunning = true, phoneInfogaReport = null) }
         phoneInfogaJob = viewModelScope.launch {
-            val report = PhoneInfogaClient.scan(base, normalized)
+            val serverReport = base?.let { PhoneInfogaClient.scan(it, normalized) }
+            val report = if (serverReport != null && serverReport.error == null) {
+                serverReport
+            } else {
+                val why = serverReport?.error ?: "No PhoneInfoga server address is set."
+                PhoneInfogaBuiltIn.run(normalized).let { builtIn ->
+                    builtIn.copy(note = "No PhoneInfoga server was used ($why) so the built-in scanners ran instead.")
+                }
+            }
             // Don't let an old run's answer land under a newer number.
             val current = PhoneNumberUtils.normalize(_uiState.value.resultNumber ?: _uiState.value.phoneNumberInput)
             if (current == normalized) {

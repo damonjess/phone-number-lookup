@@ -243,14 +243,14 @@ fun PhoneLookupScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             OsintToolSectionCard(
-                toolTitle = "PhoneInfoga (the real tool)",
-                subtitle = "Runs the actual PhoneInfoga project on a server you control. Some of its scanners contact third parties such as OVH and Numverify.",
+                toolTitle = "PhoneInfoga",
+                subtitle = "Uses your PhoneInfoga server if one is running, otherwise runs built-in versions of its Google-dork and OVH scanners. The OVH check contacts OVH.",
                 containerColor = MaterialTheme.colorScheme.secondaryContainer
             ) {
                 OutlinedTextField(
                     value = uiState.phoneInfogaUrl,
                     onValueChange = viewModel::onPhoneInfogaUrlChanged,
-                    label = { Text("PhoneInfoga server address") },
+                    label = { Text("PhoneInfoga server (optional)") },
                     placeholder = { Text("http://127.0.0.1:5000") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     singleLine = true,
@@ -263,6 +263,14 @@ fun PhoneLookupScreen(
                 ) { Text("Run PhoneInfoga") }
 
                 val piReport = uiState.phoneInfogaReport
+                piReport?.note?.let { note ->
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
                 when {
                     uiState.isPhoneInfogaServerRunning -> CircularProgressIndicator(
                         modifier = Modifier.padding(top = 10.dp).size(20.dp), strokeWidth = 2.dp
@@ -300,12 +308,20 @@ fun PhoneLookupScreen(
                                 )
                             }
                             scan.rows.forEach { (label, value) -> ResultRow(label, value) }
-                            scan.links.take(12).forEach { link ->
-                                TextButton(onClick = { openUrl(context, link) }) {
-                                    Text(link, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (scan.labeledLinks.isNotEmpty()) {
+                                scan.labeledLinks.take(30).forEach { (label, link) ->
+                                    TextButton(onClick = { openUrl(context, link) }) {
+                                        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            } else {
+                                scan.links.take(12).forEach { link ->
+                                    TextButton(onClick = { openUrl(context, link) }) {
+                                        Text(link, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                                 }
                             }
-                            if (scan.links.size > 12) {
+                            if (scan.labeledLinks.isEmpty() && scan.links.size > 12) {
                                 Text(
                                     "+${scan.links.size - 12} more links",
                                     style = MaterialTheme.typography.bodySmall,

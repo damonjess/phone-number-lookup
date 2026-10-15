@@ -42,7 +42,8 @@ object SearchRepository {
             is DdgOutcome.Unrecognised -> SearchResponse(
                 emptyList(),
                 "Web search returned a page the app couldn't read (${outcome.reason}). " +
-                    "The site may have changed, so nothing can be concluded from it."
+                    "Nothing can be concluded from it." +
+                    if (outcome.excerpt.isNotEmpty()) " Page began: ${outcome.excerpt}." else ""
             )
             DdgOutcome.Unreachable -> SearchResponse(emptyList(), "Web search couldn't connect or timed out.")
         }
