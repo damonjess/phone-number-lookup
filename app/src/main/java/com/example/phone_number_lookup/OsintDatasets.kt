@@ -76,7 +76,7 @@ object OsintDatasets {
     const val TOOKIE_URL =
         "https://raw.githubusercontent.com/Alfredredbird/tookie-osint/main/sites/sites.json"
     const val BLACKBIRD_EMAIL_URL =
-        "https://raw.githubusercontent.com/antoniaci/blackbird/main/data/email-data.json"
+        "https://raw.githubusercontent.com/p1ngul1n0/blackbird/main/data/email-data.json"
 
     /**
      * Runs [probe] against the target and classifies the response.
@@ -174,10 +174,12 @@ object OsintDatasets {
             val fromWmn = wmn.await()
             val fromSherlock = sherlock.await()
             val fromTookie = tookie.await()
-            val deduped = dedupe(fromWmn + fromSherlock + fromTookie)
-            // Keep the result for the session only when every source arrived. Caching a failed
-            // or partial download made one bad start (offline, slow network) stick until restart.
-            if (fromWmn.isNotEmpty() && fromSherlock.isNotEmpty() && fromTookie.isNotEmpty()) {
+            val deduped = dedupe(fromWmn + fromSherlock + fromTookie, byProfile = true)
+            // Keep the result for the session only when the two main lists arrived. Caching a failed
+            // download made one bad start (offline, slow network) stick until restart. Tookie is the
+            // smallest list and mostly overlaps the others, so if only it fails (for example its file
+            // format changes again) that must not force re-downloading everything on every scan.
+            if (fromWmn.isNotEmpty() && fromSherlock.isNotEmpty()) {
                 cachedUsername = deduped
             }
             deduped
@@ -207,16 +209,8 @@ object OsintDatasets {
 
     internal data class SourceCount(val source: String, val sites: Int)
 
-    private fun dedupe(sites: List<SiteProbe>): List<SiteProbe> {
-        val seen = HashSet<String>()
-        val out = ArrayList<SiteProbe>(sites.size)
-        for (site in sites) {
-            val key = site.name.trim().lowercase()
-            if (key.isEmpty() || !seen.add(key)) continue
-            out.add(site)
-        }
-        return out.sortedWith(compareBy({ it.category.lowercase() }, { it.name.lowercase() }))
-    }
+    private fun dedupe(sites: List<SiteProbe>, byProfile: Boolean = false): List<SiteProbe> =
+        SiteKey.dedupe(sites, byProfile)
 
     // ------------------------------------------------------- WhatsMyName parse
 

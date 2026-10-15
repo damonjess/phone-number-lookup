@@ -223,8 +223,19 @@ object UsernameScanner {
     /** Total probes available across every merged database (0 until first load). */
     fun availableSiteCount(): Int = OsintDatasets.cachedUsernameCount()
 
-    /** Matches the "Standard (300)" label in the UI; it used to be 100, below "Quick (150)". */
-    const val DEFAULT_LIMIT = 300
+    /** Sites scanned by each depth button. The labels in the UI are built from these. */
+    const val QUICK_LIMIT = 150
+    const val STANDARD_LIMIT = 300
     const val FULL_SCAN = 0
+
+    /** Default for callers that don't choose a depth. It was 100, which Standard wrongly shared. */
+    const val DEFAULT_LIMIT = STANDARD_LIMIT
+
+    /** Maps the depth buttons (0 Quick, 1 Standard, 2 Full) to a site limit; 0 means every site. */
+    fun limitForDepth(depth: Int): Int = when (depth) {
+        0 -> QUICK_LIMIT
+        1 -> STANDARD_LIMIT
+        else -> FULL_SCAN
+    }
     const val VARIANT_SITE_LIMIT = 40
 }

@@ -1,12 +1,7 @@
 package com.example.phone_number_lookup
 
-import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 
@@ -27,61 +22,53 @@ object SearchRepository {
     private val cache = ConcurrentHashMap<String, Cached>()
     private const val CACHE_MS = 24L * 60L * 60L * 1000L
 
+    private const val ENDPOINT = "https://html.duckduckgo.com/html/"
+
+    const val BLOCKED_MESSAGE =
+        "DuckDuckGo blocked this search with a bot check, so web results aren't available right now. " +
+            "This does NOT mean nothing was found. Try again later."
+
     suspend fun searchWeb(numberFormats: List<String>): SearchResponse = withContext(Dispatchers.IO) {
         val formats = numberFormats.map { it.trim() }.filter { it.isNotBlank() }.distinct()
         val cacheKey = formats.joinToString("|")
         cache[cacheKey]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let { return@withContext it.response }
-        var connection: HttpURLConnection? = null
-        try {
-            val query = formats.joinToString(" OR ") { "\"$it\"" }
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            connection = URL("https://html.duckduckgo.com/html/?q=$encodedQuery")
-                .openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 8_000
-            connection.readTimeout = 8_000
-            connection.setRequestProperty(
-                "User-Agent",
-                "Mozilla/5.0 (Android) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
-            )
 
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                return@withContext SearchResponse(emptyList(), "Web search unavailable (HTTP $code).")
-            }
-
-            val html = BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8)).use { it.readText() }
-            val resultPattern = Regex(
-                """<a class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?<a class="result__snippet"[^>]*>(.*?)</a>""",
-                RegexOption.DOT_MATCHES_ALL
+        val query = formats.joinToString(" OR ") { "\"$it\"" }
+        when (val outcome = fetch(query)) {
+            is DdgOutcome.Results -> remember(cacheKey, SearchResponse(outcome.items))
+            DdgOutcome.NoResults -> remember(cacheKey, SearchResponse(emptyList()))
+            // Failures are never cached: a block must not turn into "no results" for a day.
+            is DdgOutcome.Blocked -> SearchResponse(emptyList(), BLOCKED_MESSAGE)
+            is DdgOutcome.Unrecognised -> SearchResponse(
+                emptyList(),
+                "Web search returned a page the app couldn't read (${outcome.reason}). " +
+                    "The site may have changed, so nothing can be concluded from it."
             )
-            val results = resultPattern.findAll(html).take(8).mapNotNull { match ->
-                var link = match.groupValues[1]
-                if (link.contains("uddg=")) {
-                    link = Uri.parse("https://duckduckgo.com$link").getQueryParameter("uddg") ?: link
-                }
-                val title = unescapeHtml(match.groupValues[2].replace(Regex("<[^>]*>"), "").trim())
-                val snippet = unescapeHtml(match.groupValues[3].replace(Regex("<[^>]*>"), "").trim())
-                if (title.isBlank() || snippet.isBlank()) null
-                else SearchResultItem(title, snippet, link, "DuckDuckGo")
-            }.toList()
-            SearchResponse(results).also {
-                cache[cacheKey] = Cached(it, System.currentTimeMillis() + CACHE_MS)
-            }
-        } catch (_: java.net.SocketTimeoutException) {
-            SearchResponse(emptyList(), "Web search timed out.")
-        } catch (_: Exception) {
-            SearchResponse(emptyList(), "Web search failed or was blocked.")
-        } finally {
-            connection?.disconnect()
+            DdgOutcome.Unreachable -> SearchResponse(emptyList(), "Web search couldn't connect or timed out.")
         }
     }
 
-    private fun unescapeHtml(text: String): String = text
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
+    /** One uncached request with a common query, used by the source health check. */
+    suspend fun probe(): DdgOutcome = withContext(Dispatchers.IO) { fetch("wikipedia") }
+
+    private fun remember(key: String, response: SearchResponse): SearchResponse {
+        cache[key] = Cached(response, System.currentTimeMillis() + CACHE_MS)
+        return response
+    }
+
+    private fun fetch(query: String): DdgOutcome {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val get = ScanHttp.get("$ENDPOINT?q=$encoded", timeoutMs = 10_000)
+        val first = DdgParser.classify(get.code, get.body)
+        if (first !is DdgOutcome.Blocked) return first
+
+        // Some responses to GET are bot checks while a form POST is answered normally, so try once.
+        val post = ScanHttp.post(
+            ENDPOINT,
+            "q=$encoded&b=",
+            contentType = "application/x-www-form-urlencoded",
+            timeoutMs = 10_000
+        )
+        return DdgParser.classify(post.code, post.body)
+    }
 }

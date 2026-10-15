@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.EmailRegistrationScanner
+import com.example.phone_number_lookup.UsernameScanner
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.openUrl
@@ -100,7 +102,11 @@ fun UsernameAndEmailOsintScreen(
                     .padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Quick (150)" to 0, "Standard (300)" to 1, "Full sweep" to 2).forEach { (label, index) ->
+                listOf(
+                    "Quick (${UsernameScanner.QUICK_LIMIT})" to 0,
+                    "Standard (${UsernameScanner.STANDARD_LIMIT})" to 1,
+                    "Full sweep" to 2
+                ).forEach { (label, index) ->
                     FilterChip(
                         selected = uiState.scanDepth == index,
                         onClick = { viewModel.onScanDepthChanged(index) },

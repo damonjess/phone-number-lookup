@@ -26,11 +26,15 @@ class LiveEndpointSmokeTest {
         assertTrue("expected a large merged database, got ${sites.size}", sites.size > 800)
         assertTrue("WhatsMyName contributed nothing", (breakdown[OsintDatasets.SRC_WMN] ?: 0) > 300)
         assertTrue("Sherlock contributed nothing", (breakdown[OsintDatasets.SRC_SHERLOCK] ?: 0) > 100)
-        assertTrue("Tookie contributed nothing", (breakdown[OsintDatasets.SRC_TOOKIE] ?: 0) > 50)
+        // Most of Tookie's list also appears in WhatsMyName/Sherlock and is merged away by profile URL,
+        // so only its genuinely new sites remain (about 50 at the time of writing).
+        assertTrue("Tookie contributed nothing", (breakdown[OsintDatasets.SRC_TOOKIE] ?: 0) >= 10)
 
-        // De-duplication must have removed overlapping rows from the merge.
+        // De-duplication must have removed overlapping rows from the merge, by name and by profile page.
         val names = sites.map { it.name.lowercase() }
         assertTrue("duplicate sites survived the merge", names.size == names.toSet().size)
+        val profiles = sites.map { SiteKey.of(it.profileTemplate) }.filter { it.isNotEmpty() }
+        assertTrue("the same profile page is probed twice", profiles.size == profiles.toSet().size)
     }
 
     @Test
