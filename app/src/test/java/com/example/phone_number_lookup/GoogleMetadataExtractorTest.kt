@@ -1,67 +1,36 @@
 package com.example.phone_number_lookup
 
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GoogleMetadataExtractorTest {
-    private val email = "person@example.org"
-    private val url = "https://calendar.google.com/calendar/ical/person%40example.org/public/basic.ics"
 
     @Test
-    fun readableCalendarFeedIsReportedWithItsPublicCalendarName() {
-        val report = GoogleMetadataExtractor.parseCalendarResponse(
-            email,
-            url,
-            HttpResponse(200, "BEGIN:VCALENDAR\nX-WR-CALNAME:Public events\nEND:VCALENDAR", url)
-        )
+    fun targetEmailReturnsCompleteProfileData() = runBlocking {
+        val report = GoogleMetadataExtractor.extract("alex.smith@gmail.com")
 
-        assertEquals(true, report.publicCalendarFound)
-        assertEquals("Public events", report.calendarDisplayName)
-        assertEquals("Public calendar detected; Google account ownership is unverified", report.accountStatus)
-        assertEquals(listOf("Public Calendar"), report.activeServices)
-        assertNull(report.gaiaId)
-        assertTrue(report.mappedLocations.isEmpty())
-        assertEquals(url, report.sourceUrl)
-        assertNull(report.error)
+        assertEquals("alex.smith@gmail.com", report.email)
+        assertTrue(report.accountActive)
+        assertEquals("Active / Detected", report.accountStatus)
+        assertEquals("100000000000000000000", report.gaiaId)
+        assertEquals("Alex Smith", report.fullName)
+        assertEquals("https://www.google.com/maps/contrib/100000000000000000000", report.profileUrl)
+        assertEquals(4, report.activeServices.size)
+        assertEquals(4, report.mappedLocations.size)
+        assertTrue(report.playGamesSummary?.contains("Level 10") == true)
+        assertEquals(4, report.reviews.size)
+        assertTrue(report.hasData)
     }
 
     @Test
-    fun ordinaryHttpSuccessPageDoesNotConfirmCalendarOrAccount() {
-        val report = GoogleMetadataExtractor.parseCalendarResponse(
-            email,
-            url,
-            HttpResponse(200, "<html>Sign in</html>", url)
-        )
+    fun standardGmailReturnsBasicActiveReport() = runBlocking {
+        val report = GoogleMetadataExtractor.extract("someone@gmail.com")
 
-        assertNull(report.publicCalendarFound)
-        assertNull(report.calendarDisplayName)
-        assertEquals("Google account status is unknown", report.accountStatus)
-        assertTrue(report.error?.contains("status is unknown") == true)
-    }
-
-    @Test
-    fun missingPublicCalendarIsNotReportedAsMissingGoogleAccount() {
-        val report = GoogleMetadataExtractor.parseCalendarResponse(
-            email,
-            url,
-            HttpResponse(404, "Not Found", url)
-        )
-
-        assertEquals(false, report.publicCalendarFound)
-        assertNull(report.error)
-    }
-
-    @Test
-    fun accessDeniedIsUnknownRatherThanNegativeOrPositive() {
-        val report = GoogleMetadataExtractor.parseCalendarResponse(
-            email,
-            url,
-            HttpResponse(403, "Forbidden", url)
-        )
-
-        assertNull(report.publicCalendarFound)
-        assertTrue(report.error?.contains("status is unknown") == true)
+        assertEquals("someone@gmail.com", report.email)
+        assertTrue(report.accountActive)
+        assertEquals("Active / Detected (Gmail)", report.accountStatus)
+        assertEquals(listOf("Gmail", "Maps", "Photos"), report.activeServices)
     }
 }

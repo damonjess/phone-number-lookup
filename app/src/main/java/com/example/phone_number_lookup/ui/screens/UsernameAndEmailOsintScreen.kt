@@ -167,12 +167,12 @@ fun UsernameAndEmailOsintScreen(
         }
 
         val inputLabel = when (uiState.subTabState) {
-            0 -> "Enter Username (e.g. dnkirby)"
+            0 -> "Enter Username (e.g. alex_smith)"
             1 -> "Enter Email (e.g. alex.smith@gmail.com)"
             else -> "Enter Domain (e.g. example.com)"
         }
         val inputPlaceholder = when (uiState.subTabState) {
-            0 -> "e.g. dnkirby or john_doe"
+            0 -> "e.g. alex_smith or john_doe"
             1 -> "e.g. alex.smith@gmail.com"
             else -> "e.g. github.com or company.co.uk"
         }

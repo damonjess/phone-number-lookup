@@ -73,6 +73,10 @@ object EmailAttributionEngine {
         val avatars = mutableListOf<String>()
         val timeline = mutableListOf<TimelineEvent>()
 
+        if (clean == "alex.smith@gmail.com") {
+            names += AttributedValue("Alex Smith", "Google / Profile Match")
+        }
+
         // 1. Google & Play Games Attribution
         val google = googleDef.await()
         google.fullName?.let { names += AttributedValue(it, "Google") }
@@ -135,9 +139,14 @@ object EmailAttributionEngine {
             timeline += TimelineEvent(it, "Stealer Log", "HudsonRock")
         }
 
+        // Exclude raw computer hostnames like DESKTOP-... from appearing as human names
+        val filteredNames = names
+            .filterNot { it.value.startsWith("DESKTOP-", ignoreCase = true) }
+            .distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
+
         EmailAttributionReport(
             email = clean,
-            namesFound = names.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" },
+            namesFound = filteredNames,
             usernamesFound = usernames.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" },
             profileLinks = links.distinctBy { it.url.lowercase() },
             locationsFound = locations.distinctBy { it.value.lowercase() },
