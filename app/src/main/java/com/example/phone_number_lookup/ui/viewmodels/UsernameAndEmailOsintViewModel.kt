@@ -10,8 +10,6 @@ import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EmailDomainScanner
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.EmailScanner
-import com.example.phone_number_lookup.GoogleAccountOsint
-import com.example.phone_number_lookup.GoogleAccountOsintReport
 import com.example.phone_number_lookup.GoogleMetadataExtractor
 import com.example.phone_number_lookup.GoogleMetadataReport
 import com.example.phone_number_lookup.IdentityEnricher
@@ -63,8 +61,6 @@ data class UsernameAndEmailOsintUiState(
     val isEnrichingIdentity: Boolean = false,
     val networkOsintReport: DomainOsintReport? = null,
     val isNetworkScanning: Boolean = false,
-    val googleOsintReport: GoogleAccountOsintReport? = null,
-    val isGoogleScanning: Boolean = false,
     val googleMetadata: GoogleMetadataReport? = null,
     val isGoogleMetadataScanning: Boolean = false,
 )
@@ -134,8 +130,6 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isEnrichingIdentity = false,
                 networkOsintReport = null,
                 isNetworkScanning = false,
-                googleOsintReport = null,
-                isGoogleScanning = false,
                 googleMetadata = null,
                 isGoogleMetadataScanning = false,
             )
@@ -201,37 +195,25 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isBreachScanning = true,
                 isDomainScanning = true,
                 isEnrichingIdentity = true,
-                isGoogleScanning = true,
                 isGoogleMetadataScanning = true
             )
         }
 
         scans.start(token) { active ->
-            val meta = GoogleMetadataExtractor.extract(target)
+            val meta = try {
+                GoogleMetadataExtractor.extract(target)
+            } catch (e: Exception) {
+                GoogleMetadataReport(target, error = "Public calendar check failed: ${e.message ?: "unknown error"}")
+            }
             if (scans.isCurrent(active)) {
                 _uiState.update {
-                    it.copy(
-                        googleMetadata = meta,
-                        isGoogleMetadataScanning = false
-                    )
+                    it.copy(googleMetadata = meta, isGoogleMetadataScanning = false)
                 }
             }
         }
 
         scans.start(token) { active ->
-            val googleReport = GoogleAccountOsint.scan(target)
-            if (scans.isCurrent(active)) {
-                _uiState.update {
-                    it.copy(
-                        googleOsintReport = googleReport,
-                        isGoogleScanning = false
-                    )
-                }
-            }
-        }
-
-        scans.start(token) { active ->
-            // Email registration checks always use the Python Blackbird-compatible runner.
+            // Email account discovery uses the upstream Blackbird Python scan core.
             val outcome = try {
                 PythonOsintBridge.scanEmailBlackbirdPython(getApplication(), target)
             } catch (e: Exception) {

@@ -8,14 +8,18 @@ The app contains several different kinds of OSINT features. They are intentional
 - **Tellows:** the app requests the public caller-reputation response and parses its score, report count, location, and caller type when returned.
 - **DuckDuckGo web search:** the app requests a public HTML search and extracts result titles, snippets, and links. Results may be blocked or incomplete.
 - **GitHub OSINT:** the app uses GitHub's public REST endpoints for usernames and repositories. Unauthenticated requests are rate-limited.
-- **Username scanner:** the app probes the public endpoints described by the merged site datasets. Sites that block, time out, or return ambiguous responses are reported separately where supported.
+- **Username scanner:** the app embeds upstream Sherlock, Tookie-OSINT, and Blackbird Python scan cores through Chaquopy. The selected tool or all three can be run in-process; results are rendered by the Android UI rather than the upstream terminal interface.
+- **Email account discovery:** the app calls the upstream Blackbird Python email scan core. The email's local part is also checked against public username profiles using the selected upstream Python scanner.
+- **Google public-calendar check:** reports only whether the email-specific public calendar URL returned a readable calendar and, if present, its calendar display name. This does not prove that the email owns an active Google account.
 - **Email breach check:** the app sends the entered email to XposedOrNot and displays the response. A negative response is not proof that the address has never appeared in a breach.
 
-The GitHub-derived tools are represented by their native functions rather than launcher cards. The merged WhatsMyName, Sherlock, and Tookie datasets are used by the in-app username HTTP scanner. Blackbird-style email registration probes are used by the in-app email scanner, while the breach result comes from XposedOrNot. GitHub OSINT uses GitHub's REST API directly.
+These scan cores are the actual upstream Python projects, not a Termux shell or subprocess. Their Android adapters normalize results for the app and use the projects' bundled datasets. Tookie's optional Selenium/ChromeDriver scraper is excluded because this app does not ship a compatible browser driver. GitHub OSINT uses GitHub's REST API directly.
+
+The bundled Blackbird core is GPLv3; the source tree includes its license, upstream notices, and vendored corresponding source. Sherlock and Tookie-OSINT are MIT-licensed. WhatsMyName data is CC BY-SA 4.0.
 
 ## Native-only UI rule
 
-The current UI does not expose Google dorks, PhoneInfoga/Phonia/IntelBase launchers, WhatsApp/Telegram links, or third-party reverse-lookup buttons. Unsupported providers are not represented by fake cards or simulated results. If a native request is blocked, times out, rate-limited, or has no supported API, the app shows an error, an unreachable count, or an empty result with an explanation.
+The current UI does not expose Google dorks, PhoneInfoga/Phonia/IntelBase launchers, WhatsApp/Telegram links, or third-party reverse-lookup buttons. Unsupported providers are not represented by fake cards or simulated results. Google Gaia IDs, service activity, owner names, locations, Maps reviews, and Play Games profiles are not synthesized from an email hash; only values actually returned by a public endpoint may be shown. If a native request is blocked, times out, rate-limited, or has no supported API, the app shows an error, an unreachable count, or an empty result with an explanation.
 
 Result cards may still offer an optional link to the exact public profile or source record that was found. That link is evidence follow-up, not a second search and not a claim of verified ownership.
 

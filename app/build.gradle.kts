@@ -51,6 +51,10 @@ chaquopy {
             install("colorama")
             install("PySocks")
             install("aiohttp")
+            install("requests-futures")
+            install("rich")
+            install("chardet")
+            install("tomli")
         }
     }
 }

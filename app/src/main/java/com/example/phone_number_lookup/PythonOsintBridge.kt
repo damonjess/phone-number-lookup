@@ -4,12 +4,10 @@ import android.content.Context
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 enum class PythonToolMode(val label: String) {
-    NATIVE_KOTLIN("Native Kotlin"),
     SHERLOCK_PY("Python: Sherlock"),
     TOOKIE_PY("Python: Tookie"),
     BLACKBIRD_PY("Python: Blackbird"),
@@ -36,7 +34,7 @@ object PythonOsintBridge {
     ): UsernameScanOutcome = withContext(Dispatchers.IO) {
         ensureStarted(context)
         val py = Python.getInstance()
-        val module = py.getModule("osint_bridge")
+        val module = py.getModule("upstream_osint")
         val effectiveLimit = if (limit <= 0) 0 else limit
 
         val payloads: List<String> = when (mode) {
@@ -50,13 +48,10 @@ object PythonOsintBridge {
                 module.callAttr("run_blackbird_python", username, false, effectiveLimit).toString()
             )
             PythonToolMode.ALL_PYTHON -> {
-                val perTool = if (effectiveLimit > 0) (effectiveLimit / 3).coerceAtLeast(50) else 0
-                val s = async { module.callAttr("run_sherlock_python", username, perTool).toString() }
-                val t = async { module.callAttr("run_tookie_python", username, perTool).toString() }
-                val b = async { module.callAttr("run_blackbird_python", username, false, perTool).toString() }
-                listOf(s.await(), t.await(), b.await())
+                val raw = module.callAttr("run_all_python", username, effectiveLimit).toString()
+                val results = org.json.JSONArray(raw)
+                (0 until results.length()).map { results.getJSONObject(it).toString() }
             }
-            PythonToolMode.NATIVE_KOTLIN -> emptyList()
         }
 
         mergeUsernamePayloads(username, payloads)
@@ -68,7 +63,7 @@ object PythonOsintBridge {
     ): EmailRegistrationOutcome = withContext(Dispatchers.IO) {
         ensureStarted(context)
         val py = Python.getInstance()
-        val module = py.getModule("osint_bridge")
+        val module = py.getModule("upstream_osint")
         val raw = module.callAttr("run_blackbird_python", email, true, 0).toString()
 
         runCatching {

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -17,6 +18,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,6 +35,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -80,7 +85,7 @@ fun UsernameAndEmailOsintScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Text(
-            text = "Native HTTP checks: accounts, breaches, PGP/Keybase & domain recon",
+            text = "Python-backed username/email scans, breaches, PGP/Keybase & domain recon",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -111,7 +116,7 @@ fun UsernameAndEmailOsintScreen(
 
         if (uiState.subTabState == 0) {
             Text(
-                text = "Username engine: embedded Python (Chaquopy / Python 3.12):",
+                text = "Username engine: embedded upstream Python (Chaquopy / Python 3.12):",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.Start).padding(bottom = 4.dp)
@@ -133,7 +138,7 @@ fun UsernameAndEmailOsintScreen(
             }
         } else if (uiState.subTabState == 1) {
             Text(
-                text = "Email registration engine: embedded Python (Blackbird-compatible checks)",
+                text = "Email registration engine: embedded upstream Blackbird Python",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.Start).padding(bottom = 12.dp)
@@ -440,11 +445,11 @@ fun UsernameAndEmailOsintScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                     }
 
-                    // Dynamic Epieos-Style Google Account Intelligence Card
+                    // Only report a publicly readable calendar, not account ownership.
                     if (uiState.isGoogleMetadataScanning) {
                         OsintToolSectionCard(
-                            toolTitle = "Google Account Footprint (Epieos Style)",
-                            subtitle = "Public Google calendar syndication & profile status for $target",
+                            toolTitle = "Public Google Calendar Check",
+                            subtitle = "Checks for a publicly readable calendar. This does not confirm Google account ownership.",
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer
                         ) {
                             Row(
@@ -453,22 +458,33 @@ fun UsernameAndEmailOsintScreen(
                             ) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Text("Querying public Google endpoints & Gaia ID...", style = MaterialTheme.typography.bodyMedium)
+                                Text("Checking for a public calendar feed...", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                     } else {
                         uiState.googleMetadata?.let { meta ->
                             OsintToolSectionCard(
-                                toolTitle = "Google Account Footprint (Epieos Style)",
-                                subtitle = "Public Google calendar syndication & profile status for $target",
+                                toolTitle = "Public Google Calendar Check",
+                                subtitle = "A public calendar result is not proof that this email owns a Google account.",
                                 containerColor = MaterialTheme.colorScheme.tertiaryContainer
                             ) {
-                                ResultRow("Google Account Status", if (meta.accountActive) "Active / Detected" else "Not Publicly Indexed")
-                                meta.gaiaId?.let { ResultRow("Inferred Gaia ID", it) }
-                                meta.fullName?.let { ResultRow("Owner Name (Calendar)", it) }
-                                if (meta.activeServices.isNotEmpty()) {
-                                    ResultRow("Active Google Services", meta.activeServices.joinToString(", "))
+                                ResultRow(
+                                    "Public calendar",
+                                    when (meta.publicCalendarFound) {
+                                        true -> "Found"
+                                        false -> "Not found at this public URL"
+                                        null -> "Unknown"
+                                    }
+                                )
+                                meta.calendarDisplayName?.let { ResultRow("Public calendar name", it) }
+                                meta.sourceUrl?.let { source ->
+                                    TextButton(onClick = { openUrl(context, source) }) {
+                                        Text("Open calendar evidence")
+                                    }
+                                }
+                                meta.error?.let {
+                                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                             Spacer(modifier = Modifier.height(16.dp))
@@ -875,6 +891,9 @@ private fun IdentityEnrichmentSection(
     isLoading: Boolean,
     onOpenUrl: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    var licenseText by remember { mutableStateOf<String?>(null) }
+
     OsintToolSectionCard(
         toolTitle = "Cryptographic Proofs, PGP & Archive History",
         subtitle = "Keybase identity graph, Ubuntu OpenPGP Keyserver & Wayback Machine CDX snapshots",
@@ -946,6 +965,27 @@ private fun IdentityEnrichmentSection(
                     }
                 }
             }
+        }
+        TextButton(onClick = {
+            licenseText = context.assets.open("licenses/GPL-3.0.txt").bufferedReader().use { it.readText() }
+        }) {
+            Text("Open-source licenses")
+        }
+        licenseText?.let { text ->
+            AlertDialog(
+                onDismissRequest = { licenseText = null },
+                title = { Text("Open-source licenses") },
+                text = {
+                    Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
+                        Text("This app includes upstream Sherlock (MIT), Blackbird (GPLv3), Tookie-OSINT (MIT), and WhatsMyName data (CC BY-SA 4.0). Full third-party notices are included with the source repository.")
+                        Spacer(Modifier.height(8.dp))
+                        Text("Blackbird is provided without warranty. You may obtain, modify, and redistribute the corresponding source under GPLv3.")
+                        Spacer(Modifier.height(8.dp))
+                        Text(text)
+                    }
+                },
+                confirmButton = { TextButton(onClick = { licenseText = null }) { Text("Close") } }
+            )
         }
     }
 }

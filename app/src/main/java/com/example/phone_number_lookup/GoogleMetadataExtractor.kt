@@ -2,82 +2,71 @@ package com.example.phone_number_lookup
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 
-data class ExtractedGoogleReview(
-    val title: String,
-    val address: String,
-    val timestamp: String,
-    val stars: Int
-)
-
+/** Publicly observable calendar data; this does not confirm that an email owns a Google account. */
 data class GoogleMetadataReport(
     val email: String,
-    val accountActive: Boolean = false,
-    val gaiaId: String? = null,
-    val fullName: String? = null,
-    val profilePhotoUrl: String? = null,
-    val activeServices: List<String> = emptyList(),
-    val mappedLocations: List<String> = emptyList(),
-    val reviews: List<ExtractedGoogleReview> = emptyList(),
-    val playGamesSummary: String? = null,
+    val publicCalendarFound: Boolean? = null,
+    val calendarDisplayName: String? = null,
+    val sourceUrl: String? = null,
     val error: String? = null
 ) {
     val hasData: Boolean
-        get() = accountActive || gaiaId != null || reviews.isNotEmpty() || fullName != null
+        get() = publicCalendarFound == true || !calendarDisplayName.isNullOrBlank()
 }
 
 object GoogleMetadataExtractor {
-
     suspend fun extract(email: String): GoogleMetadataReport = withContext(Dispatchers.IO) {
         val clean = email.trim().lowercase()
-        if (clean.isBlank() || !clean.contains('@')) {
+        if (!EMAIL_PATTERN.matches(clean)) {
             return@withContext GoogleMetadataReport(clean, error = "Enter a valid email address")
         }
 
-        // 1. Check Google Calendar & Public Syndication endpoints for account existence & owner name
-        val calResponse = ScanHttp.get("https://calendar.google.com/calendar/ical/${ScanHttp.encode(clean)}/public/basic.ics", timeoutMs = 7_000)
-        var ownerName: String? = null
-        val isActive = calResponse.code in 200..399
+        val url = "https://calendar.google.com/calendar/ical/${ScanHttp.encode(clean)}/public/basic.ics"
+        val response = ScanHttp.get(url, timeoutMs = 7_000)
+        parseCalendarResponse(clean, url, response)
+    }
 
-        if (isActive) {
-            for (line in calResponse.body.lineSequence()) {
-                if (line.startsWith("X-WR-CALNAME:")) {
-                    ownerName = line.removePrefix("X-WR-CALNAME:").trim()
-                }
-            }
+    internal fun parseCalendarResponse(
+        email: String,
+        url: String,
+        response: HttpResponse
+    ): GoogleMetadataReport {
+        val isCalendarFeed = response.code in 200..299 &&
+            response.body.contains("BEGIN:VCALENDAR", ignoreCase = true)
+
+        val publicCalendarFound = when {
+            isCalendarFeed -> true
+            response.code == 404 || response.code == 410 -> false
+            else -> null
+        }
+        val calendarName = if (isCalendarFeed) {
+            response.body.lineSequence()
+                .firstOrNull { it.startsWith("X-WR-CALNAME:", ignoreCase = true) }
+                ?.substringAfter(':')
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+        val error = when {
+            publicCalendarFound != null -> null
+            response.isNetworkError -> "Google's public calendar endpoint could not be reached; status is unknown."
+            response.code == 401 || response.code == 403 || response.code == 429 ->
+                "Google did not allow this request (HTTP ${response.code}); status is unknown."
+            response.code in 200..299 ->
+                "The response was not a readable public calendar; status is unknown."
+            else -> "Google returned HTTP ${response.code}; this does not establish whether an account exists."
         }
 
-        // 2. Check Gravatar profile mapping via MD5 hash
-        val md5 = OsintDatasets.transformAccount(clean, AccountMode.HASH_MD5)
-        val gravResponse = ScanHttp.get("https://en.gravatar.com/$md5.json", timeoutMs = 6_000)
-        var avatar: String? = null
-        if (gravResponse.isOk && gravResponse.body.isBlank().not()) {
-            runCatching {
-                val entry = org.json.JSONObject(gravResponse.body).optJSONArray("entry")?.optJSONObject(0)
-                if (ownerName == null) {
-                    ownerName = entry?.optString("displayName")?.takeIf { it.isNotBlank() }
-                }
-                avatar = entry?.optString("thumbnailUrl")?.takeIf { it.isNotBlank() }
-            }
-        }
-
-        // Services inferred from active Google Workspace / Gmail MX and public syndication
-        val services = mutableListOf("Gmail", "Google Workspace")
-        if (isActive) {
-            services += listOf("Calendar", "Photos", "Maps", "Meet")
-        }
-
-        GoogleMetadataReport(
-            email = clean,
-            accountActive = isActive,
-            gaiaId = if (isActive) "10${Math.abs(clean.hashCode())}928" else null,
-            fullName = ownerName,
-            profilePhotoUrl = avatar,
-            activeServices = services,
-            mappedLocations = if (isActive) listOf("United Kingdom (Inferred from Workspace/IP)") else emptyList(),
-            reviews = emptyList(),
-            playGamesSummary = if (isActive) "Active Google Play Services Profile" else null
+        return GoogleMetadataReport(
+            email = email,
+            publicCalendarFound = publicCalendarFound,
+            calendarDisplayName = calendarName,
+            sourceUrl = url.takeIf { publicCalendarFound == true },
+            error = error
         )
     }
+
+    private val EMAIL_PATTERN = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 }
