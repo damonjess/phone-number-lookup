@@ -28,49 +28,7 @@ data class SiteProbe(
 
 enum class ProbeVerdict { FOUND, NOT_FOUND, UNKNOWN }
 
-enum class ProbeFailure {
-    NETWORK,
-    HTTP_403,
-    HTTP_429,
-    HTTP_5XX,
-    BLOCKED,
-    OTHER
-}
 
-object ProbeFailures {
-    fun classify(statusCode: Int, body: String, networkError: Boolean): ProbeFailure = when {
-        networkError -> ProbeFailure.NETWORK
-        statusCode == 403 -> ProbeFailure.HTTP_403
-        statusCode == 429 -> ProbeFailure.HTTP_429
-        statusCode in 500..599 -> ProbeFailure.HTTP_5XX
-        body.contains("captcha", ignoreCase = true) || body.contains("cloudflare", ignoreCase = true) -> ProbeFailure.BLOCKED
-        else -> ProbeFailure.OTHER
-    }
-}
-
-object SiteKey {
-    fun dedupe(sites: List<SiteProbe>, byProfile: Boolean = false): List<SiteProbe> {
-        val seenName = HashSet<String>()
-        val seenProfile = HashSet<String>()
-        val result = ArrayList<SiteProbe>()
-        for (site in sites) {
-            val nameKey = SitePriority.normalise(site.name)
-            val profileKey = site.profileTemplate.lowercase().trimEnd('/')
-                .replace("https://", "").replace("http://", "").replace("www.", "")
-            
-            if (nameKey.isNotEmpty() && seenName.contains(nameKey)) {
-                continue
-            }
-            if (byProfile && profileKey.isNotEmpty() && seenProfile.contains(profileKey)) {
-                continue
-            }
-            if (nameKey.isNotEmpty()) seenName.add(nameKey)
-            if (profileKey.isNotEmpty()) seenProfile.add(profileKey)
-            result.add(site)
-        }
-        return result
-    }
-}
 
 data class ProbeResult(
     val site: SiteProbe,
@@ -79,6 +37,7 @@ data class ProbeResult(
     val statusCode: Int,
     val finalUrl: String = "",
     val evidence: String = "",
+    /** Set when [verdict] is UNKNOWN: why no usable answer came back. */
     val failure: ProbeFailure? = null
 )
 
@@ -108,7 +67,6 @@ object OsintDatasets {
         "https://raw.githubusercontent.com/Alfredredbird/tookie-osint/main/sites/sites.json"
     const val BLACKBIRD_EMAIL_URL =
         "https://raw.githubusercontent.com/p1ngul1n0/blackbird/main/data/email-data.json"
-
     private fun String.resolveMarker(account: String, target: String): String =
         replace("{account}", account).replace("{username}", account).replace("{}", account).replace("{target}", target)
 
@@ -151,6 +109,8 @@ object OsintDatasets {
             return ProbeResult(probe, ProbeVerdict.NOT_FOUND, profileUrl, response.code, finalUrl, evidence)
         }
 
+        // A 404/410 is the ordinary "no such profile" answer. Tookie entries (and some others) declare no
+        // missing codes, so these used to come back inconclusive and were counted as "blocked".
         if ((response.code == 404 || response.code == 410) && response.code !in probe.foundCodes) {
             return ProbeResult(
                 probe, ProbeVerdict.NOT_FOUND, profileUrl, response.code, finalUrl,
@@ -217,7 +177,6 @@ object OsintDatasets {
             val fromSocialAnalyzer = socialAnalyzer.await()
             val fromSherlock = sherlock.await()
             val fromTookie = tookie.await()
-
             val deduped = dedupe(
                 CuratedUsernameChecks.PROBES +
                     fromWmn +

@@ -43,12 +43,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.phone_number_lookup.HealthState
 import com.example.phone_number_lookup.HistoryEntry
 import com.example.phone_number_lookup.OsintPdfExporter
 import com.example.phone_number_lookup.OsintTools
 import com.example.phone_number_lookup.PdfSection
+import com.example.phone_number_lookup.PhoneInfogaStatus
 import com.example.phone_number_lookup.PhoneNumberUtils
 import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
@@ -317,6 +320,98 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            OsintToolSectionCard(
+                toolTitle = "PhoneInfoga",
+                subtitle = "Uses your PhoneInfoga server if one is running, otherwise runs built-in versions of its Google-dork and OVH scanners. The OVH check contacts OVH.",
+                containerColor = MaterialTheme.colorScheme.secondaryContainer
+            ) {
+                OutlinedTextField(
+                    value = uiState.phoneInfogaUrl,
+                    onValueChange = viewModel::onPhoneInfogaUrlChanged,
+                    label = { Text("PhoneInfoga server (optional)") },
+                    placeholder = { Text("http://127.0.0.1:5000") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = { viewModel.runPhoneInfogaServer() },
+                    enabled = !uiState.isPhoneInfogaServerRunning,
+                    modifier = Modifier.padding(top = 8.dp)
+                ) { Text("Run PhoneInfoga") }
+
+                val piReport = uiState.phoneInfogaReport
+                piReport?.note?.let { note ->
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+                when {
+                    uiState.isPhoneInfogaServerRunning -> CircularProgressIndicator(
+                        modifier = Modifier.padding(top = 10.dp).size(20.dp), strokeWidth = 2.dp
+                    )
+                    piReport?.error != null -> Text(
+                        piReport.error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    piReport != null -> piReport.scans.forEach { scan ->
+                        Column(modifier = Modifier.padding(top = 12.dp)) {
+                            Text(
+                                "${scan.scanner}: " + when (scan.status) {
+                                    PhoneInfogaStatus.OK -> "ran"
+                                    PhoneInfogaStatus.SKIPPED -> "skipped"
+                                    PhoneInfogaStatus.ERROR -> "failed"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (scan.description.isNotBlank()) {
+                                Text(
+                                    scan.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            scan.message?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (scan.status == PhoneInfogaStatus.ERROR) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            scan.rows.forEach { (label, value) -> ResultRow(label, value) }
+                            if (scan.labeledLinks.isNotEmpty()) {
+                                scan.labeledLinks.take(30).forEach { (label, link) ->
+                                    TextButton(onClick = { openUrl(context, link) }) {
+                                        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            } else {
+                                scan.links.take(12).forEach { link ->
+                                    TextButton(onClick = { openUrl(context, link) }) {
+                                        Text(link, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+                            if (scan.labeledLinks.isEmpty() && scan.links.size > 12) {
+                                Text(
+                                    "+${scan.links.size - 12} more links",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Save to private history", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -512,6 +607,51 @@ fun PhoneLookupScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OsintToolSectionCard(
+            toolTitle = "Source health",
+            subtitle = "Tests every lookup source with a harmless test number, so a blocked or changed site isn't mistaken for \"nothing found\".",
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ) {
+            Button(
+                onClick = { viewModel.runSourceHealth(numverifyKey) },
+                enabled = !uiState.isCheckingHealth
+            ) { Text("Check all sources") }
+
+            if (uiState.isCheckingHealth) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(top = 10.dp).size(20.dp), strokeWidth = 2.dp
+                )
+            }
+            uiState.sourceHealth.forEach { result ->
+                val color = when (result.state) {
+                    HealthState.OK -> MaterialTheme.colorScheme.primary
+                    HealthState.NOT_CONFIGURED -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> MaterialTheme.colorScheme.error
+                }
+                val symbol = when (result.state) {
+                    HealthState.OK -> "✓"
+                    HealthState.BLOCKED, HealthState.UNREACHABLE -> "✗"
+                    HealthState.CHANGED -> "!"
+                    HealthState.NOT_CONFIGURED -> "–"
+                }
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    Text(
+                        "$symbol ${result.source} (${result.millis} ms)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = color
+                    )
+                    Text(
+                        result.detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

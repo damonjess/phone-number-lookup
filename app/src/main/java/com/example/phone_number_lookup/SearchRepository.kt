@@ -17,66 +17,7 @@ data class SearchResponse(
     val error: String? = null
 )
 
-sealed class DdgOutcome {
-    data class Results(val items: List<SearchResultItem>) : DdgOutcome()
-    object NoResults : DdgOutcome()
-    object Blocked : DdgOutcome()
-    data class Unrecognised(val reason: String, val excerpt: String) : DdgOutcome()
-    object Unreachable : DdgOutcome()
-}
 
-object DdgParser {
-    const val MAX_RESULTS = 8
-
-    fun classify(code: Int, body: String): DdgOutcome {
-        if (code in setOf(403, 202, 429) || body.contains("anomaly-detected") || body.contains("bot check") || body.contains("If you have seen this page many times")) {
-            return DdgOutcome.Blocked
-        }
-        if (code == -1) return DdgOutcome.Unreachable
-        if (code !in 200..299) return DdgOutcome.Unrecognised("HTTP $code", body.take(100))
-
-        val resultPattern = Regex(
-            """<a\b[^>]*class\s*=\s*['"][^'"]*result__a[^'"]*['"][^>]*href\s*=\s*['"]([^'"]+)['"][^>]*>(.*?)</a>.*?<a\b[^>]*class\s*=\s*['"][^'"]*result__snippet[^'"]*['"][^>]*>(.*?)</a>""",
-            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
-        )
-        val tag = Regex("<[^>]*>")
-        val matches = resultPattern.findAll(body).toList()
-        if (matches.isEmpty()) {
-            if (body.contains("No results", ignoreCase = true) || body.contains("no results found", ignoreCase = true) || body.contains("No good match", ignoreCase = true)) {
-                return DdgOutcome.NoResults
-            }
-            if (body.isBlank()) return DdgOutcome.NoResults
-            return DdgOutcome.Unrecognised("No search result elements found", body.replace(tag, " ").take(100).trim())
-        }
-
-        val items = matches.take(MAX_RESULTS).mapNotNull { match ->
-            val link = decodeLink(match.groupValues[1].trim())
-            val title = unescapeHtml(match.groupValues[2].replace(tag, "").trim())
-            val snippet = unescapeHtml(match.groupValues[3].replace(tag, "").trim())
-            if (title.isNotBlank() && link.isNotBlank()) {
-                SearchResultItem(title, snippet, link, "DuckDuckGo")
-            } else null
-        }
-        return if (items.isNotEmpty()) DdgOutcome.Results(items) else DdgOutcome.NoResults
-    }
-
-    fun decodeLink(raw: String): String {
-        return if (raw.contains("uddg=")) {
-            runCatching {
-                val query = raw.substringAfter("uddg=").substringBefore("&")
-                java.net.URLDecoder.decode(query, "UTF-8")
-            }.getOrDefault(raw)
-        } else raw
-    }
-
-    private fun unescapeHtml(text: String): String = text
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
-}
 
 object SearchRepository {
     private data class Cached(val response: SearchResponse, val expiresAt: Long)

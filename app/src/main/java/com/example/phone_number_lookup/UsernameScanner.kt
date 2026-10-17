@@ -46,12 +46,13 @@ data class UsernameScanOutcome(
     val confirmed: List<UsernameHit>,
     /** How many sites each source contributed to the merged database. */
     val datasetSizes: Map<String, Int> = emptyMap(),
-    /** Requests that failed outright (timeout, DNS, blocked) rather than answering. */
+    /** How many sites gave no usable answer (same as [issues].size). */
     val unreachable: Int = 0,
     /** Sites that said "found" even for a made-up username, so their hits were thrown away. */
     val discarded: List<String> = emptyList(),
     /** Every spelling that was searched, original first. */
     val namesChecked: List<String> = emptyList(),
+    /** Sites that couldn't be checked automatically, with the reason, so they can be retried or opened by hand. */
     val issues: List<SiteIssue> = emptyList()
 ) {
     val databasesLoaded: Boolean get() = sitesChecked > 0
@@ -72,7 +73,7 @@ object UsernameScanner {
     private class SiteScan(
         val hits: List<UsernameHit>,
         val discarded: List<String>,
-        val unreachable: Int
+        val issues: List<SiteIssue>
     )
 
     private val HIT_ORDER = compareBy<UsernameHit>({ it.category.lowercase() }, { it.site.lowercase() })
@@ -85,18 +86,23 @@ object UsernameScanner {
         onEach: () -> Unit = {}
     ): SiteScan = coroutineScope {
         val semaphore = Semaphore(concurrency)
-        val unreachable = AtomicInteger(0)
 
         val results = sites.map { site ->
             async {
-                semaphore.withPermit {
-                    val result = OsintDatasets.evaluate(site, name)
-                    if (result.verdict == ProbeVerdict.UNKNOWN) unreachable.incrementAndGet()
-                    onEach()
-                    result
+                // Space out requests to the same website first, then take a concurrency slot.
+                HostGate.run(HostGate.hostKey(site.urlTemplate)) {
+                    semaphore.withPermit {
+                        val result = ResilientProbe.evaluate(site, name)
+                        onEach()
+                        result
+                    }
                 }
             }
         }.awaitAll()
+
+        val issues = results
+            .filter { it.verdict == ProbeVerdict.UNKNOWN }
+            .map { SiteIssue(it.site.name, it.profileUrl, it.failure ?: ProbeFailure.INCONCLUSIVE, it.evidence) }
 
         val found = results.filter { it.verdict == ProbeVerdict.FOUND }
         val (kept, dropped) = HitVerifier.splitByControl(found, concurrency) { hit ->
@@ -107,7 +113,7 @@ object UsernameScanner {
         SiteScan(
             hits = kept.map { toHit(it, name) },
             discarded = dropped.map { it.site.name },
-            unreachable = unreachable.get()
+            issues = issues
         )
     }
 
@@ -141,9 +147,34 @@ object UsernameScanner {
             confirmed = scanned.hits.sortedWith(HIT_ORDER),
             // Counted from the list actually used, so it is right even when a download was partial.
             datasetSizes = all.groupingBy { it.source }.eachCount(),
-            unreachable = scanned.unreachable,
+            unreachable = scanned.issues.size,
             discarded = scanned.discarded,
-            namesChecked = listOf(clean)
+            namesChecked = listOf(clean),
+            issues = scanned.issues
+        )
+    }
+
+    /**
+     * Re-checks only the sites that failed for a temporary reason, more gently (2 at a time).
+     * Bot-check pages and "no clear answer" sites are skipped because trying again gives the same result.
+     */
+    suspend fun retry(
+        username: String,
+        issues: List<SiteIssue>,
+        concurrency: Int = 2
+    ): UsernameScanOutcome = withContext(Dispatchers.IO) {
+        val names = issues.filter { it.retryable }.map { it.site.lowercase() }.toSet()
+        if (names.isEmpty()) return@withContext UsernameScanOutcome(0, emptyList())
+
+        val probes = OsintDatasets.loadUsernameDatabases().filter { it.name.lowercase() in names }
+        val scanned = scanSites(probes, username, concurrency)
+        UsernameScanOutcome(
+            sitesChecked = probes.size,
+            confirmed = scanned.hits.sortedWith(HIT_ORDER),
+            unreachable = scanned.issues.size,
+            discarded = scanned.discarded,
+            namesChecked = listOf(username),
+            issues = scanned.issues
         )
     }
 
@@ -167,20 +198,22 @@ object UsernameScanner {
         val popular = SitePriority.prioritise(OsintDatasets.loadUsernameDatabases()).take(variantSiteLimit)
         val extraHits = ArrayList<UsernameHit>()
         val discarded = ArrayList(main.discarded)
-        var unreachable = main.unreachable
+        val issues = ArrayList(main.issues)
 
         for (name in names.drop(1)) {
             val scanned = scanSites(popular, name, concurrency)
             extraHits += scanned.hits
             discarded += scanned.discarded
-            unreachable += scanned.unreachable
+            issues += scanned.issues
         }
+        val allIssues = issues.distinctBy { it.site.lowercase() }
 
         main.copy(
             confirmed = (main.confirmed + extraHits).sortedWith(HIT_ORDER),
-            unreachable = unreachable,
+            unreachable = allIssues.size,
             discarded = discarded.distinct(),
-            namesChecked = names
+            namesChecked = names,
+            issues = allIssues
         )
     }
 
@@ -253,7 +286,10 @@ object UsernameScanner {
                     }
                 }
                 ProbeVerdict.UNKNOWN -> {
-                    newIssues += issue.copy(reason = "Retry failed (${result.evidence})")
+                    newIssues += issue.copy(
+                        reason = result.failure ?: ProbeFailure.NETWORK,
+                        detail = "Retry failed (${result.evidence})"
+                    )
                 }
                 ProbeVerdict.NOT_FOUND -> {
                     // Site answered; not found
@@ -266,15 +302,17 @@ object UsernameScanner {
     /** Total probes available across every merged database (0 until first load). */
     fun availableSiteCount(): Int = OsintDatasets.cachedUsernameCount()
 
-    fun limitForDepth(depth: Int): Int = when (depth) {
-        0 -> QUICK_LIMIT
-        1 -> DEFAULT_LIMIT
-        else -> FULL_SCAN
-    }
-
+    /** Sites scanned by each depth button. The labels in the UI are built from these. */
     const val QUICK_LIMIT = 150
     const val DEFAULT_LIMIT = 300
     const val STANDARD_LIMIT = DEFAULT_LIMIT
     const val FULL_SCAN = 0
+
+    /** Maps the depth buttons (0 Quick, 1 Standard, 2 Full) to a site limit; 0 means every site. */
+    fun limitForDepth(depth: Int): Int = when (depth) {
+        0 -> QUICK_LIMIT
+        1 -> STANDARD_LIMIT
+        else -> FULL_SCAN
+    }
     const val VARIANT_SITE_LIMIT = 40
 }

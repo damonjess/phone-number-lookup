@@ -126,8 +126,8 @@ fun IssuesSection(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f)
                     )
-                    if (issue.url.isNotBlank()) {
-                        TextButton(onClick = { onOpen(issue.url) }) {
+                    if (issue.profileUrl.isNotBlank()) {
+                        TextButton(onClick = { onOpen(issue.profileUrl) }) {
                             Text("Open", style = MaterialTheme.typography.labelSmall)
                         }
                     }

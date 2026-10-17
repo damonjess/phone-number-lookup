@@ -157,17 +157,18 @@ object PythonOsintBridge {
                     for (i in 0 until issArr.length()) {
                         val iss = issArr.optJSONObject(i) ?: continue
                         val code = iss.optInt("code", 0)
-                        val reasonStr = when (code) {
-                            0 -> "Network error / timeout"
-                            401, 403 -> "HTTP 403 Forbidden"
-                            429 -> "HTTP 429 Rate Limited"
-                            in 500..599 -> "HTTP Server Error ($code)"
-                            else -> "HTTP Error ($code)"
-                        } + (iss.optString("detail").takeIf { it.isNotBlank() }?.let { " - $it" } ?: "")
+                        val failure = when (code) {
+                            0 -> ProbeFailure.NETWORK
+                            401, 403 -> ProbeFailure.FORBIDDEN
+                            429 -> ProbeFailure.RATE_LIMITED
+                            in 500..599 -> ProbeFailure.SERVER_ERROR
+                            else -> ProbeFailure.HTTP_ERROR
+                        }
                         issues += SiteIssue(
                             site = iss.optString("site", "Unknown"),
-                            reason = reasonStr,
-                            url = iss.optString("profileUrl", "")
+                            profileUrl = iss.optString("profileUrl", ""),
+                            reason = failure,
+                            detail = iss.optString("detail", "")
                         )
                     }
                 }

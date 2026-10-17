@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Everything is HTTPS-only except these local addresses, so the app can talk to a PhoneInfoga
+  server running on this phone (Termux) or the Android emulator's host machine.
+
+  To use a PhoneInfoga server on your home network over plain HTTP, add its address here, for example:
+      <domain includeSubdomains="false">192.168.1.50</domain>
+  Prefer HTTPS (a reverse proxy) for anything that leaves your phone.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

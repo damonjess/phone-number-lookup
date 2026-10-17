@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -498,14 +499,6 @@ fun UsernameAndEmailOsintScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        if (uiState.emailUnreachable > 0 && !uiState.isRegistrationScanning) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                "${uiState.emailUnreachable} site(s) couldn't be checked automatically (blocked, timed out or no clear answer) and were not counted.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -679,6 +672,7 @@ fun UsernameAndEmailOsintScreen(
                         uiState.liveHits.forEach { add("Handle Match: ${it.site}" to it.profileUrl) }
                         OsintTools.getBlackbirdEmailScan(target).forEach { add(it.title to it.url) }
                     }
+
 
                     Spacer(modifier = Modifier.height(16.dp))
                     NumberedLinksHubCard(
