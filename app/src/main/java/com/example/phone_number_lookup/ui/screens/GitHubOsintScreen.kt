@@ -135,7 +135,7 @@ fun GitHubOsintScreen(
         uiState.profile?.let { p ->
             OsintToolSectionCard(
                 toolTitle = "Profile: ${p.login}",
-                subtitle = "Live GitHub profile data",
+                subtitle = "Live GitHub profile, commit authors & cryptographic keys",
                 containerColor = MaterialTheme.colorScheme.primaryContainer
             ) {
                 p.name?.let { ResultRow("Name", it) }
@@ -145,9 +145,32 @@ fun GitHubOsintScreen(
                 p.location?.let { ResultRow("Location", it) }
                 p.blog?.let { ResultRow("Website", it) }
                 p.email?.let { ResultRow("Public Email", it) }
+                p.twitterUsername?.let { ResultRow("X / Twitter", "@$it") }
                 p.publicRepos?.let { ResultRow("Public Repos", it.toString()) }
                 p.followers?.let { ResultRow("Followers", it.toString()) }
                 p.createdAt?.let { ResultRow("Joined", it.substringBefore("T")) }
+
+                if (p.commitIdentities.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Commit Author Emails (from public events)", fontWeight = FontWeight.Bold)
+                    p.commitIdentities.forEach { id ->
+                        Text("• $id", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (p.gpgKeys.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Published GPG Keys", fontWeight = FontWeight.Bold)
+                    p.gpgKeys.forEach { k ->
+                        Text("• $k", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (p.sshKeys.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Published SSH Keys (${p.sshKeys.size})", fontWeight = FontWeight.Bold)
+                    p.sshKeys.forEach { k ->
+                        Text("• $k", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 TextButton(onClick = { openUrl(context, p.htmlUrl) }) { Text("Open GitHub Profile ↗") }
             }
             Spacer(modifier = Modifier.height(16.dp))

@@ -16,11 +16,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,8 +46,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.HistoryEntry
-import com.example.phone_number_lookup.PhoneReputation
+import com.example.phone_number_lookup.OsintPdfExporter
+import com.example.phone_number_lookup.OsintTools
+import com.example.phone_number_lookup.PdfSection
 import com.example.phone_number_lookup.PhoneNumberUtils
+import com.example.phone_number_lookup.PhoneReputation
+import com.example.phone_number_lookup.ui.components.DorkLauncherCard
+import com.example.phone_number_lookup.ui.components.NumberedLinksHubCard
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.VerdictCard
@@ -143,11 +148,65 @@ fun PhoneLookupScreen(
             val localFormat = if (normalized.startsWith("+44")) "0" + normalized.removePrefix("+44") else normalized
             val formats = PhoneNumberUtils.getFormattedFormats(normalized, localFormat)
 
-            // One-glance verdict, with the detailed breakdown underneath
             uiState.verdict?.let { verdict ->
                 VerdictCard(verdict)
                 Spacer(modifier = Modifier.height(16.dp))
             }
+
+            val phoniaDorks = OsintTools.getPhoniaTools(normalized)
+            val phoneInfogaDorks = OsintTools.getPhoneInfogaDorks(normalized, localFormat)
+            val externalTools = OsintTools.getPhoneInfogaExternalTools(normalized, localFormat) +
+                OsintTools.getIntelBaseDork(normalized)
+
+            val allDiscoveredPhoneLinks = buildList {
+                uiState.searchResults.forEach { add("Web Match: ${it.title}" to it.url) }
+                uiState.reputationReports.filter { it.hasReports }.forEach { add("Caller Report: ${it.source}" to it.url) }
+                phoniaDorks.forEach { add(it.title to it.url) }
+                phoneInfogaDorks.forEach { add(it.title to it.url) }
+            }
+
+            NumberedLinksHubCard(
+                title = "Quick Links Queue ($normalized)",
+                links = allDiscoveredPhoneLinks,
+                onExportPdf = {
+                    OsintPdfExporter.exportReport(
+                        context = context,
+                        title = "Phone OSINT Report",
+                        target = formats.e164,
+                        sections = listOf(
+                            PdfSection(
+                                "Number Metadata",
+                                listOf(
+                                    "Original Input: $input",
+                                    "E.164: ${formats.e164}",
+                                    "National: ${formats.national}",
+                                    "Country: $country",
+                                    "Region: ${areaInfo ?: "N/A"}",
+                                    "Line Type: $lineType",
+                                    "Verdict: ${uiState.verdict?.headline ?: "N/A"} (${uiState.verdict?.summary ?: ""})"
+                                )
+                            ),
+                            PdfSection(
+                                "Spam & Caller Reputation",
+                                buildList {
+                                    uiState.spamReport?.let {
+                                        add("${it.source}: Score ${it.scoreLabel} (${it.riskLabel}), ${it.comments ?: 0} comments")
+                                    }
+                                    uiState.reputationReports.forEach { rep ->
+                                        add("${rep.source}: ${rep.reportCount} report(s) - ${rep.url}")
+                                    }
+                                }
+                            ),
+                            PdfSection(
+                                "Discovered Links (links.txt)",
+                                allDiscoveredPhoneLinks.mapIndexed { idx, (lbl, url) -> "${idx + 1}. $lbl -> $url" }
+                            )
+                        )
+                    )
+                }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Overview Card
             Card(
@@ -172,17 +231,36 @@ fun PhoneLookupScreen(
                     ResultRow("Country", country)
                     ResultRow("Estimated number type", lineType)
                     ResultRow("Country time-zone group", timezone)
+                    if (isUk && areaInfo != null) {
+                        ResultRow("UK Region", areaInfo)
+                    }
+                    PhoneNumberUtils.getUkCarrierHint(normalized)?.let { carrierHint ->
+                        ResultRow("Ofcom Range Block", carrierHint)
+                    }
                     Text(
-                        "Type and time zone are estimates from public numbering data; they do not prove the current carrier or caller location.",
+                        "Type, range block and time zone are estimates from public numbering data; they do not prove the current carrier or caller location.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp)
                     )
-                    if (isUk && areaInfo != null) {
-                        ResultRow("UK Region", areaInfo)
-                    }
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            DorkLauncherCard(
+                title = "Phonia & Direct Messaging Triggers",
+                subtitle = "Replaces `python phonia.py -n` — direct WhatsApp, Telegram, Truecaller & Viber checks",
+                dorks = phoniaDorks
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            DorkLauncherCard(
+                title = "PhoneInfoga, IntelBase & Reverse Directories",
+                subtitle = "Targeted Google dorks, IntelBase hub & reverse lookup directories",
+                dorks = phoneInfogaDorks + externalTools
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -237,6 +315,8 @@ fun PhoneLookupScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Save to private history", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -267,7 +347,6 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Live Spam / Caller Reputation Scan (tellows free JSON API, no key)
             OsintToolSectionCard(
                 toolTitle = "Live Spam Database Scan",
                 subtitle = "Real-time crowd-sourced caller reputation from tellows",
@@ -305,12 +384,12 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Extra community caller-report databases
+            val supportedRepSources = PhoneReputation.supportedSources(normalized)
             OsintToolSectionCard(
                 toolTitle = "Community Report Databases",
-                subtitle = if (PhoneReputation.supportedSources(normalized).isEmpty())
-                    "WhoCallsMe & 800notes only index North American (+1) numbers"
-                else "Live user reports from WhoCallsMe and 800notes",
+                subtitle = if (supportedRepSources.isEmpty())
+                    "Additional community sources cover UK (+44) and North American (+1) numbers"
+                else "Live user reports from ${supportedRepSources.joinToString(" and ")}",
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer
             ) {
                 when {
@@ -363,7 +442,6 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // DuckDuckGo Web Results
             Text(
                 text = "Live Web Search Matches",
                 style = MaterialTheme.typography.titleMedium,

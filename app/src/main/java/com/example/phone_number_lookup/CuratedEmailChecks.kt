@@ -2,28 +2,21 @@ package com.example.phone_number_lookup
 
 import com.example.phone_number_lookup.OsintDatasets.SRC_CURATED
 
-/**
- * Community email datasets rot: sites change their signup flow, add bot protection or
- * invert a flag. Every probe here was exercised live against the real endpoint before
- * being committed, and each one *overrides* a same-named entry from the downloaded
- * Blackbird dataset (the loader puts these first, and de-duplication keeps the first).
- *
- * Where an upstream row disagreed with the live endpoint, the live endpoint won:
- *   - Gravatar is keyed by an MD5 of the address, not SHA-256; the dataset said SHA-256.
- *   - Chess.com now answers `{"isEmailAvailable":...}` rather than HTTP 226.
- *
- * Verified on all of these: an unregistered address must come back NOT_FOUND, which is
- * what stops false "account found" reports.
- */
 object CuratedEmailChecks {
 
-    val PROBES: List<SiteProbe> = listOf(mozillaFirefox(), chessCom(), gravatar())
+    val PROBES: List<SiteProbe> = listOf(
+        mozillaFirefox(),
+        chessCom(),
+        gravatar(),
+        duolingo(),
+        wordpress(),
+        spotify(),
+        github(),
+        keybase(),
+        mastodonSocial(),
+        openPgpKeys()
+    )
 
-    /**
-     * Firefox Accounts status endpoint. Returns a plain boolean:
-     *   POST https://api.accounts.firefox.com/v1/account/status  {"email":"..."}
-     *   -> {"exists":true}  |  {"exists":false}
-     */
     private fun mozillaFirefox() = SiteProbe(
         name = "Mozilla Firefox",
         category = "tech",
@@ -41,12 +34,6 @@ object CuratedEmailChecks {
         missingUrls = emptyList()
     )
 
-    /**
-     * Chess.com availability callback:
-     *   GET https://www.chess.com/callback/email/available?email=...
-     *   -> {"isEmailAvailable":true}  (free)  |  {"isEmailAvailable":false}  (taken)
-     * An unparseable address returns HTTP 417 with "Invalid Email".
-     */
     private fun chessCom() = SiteProbe(
         name = "Chess.com",
         category = "games",
@@ -64,11 +51,6 @@ object CuratedEmailChecks {
         missingUrls = emptyList()
     )
 
-    /**
-     * Gravatar profile lookup (wordpress avatar service). The identifier is the MD5 of
-     * the lowercased address, which is why this is not a plain `{account}` URL.
-     *   GET https://gravatar.com/{md5}.json -> 200 profile JSON  |  404 "User not found"
-     */
     private fun gravatar() = SiteProbe(
         name = "Gravatar",
         category = "images",
@@ -83,6 +65,125 @@ object CuratedEmailChecks {
         foundStrings = emptyList(),
         missingCodes = setOf(404),
         missingStrings = listOf("User not found"),
+        missingUrls = emptyList()
+    )
+
+    private fun duolingo() = SiteProbe(
+        name = "Duolingo",
+        category = "learning",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.duolingo.com/2017-06-30/users?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.duolingo.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"username\":"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"users\":[]"),
+        missingUrls = emptyList()
+    )
+
+    private fun wordpress() = SiteProbe(
+        name = "WordPress.com",
+        category = "blog",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://public-api.wordpress.com/rest/v1.1/users/{account}/auth-options",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://wordpress.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"passwordless\":"),
+        missingCodes = setOf(400, 404),
+        missingStrings = listOf("unknown_user", "invalid_user"),
+        missingUrls = emptyList()
+    )
+
+    private fun spotify() = SiteProbe(
+        name = "Spotify",
+        category = "music",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://spclient.wg.spotify.com/signup/public/v1/account?validate=1&email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://open.spotify.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"status\":20", "\"status\": 20"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"status\":1,", "\"status\": 1,", "\"status\":0", "\"status\":130"),
+        missingUrls = emptyList()
+    )
+
+    private fun github() = SiteProbe(
+        name = "GitHub",
+        category = "coding",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://api.github.com/search/users?q={account}+in:email",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://github.com/",
+        headers = mapOf("Accept" to "application/vnd.github+json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"login\":"),
+        missingCodes = setOf(404, 422),
+        missingStrings = listOf("\"total_count\":0", "\"total_count\": 0"),
+        missingUrls = emptyList()
+    )
+
+    private fun keybase() = SiteProbe(
+        name = "Keybase",
+        category = "tech",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://keybase.io/_/api/1.0/user/lookup.json?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://keybase.io/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"basics\":"),
+        missingCodes = setOf(400, 404),
+        missingStrings = listOf("\"them\":[]", "\"them\":[null]", "\"status\":{\"code\":100"),
+        missingUrls = emptyList()
+    )
+
+    private fun mastodonSocial() = SiteProbe(
+        name = "Mastodon (mastodon.social)",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://mastodon.social/api/v1/accounts/lookup?acct={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://mastodon.social/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"acct\":"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("Record not found"),
+        missingUrls = emptyList()
+    )
+
+    private fun openPgpKeys() = SiteProbe(
+        name = "OpenPGP Keyserver",
+        category = "tech",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://keys.openpgp.org/vks/v1/by-email/{account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://keys.openpgp.org/",
+        headers = emptyMap(),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("-----BEGIN PGP PUBLIC KEY BLOCK-----"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("No key found", "not found"),
         missingUrls = emptyList()
     )
 }

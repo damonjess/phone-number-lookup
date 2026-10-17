@@ -1,15 +1,7 @@
 package com.example.phone_number_lookup
 
-/**
- * Orders site probes so limited scans (Quick / Standard) cover the sites people actually use.
- *
- * The merged database is sorted by category then name, so a plain `take(150)` only ever reached
- * the alphabetically-first categories ("archived", "art", "blog" ...) and never got to "social",
- * "gaming" or "tech". Prioritising first fixes that.
- */
 object SitePriority {
 
-    /** Well-known sites first, in this order. Names are compared lowercased with symbols removed. */
     private val TOP_SITES = listOf(
         "instagram", "facebook", "x", "xcom", "twitter", "tiktok", "youtube", "reddit", "github", "linkedin",
         "snapchat", "pinterest", "twitch", "steam", "steamcommunity", "spotify", "discord", "telegram",
@@ -17,19 +9,22 @@ object SitePriority {
         "patreon", "quora", "gitlab", "stackoverflow", "deviantart", "behance", "dribbble", "wordpress",
         "ebay", "etsy", "paypal", "cashapp", "venmo", "roblox", "xbox", "playstation", "epicgames",
         "chesscom", "lichess", "strava", "goodreads", "duolingo", "kaggle", "bandcamp", "lastfm", "imgur",
+        "keybase", "hackernews", "devcommunity", "dockerhub", "minecraft", "scratch", "letterboxd", "linktree"
     )
 
     private val TOP_RANK: Map<String, Int> = TOP_SITES.withIndex().associate { (i, name) -> name to i }
 
-    /** Keys at least this long may also match as a prefix ("instagram.com" -> "instagram"). */
-    private const val PREFIX_MIN_LENGTH = 6
+    private val DEMOTED_MARKERS = listOf("archiv", "imginn", "wayback", "scraper", "mirror")
 
+    private const val PREFIX_MIN_LENGTH = 6
     private const val CATEGORY_BASE = 1_000
 
     internal fun normalise(name: String): String =
         name.lowercase().filter { it.isLetterOrDigit() }
 
     internal fun topRank(name: String): Int? {
+        val lower = name.lowercase()
+        if (DEMOTED_MARKERS.any { it in lower }) return null
         val n = normalise(name)
         TOP_RANK[n]?.let { return it }
         return TOP_SITES.withIndex()
@@ -37,7 +32,6 @@ object SitePriority {
             ?.index
     }
 
-    /** Lower is scanned earlier. */
     internal fun categoryWeight(category: String): Int {
         val c = category.lowercase()
         return when {
@@ -55,8 +49,13 @@ object SitePriority {
         }
     }
 
-    fun rank(site: SiteProbe): Int =
-        topRank(site.name) ?: (CATEGORY_BASE + categoryWeight(site.category))
+    fun rank(site: SiteProbe): Int {
+        val tr = topRank(site.name)
+        if (tr != null) {
+            return if (site.source == OsintDatasets.SRC_CURATED) tr - 100 else tr
+        }
+        return CATEGORY_BASE + categoryWeight(site.category)
+    }
 
     fun prioritise(sites: List<SiteProbe>): List<SiteProbe> =
         sites.sortedWith(compareBy({ rank(it) }, { it.name.lowercase() }))

@@ -5,32 +5,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 
-/**
- * Extra caller-reputation sources that return real per-number data over plain HTTP,
- * no API key, no JavaScript — the community databases that sites like who-called.co.uk
- * and the old external reputation links pointed at.
- *
- * Verified live before being written here:
- *   - WhoCallsMe  HTTP 200 with user reports for a reported number, 404 when clean.
- *     Reports carry `Caller:` and `Call type:` lines.
- *   - 800notes    HTTP 200 with reports for a reported number, 404 when clean.
- *
- * Deliberately NOT included, after testing:
- *   - spamcalls.net answered HTTP 410 for every number tried (clean and known-spam alike),
- *     so it advertises no usable per-number data to a non-browser client.
- *   - who-called.co.uk returned 403 to automated requests from this environment.
- *
- * WhoCallsMe and 800notes only index North American numbers, so they are queried for
- * +1 numbers and reported as unsupported otherwise rather than silently returning nothing.
- */
 data class ReputationReport(
     val source: String,
     val url: String,
-    /** True when the source actually holds reports for this number. */
     val hasReports: Boolean,
     val reportCount: Int,
     val callTypes: List<String>,
-    /** Short excerpts from the most recent user reports. */
     val samples: List<String>,
     val error: String? = null,
 )
@@ -43,20 +23,31 @@ object PhoneReputation {
     private val CALL_TYPE_REGEX = Regex("call type:\\s*([^\\n|]{2,40})", RegexOption.IGNORE_CASE)
     private val CALLER_REGEX = Regex("caller:\\s*([^\\n|]{2,40})", RegexOption.IGNORE_CASE)
 
+    // Markers for Should I Answer UK (shouldianswer.co.uk)
+    private val SIA_SCORE_REGEX = Regex(
+        """(negative|neutral|positive)\s+rating|rated\s+as\s+(spam|scam|telemarketer|silent\s+call|debt\s+collector|harassment| nuisance|safe)""",
+        RegexOption.IGNORE_CASE
+    )
+    private val SIA_CATEGORY_REGEX = Regex(
+        """(telemarketer|silent\s+call|debt\s+collector|financial\s+service|scam|fraud|survey|non-profit|call\s+centre|unsolicited\s+call)""",
+        RegexOption.IGNORE_CASE
+    )
+    private val SIA_REVIEWS_COUNT_REGEX = Regex("""(\d+)\s+(?:user\s+)?(?:reviews?|ratings?|reports?)""", RegexOption.IGNORE_CASE)
+
     private val SCRIPT_REGEX = Regex("<script.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
     private val STYLE_REGEX = Regex("<style.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
     private val COMMENT_REGEX = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL)
     private val TAG_REGEX = Regex("<[^>]+>")
     private val WHITESPACE_REGEX = Regex("\\s+")
 
-    /** Queries every supported source in parallel and returns one row per source. */
     suspend fun lookup(e164: String): List<ReputationReport> = withContext(Dispatchers.IO) {
         val digits = e164.replace(DIGITS_REGEX, "")
         val northAmerica = digits.length == 11 && digits.startsWith("1")
+        val uk = digits.length in 11..12 && digits.startsWith("44")
 
         val jobs = ArrayList<Pair<String, () -> ReputationReport>>()
         if (northAmerica) {
-            val national = digits.substring(1)              // 8554208313
+            val national = digits.substring(1)
             val dashed = "1-${national.substring(0, 3)}-${national.substring(3, 6)}-${national.substring(6)}"
             jobs.add(
                 "WhoCallsMe" to {
@@ -74,19 +65,83 @@ object PhoneReputation {
                     )
                 }
             )
+        } else if (uk) {
+            val ukLocal = "0" + digits.removePrefix("44")
+            jobs.add(
+                "Should I Answer UK" to {
+                    queryShouldIAnswerUk(ukLocal)
+                }
+            )
+            jobs.add(
+                "WhoCallsMe" to {
+                    queryHtml(
+                        source = "WhoCallsMe",
+                        url = "https://whocallsme.com/Phone-Number.aspx/$ukLocal",
+                    )
+                }
+            )
         }
 
         jobs.map { (_, job) -> async { job() } }.awaitAll()
     }
 
-    /** Sources that are applicable to [e164], for labelling the UI. */
     fun supportedSources(e164: String): List<String> {
         val digits = e164.replace(DIGITS_REGEX, "")
-        return if (digits.length == 11 && digits.startsWith("1")) {
-            listOf("WhoCallsMe", "800notes")
-        } else {
-            emptyList()
+        return when {
+            digits.length == 11 && digits.startsWith("1") -> listOf("WhoCallsMe", "800notes")
+            digits.length in 11..12 && digits.startsWith("44") -> listOf("Should I Answer UK", "WhoCallsMe")
+            else -> emptyList()
         }
+    }
+
+    private fun queryShouldIAnswerUk(ukLocal: String): ReputationReport {
+        val url = "https://www.shouldianswer.co.uk/phone-number/$ukLocal"
+        val response = ScanHttp.get(url, timeoutMs = 15_000)
+        if (response.isNetworkError) {
+            return ReputationReport("Should I Answer UK", url, false, 0, emptyList(), emptyList(), "Network error")
+        }
+        if (response.code == 404 || response.code == 410) {
+            return ReputationReport("Should I Answer UK", url, false, 0, emptyList(), emptyList())
+        }
+        if (!response.isOk) {
+            return ReputationReport("Should I Answer UK", url, false, 0, emptyList(), emptyList(), "HTTP ${response.code}")
+        }
+
+        val text = htmlToText(response.body)
+        val categories = SIA_CATEGORY_REGEX.findAll(text)
+            .map { it.value.trim().lowercase().replaceFirstChar { c -> c.uppercase() } }
+            .distinct()
+            .toList()
+
+        val scoreMatches = SIA_SCORE_REGEX.findAll(text)
+            .map { it.value.trim() }
+            .distinct()
+            .toList()
+
+        val countFromText = SIA_REVIEWS_COUNT_REGEX.findAll(text)
+            .mapNotNull { it.groupValues[1].toIntOrNull() }
+            .maxOrNull() ?: 0
+
+        val hasNegativeOrCategory = countFromText > 0 ||
+            scoreMatches.any { it.contains("negative", true) || it.contains("spam", true) || it.contains("scam", true) }
+
+        if (!hasNegativeOrCategory) {
+            return ReputationReport("Should I Answer UK", url, false, 0, emptyList(), emptyList())
+        }
+
+        val reportCount = maxOf(countFromText, categories.size, scoreMatches.size)
+        val samples = LinkedHashSet<String>()
+        scoreMatches.forEach { if (samples.size < MAX_SAMPLES) samples.add("Rating: $it") }
+        categories.forEach { if (samples.size < MAX_SAMPLES) samples.add("Category: $it") }
+
+        return ReputationReport(
+            source = "Should I Answer UK",
+            url = url,
+            hasReports = true,
+            reportCount = reportCount,
+            callTypes = categories.ifEmpty { scoreMatches },
+            samples = samples.toList()
+        )
     }
 
     private fun queryHtml(source: String, url: String): ReputationReport {
@@ -95,7 +150,6 @@ object PhoneReputation {
             return ReputationReport(source, url, false, 0, emptyList(), emptyList(), "Network error")
         }
         if (response.code == 404 || response.code == 410) {
-            // The site explicitly has no thread for this number.
             return ReputationReport(source, url, false, 0, emptyList(), emptyList())
         }
         if (!response.isOk) {
@@ -119,7 +173,7 @@ object PhoneReputation {
             .toList()
 
         val samples = LinkedHashSet<String>()
-        callers.forEach { caller -> 
+        callers.forEach { caller ->
             if (samples.size < MAX_SAMPLES) samples.add("Caller: $caller")
         }
         callTypes.forEach { type ->
@@ -136,7 +190,6 @@ object PhoneReputation {
         )
     }
 
-    /** Strips scripts/styles/tags so the report text can be pattern-matched. */
     internal fun htmlToText(html: String): String {
         var text = SCRIPT_REGEX.replace(html, " ")
         text = STYLE_REGEX.replace(text, " ")

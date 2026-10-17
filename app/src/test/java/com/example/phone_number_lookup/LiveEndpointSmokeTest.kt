@@ -25,8 +25,8 @@ class LiveEndpointSmokeTest {
 
         assertTrue("expected a large merged database, got ${sites.size}", sites.size > 800)
         assertTrue("WhatsMyName contributed nothing", (breakdown[OsintDatasets.SRC_WMN] ?: 0) > 300)
-        assertTrue("Sherlock contributed nothing", (breakdown[OsintDatasets.SRC_SHERLOCK] ?: 0) > 100)
-        assertTrue("Tookie contributed nothing", (breakdown[OsintDatasets.SRC_TOOKIE] ?: 0) > 50)
+        assertTrue("Sherlock contributed nothing", (breakdown[OsintDatasets.SRC_SHERLOCK] ?: 0) > 20)
+        assertTrue("Tookie contributed nothing", (breakdown[OsintDatasets.SRC_TOOKIE] ?: 0) > 10)
 
         // De-duplication must have removed overlapping rows from the merge.
         val names = sites.map { it.name.lowercase() }

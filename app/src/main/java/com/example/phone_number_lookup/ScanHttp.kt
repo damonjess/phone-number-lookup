@@ -8,19 +8,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/**
- * Minimal, dependency-free HTTP client.
- *
- * Deliberately built on java.net.HttpURLConnection so the app needs no third-party
- * networking library and every OSINT request stays transparent and free.
- *
- * Supports GET and POST because the community site databases (Sherlock, Blackbird)
- * describe some checks as POST requests with a JSON/text body and custom headers.
- */
 data class HttpResponse(
     val code: Int,
     val body: String,
-    /** URL after redirects were followed, needed for Sherlock `response_url` checks. */
     val finalUrl: String = ""
 ) {
     val isNetworkError: Boolean get() = code == -1
@@ -29,10 +19,19 @@ data class HttpResponse(
 
 object ScanHttp {
 
-    const val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    val USER_AGENTS = listOf(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    )
 
-    /** Performs a GET request. */
+    const val USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+
+    private const val MAX_REDIRECTS = 5
+
     fun get(
         url: String,
         timeoutMs: Int = 12_000,
@@ -40,7 +39,6 @@ object ScanHttp {
         maxBodyChars: Int = DEFAULT_MAX_BODY_CHARS
     ): HttpResponse = request("GET", url, null, timeoutMs, headers, maxBodyChars)
 
-    /** Performs a POST request with an optional raw body. */
     fun post(
         url: String,
         body: String? = null,
@@ -49,11 +47,14 @@ object ScanHttp {
         headers: Map<String, String> = emptyMap(),
         maxBodyChars: Int = DEFAULT_MAX_BODY_CHARS
     ): HttpResponse {
-        val merged = if (contentType != null) headers + ("Content-Type" to contentType) else headers
+        val merged = if (contentType != null && !headers.keys.any { it.equals("Content-Type", true) }) {
+            headers + ("Content-Type" to contentType)
+        } else {
+            headers
+        }
         return request("POST", url, body, timeoutMs, merged, maxBodyChars)
     }
 
-    /** Performs a request. Returns [HttpResponse] with code -1 when it fails outright. */
     fun request(
         method: String,
         url: String,
@@ -62,48 +63,69 @@ object ScanHttp {
         headers: Map<String, String> = emptyMap(),
         maxBodyChars: Int = DEFAULT_MAX_BODY_CHARS
     ): HttpResponse {
-        var connection: HttpURLConnection? = null
-        return try {
-            connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = method.uppercase()
-                instanceFollowRedirects = true
-                connectTimeout = timeoutMs
-                readTimeout = timeoutMs
-                setRequestProperty("User-Agent", USER_AGENT)
-                setRequestProperty("Accept", "*/*")
-                setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-                headers.forEach { (key, value) -> setRequestProperty(key, value) }
-            }
+        var currentUrl = url
+        var currentMethod = method.uppercase()
+        var currentBody = body
 
-            if (body != null && method.equals("POST", ignoreCase = true)) {
-                connection.doOutput = true
-                OutputStreamWriter(connection.outputStream, "UTF-8").use { writer ->
-                    writer.write(body)
+        for (hop in 0..MAX_REDIRECTS) {
+            var connection: HttpURLConnection? = null
+            try {
+                val targetUrl = URL(currentUrl)
+                connection = (targetUrl.openConnection() as HttpURLConnection).apply {
+                    requestMethod = currentMethod
+                    instanceFollowRedirects = false
+                    connectTimeout = timeoutMs
+                    readTimeout = timeoutMs
+                    setRequestProperty("User-Agent", headers["User-Agent"] ?: USER_AGENTS.random())
+                    setRequestProperty(
+                        "Accept",
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7"
+                    )
+                    setRequestProperty("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8")
+                    headers.forEach { (key, value) -> setRequestProperty(key, value) }
+                }
+
+                if (currentBody != null && currentMethod == "POST") {
+                    connection.doOutput = true
+                    OutputStreamWriter(connection.outputStream, "UTF-8").use { writer ->
+                        writer.write(currentBody)
+                    }
+                }
+
+                val code = connection.responseCode
+                if (code in setOf(301, 302, 303, 307, 308) && hop < MAX_REDIRECTS) {
+                    val location = connection.getHeaderField("Location")
+                    if (!location.isNullOrBlank()) {
+                        currentUrl = URL(targetUrl, location).toString()
+                        if (code == 303 || ((code == 301 || code == 302) && currentMethod == "POST")) {
+                            currentMethod = "GET"
+                            currentBody = null
+                        }
+                        connection.disconnect()
+                        continue
+                    }
+                }
+
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val text = stream?.let {
+                    BufferedReader(InputStreamReader(it, "UTF-8")).use { reader ->
+                        readCapped(reader, maxBodyChars)
+                    }
+                } ?: ""
+                val resolvedUrl = connection.url?.toString()?.takeIf { it.isNotBlank() } ?: currentUrl
+                return HttpResponse(code, text, resolvedUrl)
+            } catch (_: Exception) {
+                return HttpResponse(-1, "", currentUrl)
+            } finally {
+                try {
+                    connection?.disconnect()
+                } catch (_: Exception) {
                 }
             }
-
-            val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.let {
-                BufferedReader(InputStreamReader(it, "UTF-8")).use { reader -> readCapped(reader, maxBodyChars) }
-            } ?: ""
-            HttpResponse(code, text, connection.url?.toString().orEmpty())
-        } catch (e: Exception) {
-            HttpResponse(-1, "", "")
-        } finally {
-            try {
-                connection?.disconnect()
-            } catch (_: Exception) {
-                // ignore
-            }
         }
+        return HttpResponse(-1, "", currentUrl)
     }
 
-    /**
-     * Profile pages can be several MB each and a scan fires hundreds of them. The "found / not found"
-     * markers sit in the first part of the page, so reading is capped. Dataset downloads pass a
-     * much larger cap so the JSON is never truncated.
-     */
     const val DEFAULT_MAX_BODY_CHARS = 512_000
 
     private fun readCapped(reader: Reader, maxChars: Int): String {
@@ -117,6 +139,5 @@ object ScanHttp {
         return sb.toString()
     }
 
-    /** URL-encodes a path/query component. */
     fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 }

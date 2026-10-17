@@ -1,13 +1,21 @@
 package com.example.phone_number_lookup.ui.viewmodels
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.phone_number_lookup.BreachReport
-import com.example.phone_number_lookup.EmailRegistrationScanner
-import com.example.phone_number_lookup.EmailScanner
+import com.example.phone_number_lookup.DomainNetworkOsint
+import com.example.phone_number_lookup.DomainOsintReport
 import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EmailDomainScanner
+import com.example.phone_number_lookup.EmailRegistrationScanner
+import com.example.phone_number_lookup.EmailScanner
+import com.example.phone_number_lookup.IdentityEnricher
+import com.example.phone_number_lookup.IdentityEnrichmentReport
+import com.example.phone_number_lookup.PythonOsintBridge
+import com.example.phone_number_lookup.PythonToolMode
 import com.example.phone_number_lookup.RegistrationHit
+import com.example.phone_number_lookup.SiteIssue
 import com.example.phone_number_lookup.UsernameHit
 import com.example.phone_number_lookup.UsernameScanner
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,7 +25,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class UsernameAndEmailOsintUiState(
-    val subTabState: Int = 0, // 0: Username, 1: Email
+    val subTabState: Int = 0, // 0: Username, 1: Email, 2: Domain & Network
+    val pythonToolMode: PythonToolMode = PythonToolMode.ALL_PYTHON,
     val targetInput: String = "",
     val activeTarget: String? = null,
     val liveHits: List<UsernameHit> = emptyList(),
@@ -40,16 +49,19 @@ data class UsernameAndEmailOsintUiState(
     val isDomainScanning: Boolean = false,
     val publicSuggestions: List<String> = emptyList(),
     val correlationHints: List<String> = emptyList(),
-    /** Username sites that said "found" for a made-up name and were ignored as unreliable. */
     val discardedCount: Int = 0,
     val registrationDiscarded: Int = 0,
-    /** True when the registration check could not run at all (not "nothing found"). */
     val registrationFailed: Boolean = false,
-    /** Error or warning for the registration check, e.g. incomplete site list. */
     val registrationNotice: String? = null,
+    val usernameIssues: List<SiteIssue> = emptyList(),
+    val isRetryingIssues: Boolean = false,
+    val identityEnrichment: IdentityEnrichmentReport? = null,
+    val isEnrichingIdentity: Boolean = false,
+    val networkOsintReport: DomainOsintReport? = null,
+    val isNetworkScanning: Boolean = false,
 )
 
-class UsernameAndEmailOsintViewModel : ViewModel() {
+class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(UsernameAndEmailOsintUiState())
     val uiState: StateFlow<UsernameAndEmailOsintUiState> = _uiState.asStateFlow()
@@ -57,12 +69,18 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
     private val scans = ScanCoordinator(viewModelScope)
 
     fun onSubTabChanged(tabIndex: Int) {
-        // The sub-tabs are separate investigations, so anything still running belongs to
-        // the tab being left and must not publish into the one being opened.
         scans.cancelAll()
         _uiState.update {
-            UsernameAndEmailOsintUiState(subTabState = tabIndex, scanDepth = it.scanDepth)
+            UsernameAndEmailOsintUiState(
+                subTabState = tabIndex,
+                scanDepth = it.scanDepth,
+                pythonToolMode = it.pythonToolMode
+            )
         }
+    }
+
+    fun onPythonToolModeChanged(mode: PythonToolMode) {
+        _uiState.update { it.copy(pythonToolMode = mode) }
     }
 
     fun onTargetInputChanged(input: String) {
@@ -79,6 +97,7 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
 
         val currentSubTab = _uiState.value.subTabState
         val depth = _uiState.value.scanDepth
+        val mode = _uiState.value.pythonToolMode
         val token = scans.supersede()
 
         _uiState.update {
@@ -101,29 +120,37 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                 registrationDiscarded = 0,
                 registrationFailed = false,
                 registrationNotice = null,
+                usernameIssues = emptyList(),
+                isRetryingIssues = false,
+                identityEnrichment = null,
+                isEnrichingIdentity = false,
+                networkOsintReport = null,
+                isNetworkScanning = false,
             )
         }
 
-        if (currentSubTab == 0) {
-            runUsernameScan(target, depth, token)
-        } else {
-            runEmailScan(target, token)
+        when (currentSubTab) {
+            0 -> runUsernameScan(target, depth, mode, token)
+            1 -> runEmailScan(target, mode, token)
+            else -> runDomainNetworkScan(target, token)
         }
     }
 
-    private fun runUsernameScan(target: String, depth: Int, token: Int) {
-        _uiState.update { it.copy(isLiveScanning = true) }
+    private fun runUsernameScan(target: String, depth: Int, mode: PythonToolMode, token: Int) {
+        _uiState.update { it.copy(isLiveScanning = true, isEnrichingIdentity = true) }
+
         scans.start(token) { active ->
-            val limit = when (depth) {
-                0 -> 150
-                1 -> UsernameScanner.DEFAULT_LIMIT
-                else -> UsernameScanner.FULL_SCAN
-            }
-            val outcome = UsernameScanner.scan(target, limit = limit) { checked, total ->
-                if (scans.isCurrent(active)) {
-                    _uiState.update { it.copy(scanProgress = checked, scanTotal = total) }
+            val limit = UsernameScanner.limitForDepth(depth)
+            val outcome = if (mode == PythonToolMode.NATIVE_KOTLIN) {
+                UsernameScanner.scanWithVariants(target, limit = limit) { checked, total ->
+                    if (scans.isCurrent(active)) {
+                        _uiState.update { it.copy(scanProgress = checked, scanTotal = total) }
+                    }
                 }
+            } else {
+                PythonOsintBridge.scanUsername(getApplication(), target, mode, limit)
             }
+
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(
@@ -131,9 +158,10 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                         liveSitesChecked = outcome.sitesChecked,
                         datasetSizes = outcome.datasetSizes,
                         unreachableCount = outcome.unreachable,
+                        usernameIssues = outcome.issues,
                         discardedCount = outcome.discarded.size,
                         liveError = if (outcome.sitesChecked == 0) {
-                            "Could not load any site database. Check your connection and retry."
+                            "Could not load site database in ${mode.label}. Check your connection and retry."
                         } else {
                             null
                         },
@@ -142,15 +170,35 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
                 }
             }
         }
-    }
-
-    private fun runEmailScan(target: String, token: Int) {
-        _uiState.update { it.copy(isRegistrationScanning = true, isBreachScanning = true, isDomainScanning = true) }
 
         scans.start(token) { active ->
-            val outcome = EmailRegistrationScanner.scan(target) { checked, _ ->
-                if (scans.isCurrent(active)) {
-                    _uiState.update { it.copy(registrationChecked = checked) }
+            val enrichment = IdentityEnricher.enrich(target, isEmail = false)
+            if (scans.isCurrent(active)) {
+                _uiState.update {
+                    it.copy(identityEnrichment = enrichment, isEnrichingIdentity = false)
+                }
+            }
+        }
+    }
+
+    private fun runEmailScan(target: String, mode: PythonToolMode, token: Int) {
+        _uiState.update {
+            it.copy(
+                isRegistrationScanning = true,
+                isBreachScanning = true,
+                isDomainScanning = true,
+                isEnrichingIdentity = true
+            )
+        }
+
+        scans.start(token) { active ->
+            val outcome = if (mode == PythonToolMode.BLACKBIRD_PY || mode == PythonToolMode.ALL_PYTHON) {
+                PythonOsintBridge.scanEmailBlackbirdPython(getApplication(), target)
+            } else {
+                EmailRegistrationScanner.scan(target) { checked, _ ->
+                    if (scans.isCurrent(active)) {
+                        _uiState.update { it.copy(registrationChecked = checked) }
+                    }
                 }
             }
             if (scans.isCurrent(active)) {
@@ -181,11 +229,19 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
             }
         }
 
-        // The handle before the @ is frequently reused, so scan it as a username too.
+        scans.start(token) { active ->
+            val enrichment = IdentityEnricher.enrich(target, isEmail = true)
+            if (scans.isCurrent(active)) {
+                _uiState.update {
+                    it.copy(identityEnrichment = enrichment, isEnrichingIdentity = false)
+                }
+            }
+        }
+
         val handle = EmailRegistrationScanner.localPart(target) ?: return
         scans.start(token) { active ->
             _uiState.update { it.copy(isLiveScanning = true) }
-            val outcome = UsernameScanner.scanWithVariants(handle, limit = 150)
+            val outcome = UsernameScanner.scanWithVariants(handle, limit = UsernameScanner.QUICK_LIMIT)
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(
@@ -205,11 +261,53 @@ class UsernameAndEmailOsintViewModel : ViewModel() {
         }
     }
 
+    private fun runDomainNetworkScan(target: String, token: Int) {
+        _uiState.update { it.copy(isNetworkScanning = true) }
+        scans.start(token) { active ->
+            val report = DomainNetworkOsint.scan(target)
+            if (scans.isCurrent(active)) {
+                _uiState.update {
+                    it.copy(networkOsintReport = report, isNetworkScanning = false)
+                }
+            }
+        }
+    }
+
     fun clear() {
         scans.cancelAll()
         val currentSubTab = _uiState.value.subTabState
         val depth = _uiState.value.scanDepth
-        _uiState.value = UsernameAndEmailOsintUiState(subTabState = currentSubTab, scanDepth = depth)
+        val mode = _uiState.value.pythonToolMode
+        _uiState.value = UsernameAndEmailOsintUiState(
+            subTabState = currentSubTab,
+            scanDepth = depth,
+            pythonToolMode = mode
+        )
+    }
+
+    fun retryBlockedUsernameSites() {
+        val state = _uiState.value
+        val target = state.activeTarget ?: return
+        val before = state.usernameIssues
+        if (state.isRetryingIssues || before.none { it.retryable }) return
+
+        _uiState.update { it.copy(isRetryingIssues = true) }
+        viewModelScope.launch {
+            val outcome = UsernameScanner.retry(target, before)
+            _uiState.update { s ->
+                if (s.usernameIssues !== before) return@update s.copy(isRetryingIssues = false)
+                val retried = before.filter { it.retryable }.map { it.site.lowercase() }.toSet()
+                val remaining = s.usernameIssues.filterNot { it.site.lowercase() in retried } + outcome.issues
+                s.copy(
+                    liveHits = (s.liveHits + outcome.confirmed)
+                        .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() })),
+                    usernameIssues = remaining,
+                    unreachableCount = remaining.size,
+                    discardedCount = s.discardedCount + outcome.discarded.size,
+                    isRetryingIssues = false,
+                )
+            }
+        }
     }
 
     fun recheckUsername(site: String) {

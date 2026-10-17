@@ -51,10 +51,17 @@ data class UsernameScanOutcome(
     /** Sites that said "found" even for a made-up username, so their hits were thrown away. */
     val discarded: List<String> = emptyList(),
     /** Every spelling that was searched, original first. */
-    val namesChecked: List<String> = emptyList()
+    val namesChecked: List<String> = emptyList(),
+    val issues: List<SiteIssue> = emptyList()
 ) {
     val databasesLoaded: Boolean get() = sitesChecked > 0
 }
+
+data class UsernameRetryOutcome(
+    val confirmed: List<UsernameHit> = emptyList(),
+    val issues: List<SiteIssue> = emptyList(),
+    val discarded: List<String> = emptyList()
+)
 
 object UsernameScanner {
 
@@ -220,11 +227,54 @@ object UsernameScanner {
         ProbeVerdict.UNKNOWN -> "Unavailable / uncertain"
     }
 
+    suspend fun retry(username: String, issues: List<SiteIssue>): UsernameRetryOutcome = withContext(Dispatchers.IO) {
+        val retryable = issues.filter { it.retryable }
+        if (retryable.isEmpty()) return@withContext UsernameRetryOutcome()
+
+        val hits = mutableListOf<UsernameHit>()
+        val newIssues = mutableListOf<SiteIssue>()
+        val discarded = mutableListOf<String>()
+
+        for (issue in retryable) {
+            val probe = OsintDatasets.findUsernameProbe(issue.site)
+            if (probe == null) {
+                newIssues += issue
+                continue
+            }
+            val result = OsintDatasets.evaluate(probe, username, timeoutMs = 12_000)
+            when (result.verdict) {
+                ProbeVerdict.FOUND -> {
+                    val controlHit = OsintDatasets.evaluate(probe, HitVerifier.randomUsername(), timeoutMs = 10_000)
+                        .verdict == ProbeVerdict.FOUND
+                    if (controlHit) {
+                        discarded += result.site.name
+                    } else {
+                        hits += toHit(result, username)
+                    }
+                }
+                ProbeVerdict.UNKNOWN -> {
+                    newIssues += issue.copy(reason = "Retry failed (${result.evidence})")
+                }
+                ProbeVerdict.NOT_FOUND -> {
+                    // Site answered; not found
+                }
+            }
+        }
+        UsernameRetryOutcome(confirmed = hits, issues = newIssues, discarded = discarded)
+    }
+
     /** Total probes available across every merged database (0 until first load). */
     fun availableSiteCount(): Int = OsintDatasets.cachedUsernameCount()
 
-    /** Matches the "Standard (300)" label in the UI; it used to be 100, below "Quick (150)". */
+    fun limitForDepth(depth: Int): Int = when (depth) {
+        0 -> QUICK_LIMIT
+        1 -> DEFAULT_LIMIT
+        else -> FULL_SCAN
+    }
+
+    const val QUICK_LIMIT = 150
     const val DEFAULT_LIMIT = 300
+    const val STANDARD_LIMIT = DEFAULT_LIMIT
     const val FULL_SCAN = 0
     const val VARIANT_SITE_LIMIT = 40
 }

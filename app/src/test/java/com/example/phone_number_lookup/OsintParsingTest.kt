@@ -576,8 +576,9 @@ class OsintParsingTest {
     }
 
     @Test
-    fun reputationSourcesAreOnlyAdvertisedForNorthAmericanNumbers() {
+    fun reputationSourcesAreAdvertisedForSupportedNumbers() {
         assertEquals(listOf("WhoCallsMe", "800notes"), PhoneReputation.supportedSources("+18554208313"))
-        assertTrue(PhoneReputation.supportedSources("+447782447307").isEmpty())
+        assertEquals(listOf("Should I Answer UK", "WhoCallsMe"), PhoneReputation.supportedSources("+447782447307"))
+        assertTrue(PhoneReputation.supportedSources("+3312345678").isEmpty())
     }
 }

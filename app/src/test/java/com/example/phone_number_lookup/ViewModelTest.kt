@@ -30,7 +30,7 @@ class ViewModelTest {
 
     @Test
     fun usernameAndEmailOsintViewModel_handlesSubTabsAndScanDepth() {
-        val viewModel = UsernameAndEmailOsintViewModel()
+        val viewModel = UsernameAndEmailOsintViewModel(android.app.Application())
         assertEquals(0, viewModel.uiState.value.subTabState)
         assertEquals(0, viewModel.uiState.value.scanDepth)
 

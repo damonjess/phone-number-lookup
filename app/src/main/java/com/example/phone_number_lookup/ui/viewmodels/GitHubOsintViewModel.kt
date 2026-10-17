@@ -2,6 +2,7 @@ package com.example.phone_number_lookup.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.phone_number_lookup.GitHubCommitMatch
 import com.example.phone_number_lookup.GitHubOsint
 import com.example.phone_number_lookup.GitHubRepoResult
 import com.example.phone_number_lookup.GitHubUserResult
@@ -14,6 +15,7 @@ data class GitHubOsintUiState(
     val query: String = "",
     val users: List<GitHubUserResult> = emptyList(),
     val repos: List<GitHubRepoResult> = emptyList(),
+    val commits: List<GitHubCommitMatch> = emptyList(),
     val profile: GitHubUserResult? = null,
     val isScanning: Boolean = false,
     val error: String? = null,
@@ -41,6 +43,7 @@ class GitHubOsintViewModel : ViewModel() {
                 profile = null,
                 users = emptyList(),
                 repos = emptyList(),
+                commits = emptyList(),
             )
         }
 
@@ -52,7 +55,7 @@ class GitHubOsintViewModel : ViewModel() {
                     it.copy(
                         users = result,
                         isScanning = false,
-                        error = if (result.isEmpty()) "No GitHub results returned (you may be rate-limited — the public API allows ~10 searches/min)." else null,
+                        error = if (result.isEmpty()) "No GitHub users returned (you may be rate-limited — the public API allows ~10 searches/min)." else null,
                     )
                 }
             }
@@ -70,6 +73,7 @@ class GitHubOsintViewModel : ViewModel() {
                 profile = null,
                 users = emptyList(),
                 repos = emptyList(),
+                commits = emptyList(),
             )
         }
 
@@ -81,7 +85,37 @@ class GitHubOsintViewModel : ViewModel() {
                     it.copy(
                         repos = result,
                         isScanning = false,
-                        error = if (result.isEmpty()) "No GitHub results returned (you may be rate-limited — the public API allows ~10 searches/min)." else null,
+                        error = if (result.isEmpty()) "No GitHub repositories returned (you may be rate-limited — the public API allows ~10 searches/min)." else null,
+                    )
+                }
+            }
+        }
+    }
+
+    fun searchCommits() {
+        val q = _uiState.value.query.trim()
+        if (q.isBlank()) return
+
+        _uiState.update {
+            it.copy(
+                isScanning = true,
+                error = null,
+                profile = null,
+                users = emptyList(),
+                repos = emptyList(),
+                commits = emptyList(),
+            )
+        }
+
+        val token = scans.supersede()
+        scans.start(token) { active ->
+            val result = GitHubOsint.searchCommits(q)
+            if (scans.isCurrent(active)) {
+                _uiState.update {
+                    it.copy(
+                        commits = result,
+                        isScanning = false,
+                        error = if (result.isEmpty()) "No GitHub commits matched (you may be rate-limited — the public API allows ~10 searches/min)." else null,
                     )
                 }
             }

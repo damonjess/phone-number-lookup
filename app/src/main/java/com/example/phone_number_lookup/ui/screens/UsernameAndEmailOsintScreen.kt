@@ -1,5 +1,6 @@
 package com.example.phone_number_lookup.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,6 +40,15 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.EmailRegistrationScanner
+import com.example.phone_number_lookup.IdentityEnrichmentReport
+import com.example.phone_number_lookup.OsintPdfExporter
+import com.example.phone_number_lookup.OsintTools
+import com.example.phone_number_lookup.PdfSection
+import com.example.phone_number_lookup.PythonToolMode
+import com.example.phone_number_lookup.UsernameScanner
+import com.example.phone_number_lookup.ui.components.DorkLauncherCard
+import com.example.phone_number_lookup.ui.components.IssuesSection
+import com.example.phone_number_lookup.ui.components.NumberedLinksHubCard
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.openUrl
@@ -69,7 +79,7 @@ fun UsernameAndEmailOsintScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Text(
-            text = "Native HTTP checks with results displayed in this app",
+            text = "Native HTTP checks: accounts, breaches, PGP/Keybase & domain recon",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -79,18 +89,47 @@ fun UsernameAndEmailOsintScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 12.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             FilterChip(
                 selected = uiState.subTabState == 0,
                 onClick = { viewModel.onSubTabChanged(0) },
-                label = { Text("Username OSINT") }
+                label = { Text("Username") }
             )
             FilterChip(
                 selected = uiState.subTabState == 1,
                 onClick = { viewModel.onSubTabChanged(1) },
-                label = { Text("Email OSINT") }
+                label = { Text("Email") }
             )
+            FilterChip(
+                selected = uiState.subTabState == 2,
+                onClick = { viewModel.onSubTabChanged(2) },
+                label = { Text("Domain & IP") }
+            )
+        }
+
+        if (uiState.subTabState == 0 || uiState.subTabState == 1) {
+            Text(
+                text = "Execution Engine (Embedded Chaquopy Python 3.11 vs Native):",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start).padding(bottom = 4.dp)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                PythonToolMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = uiState.pythonToolMode == mode,
+                        onClick = { viewModel.onPythonToolModeChanged(mode) },
+                        label = { Text(mode.label, style = MaterialTheme.typography.labelMedium) }
+                    )
+                }
+            }
         }
 
         if (uiState.subTabState == 0) {
@@ -100,7 +139,11 @@ fun UsernameAndEmailOsintScreen(
                     .padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Quick (150)" to 0, "Standard (300)" to 1, "Full sweep" to 2).forEach { (label, index) ->
+                listOf(
+                    "Quick (${UsernameScanner.QUICK_LIMIT})" to 0,
+                    "Standard (${UsernameScanner.STANDARD_LIMIT})" to 1,
+                    "Full sweep" to 2
+                ).forEach { (label, index) ->
                     FilterChip(
                         selected = uiState.scanDepth == index,
                         onClick = { viewModel.onScanDepthChanged(index) },
@@ -110,11 +153,27 @@ fun UsernameAndEmailOsintScreen(
             }
         }
 
+        val inputLabel = when (uiState.subTabState) {
+            0 -> "Enter Username (e.g. dnkirby)"
+            1 -> "Enter Email (e.g. alex.smith@gmail.com)"
+            else -> "Enter Domain (e.g. example.com)"
+        }
+        val inputPlaceholder = when (uiState.subTabState) {
+            0 -> "e.g. dnkirby or john_doe"
+            1 -> "e.g. alex.smith@gmail.com"
+            else -> "e.g. github.com or company.co.uk"
+        }
+        val buttonLabel = when (uiState.subTabState) {
+            0 -> "Run Live Username Scanner"
+            1 -> "Run Live Breach & Email Check"
+            else -> "Run Domain, Subdomain & Shodan Recon"
+        }
+
         OutlinedTextField(
             value = uiState.targetInput,
             onValueChange = { viewModel.onTargetInputChanged(it) },
-            label = { Text(if (uiState.subTabState == 0) "Enter Username (e.g. dnkirby)" else "Enter Email (e.g. alex.smith@gmail.com)") },
-            placeholder = { Text(if (uiState.subTabState == 0) "e.g. dnkirby or john_doe" else "e.g. alex.smith@gmail.com") },
+            label = { Text(inputLabel) },
+            placeholder = { Text(inputPlaceholder) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { viewModel.runScan() }),
             modifier = Modifier.fillMaxWidth(),
@@ -134,424 +193,599 @@ fun UsernameAndEmailOsintScreen(
             onClick = { viewModel.runScan() },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (uiState.subTabState == 0) "Run Live Username Scanner" else "Run Live Breach Check")
+            Text(buttonLabel)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         uiState.activeTarget?.let { target ->
-            if (uiState.subTabState == 0) {
-                // Username Scan
-                OsintToolSectionCard(
-                    toolTitle = "Live Username Scan ($target)",
-                    subtitle = if (uiState.liveSitesChecked > 0)
-                        "${uiState.liveSitesChecked} real HTTP checks across the merged WhatsMyName, Sherlock and Tookie databases"
-                    else "Real HTTP checks across the merged community site databases",
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                ) {
-                    when {
-                        uiState.isLiveScanning -> Row(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                if (uiState.scanTotal > 0) "Scanned ${uiState.scanProgress} of ${uiState.scanTotal} sites..."
-                                else "Downloading site databases...",
-                                style = MaterialTheme.typography.bodyMedium
+            when (uiState.subTabState) {
+                0 -> {
+                    OsintToolSectionCard(
+                        toolTitle = "Live Username Scan ($target)",
+                        subtitle = if (uiState.liveSitesChecked > 0)
+                            "${uiState.liveSitesChecked} real HTTP checks across Verified APIs, WhatsMyName, Maigret, Sherlock and Tookie"
+                        else "Real HTTP checks across the merged community site databases",
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    ) {
+                        when {
+                            uiState.isLiveScanning -> Row(
+                                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    if (uiState.scanTotal > 0) "Scanned ${uiState.scanProgress} of ${uiState.scanTotal} sites..."
+                                    else "Downloading site databases...",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            uiState.liveError != null -> Text(uiState.liveError!!, style = MaterialTheme.typography.bodyMedium)
+                            uiState.liveHits.isEmpty() -> Column {
+                                Text(
+                                    "No public profiles matched this username.",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    "Scanned ${uiState.liveSitesChecked} sites" +
+                                        (if (uiState.unreachableCount > 0) ", ${uiState.unreachableCount} couldn't be checked" else "") +
+                                        (if (uiState.discardedCount > 0) ", ${uiState.discardedCount} ignored as unreliable" else "") + ".",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                IssuesSection(
+                                    issues = uiState.usernameIssues,
+                                    isRetrying = uiState.isRetryingIssues,
+                                    onRetry = viewModel::retryBlockedUsernameSites,
+                                    onOpen = { url -> openUrl(context, url) }
+                                )
+                            }
+                            else -> {
+                                Text(
+                                    "${uiState.liveHits.count { it.verificationStatus == "Matched" }} confirmed profile(s) • ${uiState.liveHits.size} result(s)",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                                if (uiState.discardedCount > 0) {
+                                    Text(
+                                        "${uiState.discardedCount} site(s) said \"found\" for a made-up username too, so they were ignored as unreliable.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(bottom = 4.dp)
+                                    )
+                                }
+                                IssuesSection(
+                                    issues = uiState.usernameIssues,
+                                    isRetrying = uiState.isRetryingIssues,
+                                    onRetry = viewModel::retryBlockedUsernameSites,
+                                    onOpen = { url -> openUrl(context, url) }
+                                )
+                                uiState.liveHits.forEach { hit ->
+                                    OutlinedCard(
+                                        onClick = { openUrl(context, hit.profileUrl) },
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                hit.site,
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                shape = MaterialTheme.shapes.extraSmall,
+                                                color = MaterialTheme.colorScheme.primaryContainer
+                                            ) {
+                                                Text(
+                                                    text = hit.source,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                shape = MaterialTheme.shapes.extraSmall,
+                                                color = MaterialTheme.colorScheme.secondaryContainer
+                                            ) {
+                                                Text(
+                                                    text = hit.category,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            "${hit.verificationStatus} • Confidence: ${hit.confidence} • HTTP ${if (hit.statusCode < 0) "network error" else hit.statusCode}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 12.dp)
+                                        )
+                                        Text(
+                                            hit.evidence,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                                        )
+                                        TextButton(
+                                            onClick = { viewModel.recheckUsername(hit.site) },
+                                            enabled = uiState.recheckingSite != hit.site
+                                        ) {
+                                            Text(if (uiState.recheckingSite == hit.site) "Rechecking..." else "Recheck result")
+                                        }
+                                    }
+                                }
+                                if (uiState.datasetSizes.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        "Databases: " + uiState.datasetSizes.entries.joinToString(", ") { "${it.key} ${it.value}" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    IdentityEnrichmentSection(
+                        report = uiState.identityEnrichment,
+                        isLoading = uiState.isEnrichingIdentity,
+                        onOpenUrl = { openUrl(context, it) }
+                    )
+
+                    val usernameLinks = buildList {
+                        uiState.liveHits.forEach { add("${it.site} (${it.source})" to it.profileUrl) }
+                        uiState.identityEnrichment?.keybaseProofs?.forEach {
+                            if (it.proofUrl.startsWith("http")) add("Keybase ${it.service}: ${it.handle}" to it.proofUrl)
+                        }
+                        uiState.identityEnrichment?.waybackSnapshots?.forEach { wb ->
+                            wb.latestArchiveUrl?.let { url -> add("Wayback Archive: ${wb.targetUrl}" to url) }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    NumberedLinksHubCard(
+                        title = "Matched Profile Links ($target)",
+                        links = usernameLinks,
+                        onExportPdf = {
+                            OsintPdfExporter.exportReport(
+                                context = context,
+                                title = "Username OSINT Report",
+                                target = target,
+                                sections = listOf(
+                                    PdfSection(
+                                        "Confirmed Accounts (${uiState.liveHits.size})",
+                                        uiState.liveHits.mapIndexed { i, hit ->
+                                            "${i + 1}. ${hit.site} [${hit.category}] - ${hit.profileUrl} (${hit.evidence})"
+                                        }
+                                    ),
+                                    PdfSection(
+                                        "Keybase & OpenPGP Proofs",
+                                        buildList {
+                                            uiState.identityEnrichment?.keybaseProofs?.forEach {
+                                                add("Keybase ${it.service}: ${it.handle} (${it.proofUrl})")
+                                            }
+                                            uiState.identityEnrichment?.pgpRecords?.forEach {
+                                                add("PGP Key ${it.keyId}: ${it.uids.joinToString(", ")}")
+                                            }
+                                        }
+                                    ),
+                                    PdfSection(
+                                        "Wayback Machine Snapshots",
+                                        uiState.identityEnrichment?.waybackSnapshots?.map {
+                                            "${it.targetUrl}: ${it.snapshotCount} captures (${it.firstSeen}..${it.lastSeen}) -> ${it.latestArchiveUrl}"
+                                        }.orEmpty()
+                                    )
+                                )
                             )
                         }
-                        uiState.liveError != null -> Text(uiState.liveError!!, style = MaterialTheme.typography.bodyMedium)
-                        uiState.liveHits.isEmpty() -> Column {
-                            Text(
-                                "No public profiles matched this username.",
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    DorkLauncherCard(
+                        title = "Tookie-OSINT (brib.py) & IntelBase Launchers",
+                        subtitle = "Broad alias footprinting across paste sites, forums & IntelBase",
+                        dorks = OsintTools.getTookieBribDorks(target) + OsintTools.getIntelBaseDork(target)
+                    )
+                }
+
+                1 -> {
+                    OsintToolSectionCard(
+                        toolTitle = "Accounts Registered ($target)",
+                        subtitle = "Signup & availability endpoints queried directly - the same method Holehe and Blackbird use",
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    ) {
+                        when {
+                            uiState.isRegistrationScanning -> Row(
+                                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    "Checking signup endpoints (${uiState.registrationChecked} done)...",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            uiState.registrationFailed -> Text(
+                                uiState.registrationNotice ?: "The account check could not run. Try again.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            uiState.registeredSites.isEmpty() -> Text(
+                                "No service reported an existing account for this address.",
                                 style = MaterialTheme.typography.bodyMedium
                             )
+                            else -> {
+                                Text(
+                                    "${uiState.registeredSites.count { it.verificationStatus == "Registered response" }} confirmed registration(s) • ${uiState.registeredSites.size} result(s)",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                                uiState.registeredSites.forEach { hit ->
+                                    OutlinedCard(
+                                        onClick = { openUrl(context, hit.profileUrl) },
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                hit.site,
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                shape = MaterialTheme.shapes.extraSmall,
+                                                color = MaterialTheme.colorScheme.primaryContainer
+                                            ) {
+                                                Text(
+                                                    text = hit.source,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            "${hit.verificationStatus} • Confidence: ${hit.confidence} • HTTP ${if (hit.statusCode < 0) "network error" else hit.statusCode}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 12.dp)
+                                        )
+                                        Text(
+                                            hit.evidence,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                                        )
+                                        TextButton(
+                                            onClick = { viewModel.recheckEmail(hit.site) },
+                                            enabled = uiState.recheckingSite != hit.site
+                                        ) {
+                                            Text(if (uiState.recheckingSite == hit.site) "Rechecking..." else "Recheck result")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (!uiState.isRegistrationScanning && !uiState.registrationFailed && uiState.registrationNotice != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                "Scanned ${uiState.liveSitesChecked} sites" +
-                                    (if (uiState.unreachableCount > 0) ", ${uiState.unreachableCount} unreachable" else "") +
-                                    (if (uiState.discardedCount > 0) ", ${uiState.discardedCount} ignored as unreliable" else "") + ".",
+                                uiState.registrationNotice!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        if (uiState.registrationDiscarded > 0 && !uiState.isRegistrationScanning) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                "${uiState.registrationDiscarded} site(s) also said an account exists for a made-up address, so they were ignored as unreliable.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        else -> {
+                        if (uiState.emailUnreachable > 0 && !uiState.isRegistrationScanning) {
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                "${uiState.liveHits.count { it.verificationStatus == "Matched" }} confirmed profile(s) • ${uiState.liveHits.size} result(s)",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(bottom = 4.dp)
+                                "${uiState.emailUnreachable} site(s) couldn't be checked automatically (blocked, timed out or no clear answer) and were not counted.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            if (uiState.discardedCount > 0) {
-                                Text(
-                                    "${uiState.discardedCount} site(s) said \"found\" for a made-up username too, so they were ignored as unreliable.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(bottom = 4.dp)
-                                )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OsintToolSectionCard(
+                        toolTitle = "Email Domain Intelligence",
+                        subtitle = "Public DNS checks and an explained local assessment; no IntelBase account or API is used",
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        when {
+                            uiState.isDomainScanning -> Row(
+                                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Checking MX, SPF, DMARC & Gravatar records...", style = MaterialTheme.typography.bodyMedium)
                             }
-                            if (uiState.unreachableCount > 0) {
-                                Text(
-                                    "${uiState.unreachableCount} site(s) blocked the request and were not counted.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(bottom = 4.dp)
-                                )
-                            }
-                            uiState.liveHits.forEach { hit ->
-                                OutlinedCard(
-                                    onClick = { openUrl(context, hit.profileUrl) },
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            hit.site,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            shape = MaterialTheme.shapes.extraSmall,
-                                            color = MaterialTheme.colorScheme.primaryContainer
-                                        ) {
-                                            Text(
-                                                text = hit.source,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            shape = MaterialTheme.shapes.extraSmall,
-                                            color = MaterialTheme.colorScheme.secondaryContainer
-                                        ) {
-                                            Text(
-                                                text = hit.category,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        "${hit.verificationStatus} • Confidence: ${hit.confidence} • HTTP ${if (hit.statusCode < 0) "network error" else hit.statusCode}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 12.dp)
-                                    )
-                                    Text(
-                                        hit.evidence,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-                                    )
-                                    TextButton(
-                                        onClick = { viewModel.recheckUsername(hit.site) },
-                                        enabled = uiState.recheckingSite != hit.site
-                                    ) {
-                                        Text(if (uiState.recheckingSite == hit.site) "Rechecking..." else "Recheck result")
-                                    }
+                            uiState.domainReport?.error != null -> Text(
+                                uiState.domainReport!!.error!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            uiState.domainReport != null -> {
+                                val domain = uiState.domainReport!!
+                                ResultRow("Domain", domain.domain)
+                                ResultRow("Accepts mail", domain.acceptsMail?.toString() ?: "Unknown")
+                                ResultRow("MX provider", domain.mxProvider ?: "Not returned")
+                                ResultRow("SPF", domain.spf?.toString() ?: "Unknown")
+                                ResultRow("DMARC", domain.dmarc?.toString() ?: "Unknown")
+                                ResultRow("Free provider", domain.freeProvider.toString())
+                                ResultRow("Disposable-like", domain.disposable.toString())
+                                ResultRow("Role mailbox", domain.roleAddress.toString())
+                                domain.qualityScore?.let { ResultRow("Local quality assessment", "$it / 100") }
+                                if (domain.reasons.isNotEmpty()) {
+                                    Text("Why", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                                    domain.reasons.forEach { reason -> Text("• $reason", style = MaterialTheme.typography.bodySmall) }
                                 }
                             }
-                            if (uiState.datasetSizes.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OsintToolSectionCard(
+                        toolTitle = "Live Breach & Infostealer Check ($target)",
+                        subtitle = "Real breach lookup via XposedOrNot + HudsonRock Cavalier Infostealer API",
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        val report = uiState.breachReport
+                        when {
+                            uiState.isBreachScanning -> Row(
+                                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Checking breach & infostealer databases...", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            report == null -> Text(
+                                "Run a scan to check this email against known data breaches.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            report.error != null -> Text(report.error, style = MaterialTheme.typography.bodyMedium)
+                            report.breached -> {
                                 Text(
-                                    "Databases: " + uiState.datasetSizes.entries.joinToString(", ") { "${it.key} ${it.value}" },
+                                    "Exposed in ${report.breachNames.size} record(s):",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                                report.breachNames.forEach { name ->
+                                    Text("• $name", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text("Evidence timeline", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(report.checkedAt))} — XposedOrNot & HudsonRock lookup completed",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-                    }
-                }
-
-            } else {
-                // Email Scan
-                OsintToolSectionCard(
-                    toolTitle = "Accounts Registered ($target)",
-                    subtitle = "Signup & availability endpoints queried directly - the same method Holehe and Blackbird use",
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                ) {
-                    when {
-                        uiState.isRegistrationScanning -> Row(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                "Checking signup endpoints (${uiState.registrationChecked} done)...",
+                            else -> Text(
+                                "No breaches or infostealer logs found in XposedOrNot or HudsonRock.",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
-                        uiState.registrationFailed -> Text(
-                            uiState.registrationNotice ?: "The account check could not run. Try again.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        uiState.registeredSites.isEmpty() -> Text(
-                            "No service reported an existing account for this address.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        else -> {
-                            Text(
-                                "${uiState.registeredSites.count { it.verificationStatus == "Registered response" }} confirmed registration(s) • ${uiState.registeredSites.size} result(s)",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(bottom = 4.dp)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    IdentityEnrichmentSection(
+                        report = uiState.identityEnrichment,
+                        isLoading = uiState.isEnrichingIdentity,
+                        onOpenUrl = { openUrl(context, it) }
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OsintToolSectionCard(
+                        toolTitle = "Handle Footprint",
+                        subtitle = "The part before the @ scanned as a username across every site database",
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    ) {
+                        val handle = EmailRegistrationScanner.localPart(target)
+                        when {
+                            handle == null -> Text("Could not derive a handle from this address.", style = MaterialTheme.typography.bodyMedium)
+                            uiState.isLiveScanning -> Row(
+                                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Scanning sites for \"$handle\"...", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            uiState.liveHits.isEmpty() -> Text(
+                                "No public profile matched the handle \"$handle\". (Scanned ${uiState.liveSitesChecked} sites.)",
+                                style = MaterialTheme.typography.bodyMedium
                             )
-                            uiState.registeredSites.forEach { hit ->
-                                OutlinedCard(
-                                    onClick = { openUrl(context, hit.profileUrl) },
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            hit.site,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            shape = MaterialTheme.shapes.extraSmall,
-                                            color = MaterialTheme.colorScheme.primaryContainer
-                                        ) {
-                                            Text(
-                                                text = hit.source,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
+                            else -> {
+                                Text(
+                                    "${uiState.liveHits.size} profile(s) found for \"$handle\"",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                                uiState.correlationHints.forEach { hint ->
                                     Text(
-                                        "${hit.verificationStatus} • Confidence: ${hit.confidence} • HTTP ${if (hit.statusCode < 0) "network error" else hit.statusCode}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 12.dp)
-                                    )
-                                    Text(
-                                        hit.evidence,
+                                        "• $hint",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                                        modifier = Modifier.padding(vertical = 2.dp)
                                     )
-                                    TextButton(
-                                        onClick = { viewModel.recheckEmail(hit.site) },
-                                        enabled = uiState.recheckingSite != hit.site
+                                }
+                                uiState.liveHits.forEach { hit ->
+                                    OutlinedCard(
+                                        onClick = { openUrl(context, hit.profileUrl) },
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
                                     ) {
-                                        Text(if (uiState.recheckingSite == hit.site) "Rechecking..." else "Recheck result")
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                hit.site,
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                shape = MaterialTheme.shapes.extraSmall,
+                                                color = MaterialTheme.colorScheme.primaryContainer
+                                            ) {
+                                                Text(
+                                                    text = hit.source,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                    if (!uiState.isRegistrationScanning && !uiState.registrationFailed && uiState.registrationNotice != null) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            uiState.registrationNotice!!,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+
+                    val emailLinks = buildList {
+                        uiState.registeredSites.forEach { add("Registered: ${it.site}" to it.profileUrl) }
+                        uiState.liveHits.forEach { add("Handle Match: ${it.site}" to it.profileUrl) }
+                        OsintTools.getBlackbirdEmailScan(target).forEach { add(it.title to it.url) }
                     }
-                    if (uiState.registrationDiscarded > 0 && !uiState.isRegistrationScanning) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            "${uiState.registrationDiscarded} site(s) also said an account exists for a made-up address, so they were ignored as unreliable.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (uiState.emailUnreachable > 0 && !uiState.isRegistrationScanning) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            "${uiState.emailUnreachable} site(s) blocked the request and were not counted.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OsintToolSectionCard(
-                    toolTitle = "Email Domain Intelligence",
-                    subtitle = "Public DNS checks and an explained local assessment; no IntelBase account or API is used",
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    when {
-                        uiState.isDomainScanning -> Row(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text("Checking MX, SPF and DMARC records...", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        uiState.domainReport?.error != null -> Text(
-                            uiState.domainReport!!.error!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        uiState.domainReport != null -> {
-                            val domain = uiState.domainReport!!
-                            ResultRow("Domain", domain.domain)
-                            ResultRow("Accepts mail", domain.acceptsMail?.toString() ?: "Unknown")
-                            ResultRow("MX provider", domain.mxProvider ?: "Not returned")
-                            ResultRow("SPF", domain.spf?.toString() ?: "Unknown")
-                            ResultRow("DMARC", domain.dmarc?.toString() ?: "Unknown")
-                            ResultRow("Free provider", domain.freeProvider.toString())
-                            ResultRow("Disposable-like", domain.disposable.toString())
-                            ResultRow("Role mailbox", domain.roleAddress.toString())
-                            domain.qualityScore?.let { ResultRow("Local quality assessment", "$it / 100") }
-                            if (domain.reasons.isNotEmpty()) {
-                                Text("Why", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-                                domain.reasons.forEach { reason -> Text("• $reason", style = MaterialTheme.typography.bodySmall) }
-                            }
-                            Text(
-                                "This is an email/domain quality assessment, not proof that the mailbox belongs to anyone or that it is safe.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 6.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OsintToolSectionCard(
-                    toolTitle = "Live Breach Check ($target)",
-                    subtitle = "Real breach lookup via the free XposedOrNot API",
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                ) {
-                    val report = uiState.breachReport
-                    when {
-                        uiState.isBreachScanning -> Row(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text("Checking breach databases...", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        report == null -> Text(
-                            "Run a scan to check this email against known data breaches.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        report.error != null -> Text(report.error, style = MaterialTheme.typography.bodyMedium)
-                        report.breached -> {
-                            Text(
-                                "Exposed in ${report.breachNames.size} breach(es):",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                            report.breachNames.forEach { name ->
-                                Text("• $name", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text("Evidence timeline", fontWeight = FontWeight.Bold)
-                            Text(
-                                "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(report.checkedAt))} — XposedOrNot lookup returned these breach names",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                "Breach publication dates and exposed fields were not returned by this endpoint, so the app does not invent them.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                        else -> Text(
-                            "No breaches found in the XposedOrNot database.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OsintToolSectionCard(
-                    toolTitle = "Handle Footprint",
-                    subtitle = "The part before the @ scanned as a username across every site database",
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                ) {
-                    val handle = EmailRegistrationScanner.localPart(target)
-                    when {
-                        handle == null -> Text("Could not derive a handle from this address.", style = MaterialTheme.typography.bodyMedium)
-                        uiState.isLiveScanning -> Row(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text("Scanning sites for \"$handle\"...", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        uiState.liveHits.isEmpty() -> Text(
-                            "No public profile matched the handle \"$handle\". (Scanned ${uiState.liveSitesChecked} sites.)",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        else -> {
-                            Text(
-                                "${uiState.liveHits.size} profile(s) found for \"$handle\"",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                            uiState.correlationHints.forEach { hint ->
-                                Text(
-                                    "• $hint",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(vertical = 2.dp)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    NumberedLinksHubCard(
+                        title = "Email & Handle Links Queue ($target)",
+                        links = emailLinks,
+                        onExportPdf = {
+                            OsintPdfExporter.exportReport(
+                                context = context,
+                                title = "Email OSINT Report",
+                                target = target,
+                                sections = listOf(
+                                    PdfSection(
+                                        "Registered Accounts (${uiState.registeredSites.size})",
+                                        uiState.registeredSites.mapIndexed { i, hit ->
+                                            "${i + 1}. ${hit.site} (${hit.source}) - ${hit.profileUrl}"
+                                        }
+                                    ),
+                                    PdfSection(
+                                        "Breach & Infostealer Exposure",
+                                        uiState.breachReport?.breachNames?.ifEmpty { listOf("No breaches reported") }
+                                            ?: listOf("Not checked")
+                                    ),
+                                    PdfSection(
+                                        "Domain & Mail Gateway Intelligence",
+                                        uiState.domainReport?.reasons.orEmpty()
+                                    ),
+                                    PdfSection(
+                                        "Handle Profile Matches (${uiState.liveHits.size})",
+                                        uiState.liveHits.map { "${it.site}: ${it.profileUrl}" }
+                                    )
                                 )
+                            )
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    DorkLauncherCard(
+                        title = "Blackbird, Epieos & IntelBase Email Tools",
+                        subtitle = "External breach dorks, Epieos reverse lookup & IntelBase portal",
+                        dorks = OsintTools.getBlackbirdEmailScan(target)
+                    )
+                }
+
+                else -> {
+                    val net = uiState.networkOsintReport
+                    OsintToolSectionCard(
+                        toolTitle = "Domain & Network Recon ($target)",
+                        subtitle = "Cloudflare DoH, RDAP ownership, crt.sh Certificate Transparency & Shodan InternetDB",
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        when {
+                            uiState.isNetworkScanning -> Row(
+                                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Querying DNS, RDAP, crt.sh & Shodan InternetDB...", style = MaterialTheme.typography.bodyMedium)
                             }
-                            if (uiState.publicSuggestions.isNotEmpty()) {
-                                Text("Public signals to review", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-                                uiState.publicSuggestions.forEach { suggestion ->
-                                    Text("• $suggestion", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
+                            net?.error != null -> Text(
+                                net.error,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            net != null -> {
+                                ResultRow("Domain", net.domain)
+                                if (net.aRecords.isNotEmpty()) ResultRow("IPv4 (A)", net.aRecords.joinToString(", "))
+                                if (net.aaaaRecords.isNotEmpty()) ResultRow("IPv6 (AAAA)", net.aaaaRecords.joinToString(", "))
+                                if (net.mxRecords.isNotEmpty()) ResultRow("MX Records", net.mxRecords.joinToString(", "))
+                                if (net.nsRecords.isNotEmpty()) ResultRow("Nameservers", net.nsRecords.joinToString(", "))
+
+                                net.rdap?.let { rdap ->
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("RDAP Registration & Ownership", fontWeight = FontWeight.Bold)
+                                    rdap.registrar?.let { ResultRow("Registrar", it) }
+                                    rdap.registeredDate?.let { ResultRow("Registered", it) }
+                                    rdap.expirationDate?.let { ResultRow("Expires", it) }
+                                    if (rdap.status.isNotEmpty()) ResultRow("Status", rdap.status.joinToString(", "))
                                 }
-                            }
-                            uiState.liveHits.forEach { hit ->
-                                OutlinedCard(
-                                    onClick = { openUrl(context, hit.profileUrl) },
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            hit.site,
-                                            fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            shape = MaterialTheme.shapes.extraSmall,
-                                            color = MaterialTheme.colorScheme.primaryContainer
-                                        ) {
-                                            Text(
-                                                text = hit.source,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
+
+                                net.shodanHost?.let { shodan ->
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Shodan InternetDB (${shodan.ip})", fontWeight = FontWeight.Bold)
+                                    ResultRow("Open Ports", if (shodan.ports.isNotEmpty()) shodan.ports.joinToString(", ") else "None reported")
+                                    if (shodan.hostnames.isNotEmpty()) ResultRow("Hostnames", shodan.hostnames.joinToString(", "))
+                                    if (shodan.tags.isNotEmpty()) ResultRow("Tags", shodan.tags.joinToString(", "))
+                                    if (shodan.cpes.isNotEmpty()) ResultRow("Services (CPE)", shodan.cpes.take(6).joinToString(", "))
+                                    if (shodan.vulns.isNotEmpty()) {
+                                        ResultRow("Known CVEs", shodan.vulns.take(10).joinToString(", "))
+                                    }
+                                }
+
+                                if (net.subdomains.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Certificate Transparency Subdomains (${net.subdomains.size})", fontWeight = FontWeight.Bold)
+                                    net.subdomains.take(25).forEach { sub ->
+                                        Text("• $sub", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+
+                                net.wayback?.let { wb ->
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Wayback Machine History", fontWeight = FontWeight.Bold)
+                                    ResultRow("Snapshots", "${wb.snapshotCount}+ captures (${wb.firstSeen ?: "?"} to ${wb.lastSeen ?: "?"})")
+                                    wb.latestArchiveUrl?.let { url ->
+                                        TextButton(onClick = { openUrl(context, url) }) {
+                                            Text("Open Latest Archive Snapshot ↗")
                                         }
                                     }
                                 }
@@ -559,7 +793,87 @@ fun UsernameAndEmailOsintScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
 
+@Composable
+private fun IdentityEnrichmentSection(
+    report: IdentityEnrichmentReport?,
+    isLoading: Boolean,
+    onOpenUrl: (String) -> Unit
+) {
+    OsintToolSectionCard(
+        toolTitle = "Cryptographic Proofs, PGP & Archive History",
+        subtitle = "Keybase identity graph, Ubuntu OpenPGP Keyserver & Wayback Machine CDX snapshots",
+        containerColor = MaterialTheme.colorScheme.secondaryContainer
+    ) {
+        when {
+            isLoading -> Row(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(10.dp))
+                Text("Querying Keybase, OpenPGP & Wayback Machine...", style = MaterialTheme.typography.bodyMedium)
+            }
+            report == null || !report.hasData -> Text(
+                "No Keybase proofs, PGP keys, or Wayback profile snapshots returned for this target.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            else -> {
+                report.keybaseDisplayName?.let { ResultRow("Keybase Name", it) }
+                report.keybaseBio?.let { ResultRow("Keybase Bio", it) }
+                if (report.keybaseProofs.isNotEmpty()) {
+                    Text("Verified Keybase Accounts", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+                    report.keybaseProofs.forEach { proof ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("• ${proof.service}: ${proof.handle}", style = MaterialTheme.typography.bodySmall)
+                            if (proof.proofUrl.startsWith("http")) {
+                                TextButton(onClick = { onOpenUrl(proof.proofUrl) }) { Text("Open") }
+                            }
+                        }
+                    }
+                }
+                if (report.pgpRecords.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("OpenPGP Public Key UIDs", fontWeight = FontWeight.Bold)
+                    report.pgpRecords.forEach { pgp ->
+                        Text(
+                            "Key ${pgp.keyId}" + (pgp.createdDate?.let { " (created $it)" } ?: ""),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        pgp.uids.forEach { uid ->
+                            Text("• $uid", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                if (report.waybackSnapshots.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("Wayback Machine Archived Profiles", fontWeight = FontWeight.Bold)
+                    report.waybackSnapshots.forEach { wb ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "• ${wb.targetUrl} (${wb.snapshotCount} captures, ${wb.firstSeen}..${wb.lastSeen})",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            wb.latestArchiveUrl?.let { url ->
+                                TextButton(onClick = { onOpenUrl(url) }) { Text("Archive") }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
