@@ -28,6 +28,8 @@ object CuratedUsernameChecks {
         duolingo(),
         mastodonSocial(),
         gravatar(),
+        myFitnessPal(),
+        strava(),
         medium(),
         telegram(),
         minecraft(),
@@ -358,6 +360,40 @@ object CuratedUsernameChecks {
         foundStrings = listOf("\"preferredUsername\":"),
         missingCodes = setOf(404),
         missingStrings = listOf("User not found"),
+        missingUrls = emptyList()
+    )
+
+    private fun myFitnessPal() = SiteProbe(
+        name = "MyFitnessPal",
+        category = "hobby",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.myfitnesspal.com/profile/{account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.myfitnesspal.com/profile/{account}",
+        headers = emptyMap(),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("{account}"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("This Username Is Invalid", "Page Not Found"),
+        missingUrls = emptyList()
+    )
+
+    private fun strava() = SiteProbe(
+        name = "Strava",
+        category = "hobby",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.strava.com/athletes/{account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.strava.com/athletes/{account}",
+        headers = emptyMap(),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("strava.com/athletes/"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("Page Not Found"),
         missingUrls = emptyList()
     )
 

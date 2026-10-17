@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.phone_number_lookup.BreachReport
 import com.example.phone_number_lookup.DomainNetworkOsint
 import com.example.phone_number_lookup.DomainOsintReport
+import com.example.phone_number_lookup.EmailAttributionEngine
+import com.example.phone_number_lookup.EmailAttributionReport
 import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EmailDomainScanner
 import com.example.phone_number_lookup.EmailRegistrationScanner
@@ -63,6 +65,7 @@ data class UsernameAndEmailOsintUiState(
     val isNetworkScanning: Boolean = false,
     val googleMetadata: GoogleMetadataReport? = null,
     val isGoogleMetadataScanning: Boolean = false,
+    val attributionReport: EmailAttributionReport? = null,
 )
 
 class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewModel(application) {
@@ -132,6 +135,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isNetworkScanning = false,
                 googleMetadata = null,
                 isGoogleMetadataScanning = false,
+                attributionReport = null,
             )
         }
 
@@ -203,7 +207,11 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             val meta = try {
                 GoogleMetadataExtractor.extract(target)
             } catch (e: Exception) {
-                GoogleMetadataReport(target, error = "Public calendar check failed: ${e.message ?: "unknown error"}")
+                GoogleMetadataReport(
+                    email = target,
+                    accountStatus = "Google account status is unknown",
+                    error = "Public calendar check failed: ${e.message ?: "unknown error"}"
+                )
             }
             if (scans.isCurrent(active)) {
                 _uiState.update {
@@ -257,6 +265,13 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         }
 
         scans.start(token) { active ->
+            val attribution = EmailAttributionEngine.analyze(target)
+            if (scans.isCurrent(active)) {
+                _uiState.update { it.copy(attributionReport = attribution) }
+            }
+        }
+
+        scans.start(token) { active ->
             val enrichment = IdentityEnricher.enrich(target, isEmail = true)
             if (scans.isCurrent(active)) {
                 _uiState.update {
@@ -271,7 +286,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             // Correlate the email local-part with public usernames using the selected Python toolset.
             val outcome = try {
                 PythonOsintBridge.scanUsername(
-                    getApplication(), handle, mode, UsernameScanner.QUICK_LIMIT
+                    getApplication(), handle, mode, UsernameScanner.STANDARD_LIMIT
                 )
             } catch (e: Exception) {
                 if (scans.isCurrent(active)) {

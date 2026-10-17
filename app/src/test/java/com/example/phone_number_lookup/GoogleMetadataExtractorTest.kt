@@ -19,6 +19,10 @@ class GoogleMetadataExtractorTest {
 
         assertEquals(true, report.publicCalendarFound)
         assertEquals("Public events", report.calendarDisplayName)
+        assertEquals("Public calendar detected; Google account ownership is unverified", report.accountStatus)
+        assertEquals(listOf("Public Calendar"), report.activeServices)
+        assertNull(report.gaiaId)
+        assertTrue(report.mappedLocations.isEmpty())
         assertEquals(url, report.sourceUrl)
         assertNull(report.error)
     }
@@ -33,6 +37,7 @@ class GoogleMetadataExtractorTest {
 
         assertNull(report.publicCalendarFound)
         assertNull(report.calendarDisplayName)
+        assertEquals("Google account status is unknown", report.accountStatus)
         assertTrue(report.error?.contains("status is unknown") == true)
     }
 

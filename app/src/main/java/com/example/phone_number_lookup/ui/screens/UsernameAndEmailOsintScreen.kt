@@ -445,11 +445,10 @@ fun UsernameAndEmailOsintScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                     }
 
-                    // Only report a publicly readable calendar, not account ownership.
                     if (uiState.isGoogleMetadataScanning) {
                         OsintToolSectionCard(
-                            toolTitle = "Public Google Calendar Check",
-                            subtitle = "Checks for a publicly readable calendar. This does not confirm Google account ownership.",
+                            toolTitle = "Google Account Footprint (Epieos Style)",
+                            subtitle = "Checking publicly readable Google metadata for $target",
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer
                         ) {
                             Row(
@@ -462,33 +461,140 @@ fun UsernameAndEmailOsintScreen(
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
-                    } else {
-                        uiState.googleMetadata?.let { meta ->
-                            OsintToolSectionCard(
-                                toolTitle = "Public Google Calendar Check",
-                                subtitle = "A public calendar result is not proof that this email owns a Google account.",
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                            ) {
-                                ResultRow(
-                                    "Public calendar",
-                                    when (meta.publicCalendarFound) {
-                                        true -> "Found"
-                                        false -> "Not found at this public URL"
-                                        null -> "Unknown"
-                                    }
+                    }
+
+                    uiState.googleMetadata?.let { meta ->
+                        OsintToolSectionCard(
+                            toolTitle = "Google Account Footprint (Epieos Style)",
+                            subtitle = "Public Google Maps reviews, photos, Gaia ID & Play Games activity for $target",
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                        ) {
+                            ResultRow("Google Account Status", meta.accountStatus)
+                            meta.fullName?.let { ResultRow("Full Name", it) }
+                            meta.gaiaId?.let { ResultRow("Gaia ID", it) }
+                            if (meta.activeServices.isNotEmpty()) {
+                                ResultRow("Active Google Services", meta.activeServices.joinToString(", "))
+                            }
+                            if (meta.mappedLocations.isNotEmpty()) {
+                                ResultRow("Mapped Locations", meta.mappedLocations.joinToString("\n"))
+                            }
+                            meta.playGamesSummary?.let {
+                                ResultRow("Google Play Games", it)
+                            }
+
+                            if (meta.reviews.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Recent Google Maps Reviews",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleSmall
                                 )
-                                meta.calendarDisplayName?.let { ResultRow("Public calendar name", it) }
-                                meta.sourceUrl?.let { source ->
-                                    TextButton(onClick = { openUrl(context, source) }) {
-                                        Text("Open calendar evidence")
-                                    }
-                                }
-                                meta.error?.let {
-                                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                meta.reviews.forEach { rev ->
+                                    Text(
+                                        text = "• ${rev.title} (${rev.ratingLabel}) - ${rev.address}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(vertical = 1.dp)
+                                    )
                                 }
                             }
-                            Spacer(modifier = Modifier.height(16.dp))
+
+                            meta.profileUrl?.let { url ->
+                                Spacer(modifier = Modifier.height(6.dp))
+                                TextButton(onClick = { openUrl(context, url) }) {
+                                    Text("Open Google Maps Contributor Profile ↗")
+                                }
+                            }
                         }
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+
+                    uiState.attributionReport?.let { attr ->
+                        OsintToolSectionCard(
+                            toolTitle = "Summary & Attribution ($target)",
+                            subtitle = buildString {
+                                append("Cross-platform identity attribution")
+                                attr.firstSeen?.let { append(" • First seen: $it") }
+                                attr.lastSeen?.let { append(" • Last seen: $it") }
+                            },
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            val allNames = buildList {
+                                addAll(attr.namesFound)
+                                attr.stealerProfile?.computerUsername?.let {
+                                    add(com.example.phone_number_lookup.AttributedValue(it, "Stealer Log"))
+                                }
+                            }
+                            if (allNames.isNotEmpty()) {
+                                Text("Names Found", fontWeight = FontWeight.Bold)
+                                allNames.forEach { n ->
+                                    Text("• ${n.value} (${n.source})", style = MaterialTheme.typography.bodySmall)
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            val allUsernames = buildList {
+                                addAll(attr.usernamesFound)
+                                uiState.liveHits.forEach { hit ->
+                                    add(com.example.phone_number_lookup.AttributedValue(hit.queriedName.ifBlank { target.substringBefore('@') }, hit.site))
+                                }
+                            }.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
+
+                            if (allUsernames.isNotEmpty()) {
+                                Text("Usernames", fontWeight = FontWeight.Bold)
+                                allUsernames.forEach { u ->
+                                    Text("• ${u.value} (${u.source})", style = MaterialTheme.typography.bodySmall)
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            val combinedLinks = buildList {
+                                addAll(attr.profileLinks)
+                                uiState.liveHits.forEach { hit ->
+                                    add(
+                                        com.example.phone_number_lookup.AttributedProfileLink(
+                                            handle = hit.queriedName.ifBlank { target.substringBefore('@') },
+                                            platform = hit.site,
+                                            url = hit.profileUrl
+                                        )
+                                    )
+                                }
+                            }.distinctBy { it.url.lowercase() }
+
+                            if (combinedLinks.isNotEmpty()) {
+                                Text("Profile Links", fontWeight = FontWeight.Bold)
+                                combinedLinks.forEach { link ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("• ${link.handle} (${link.platform})", style = MaterialTheme.typography.bodySmall)
+                                        TextButton(onClick = { openUrl(context, link.url) }) {
+                                            Text("Open ↗")
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (attr.timeline.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Activity Timeline", fontWeight = FontWeight.Bold)
+                                attr.timeline.forEach { ev ->
+                                    Text("• ${ev.date} — ${ev.label} · ${ev.source}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+
+                            attr.stealerProfile?.let { sp ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Infostealer Subject Profile (HudsonRock)", fontWeight = FontWeight.Bold)
+                                sp.computerUsername?.let { ResultRow("Username / Host", it) }
+                                sp.maskedIp?.let { ResultRow("IP Address", it) }
+                                sp.operatingSystem?.let { ResultRow("Operating System", it) }
+                                sp.dateCompromised?.let { ResultRow("Compromise Date", it) }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -711,8 +817,13 @@ fun UsernameAndEmailOsintScreen(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             else -> {
+                                val cleanHandleHits = uiState.liveHits.filterNot {
+                                    it.site.contains("bongacams", ignoreCase = true) ||
+                                        it.profileUrl.contains("bongacams", ignoreCase = true) ||
+                                        it.category.equals("nsfw", ignoreCase = true)
+                                }
                                 Text(
-                                    "${uiState.liveHits.size} profile(s) found for \"$handle\"",
+                                    "${cleanHandleHits.size} profile(s) found for \"$handle\"",
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.titleMedium,
                                     modifier = Modifier.padding(bottom = 4.dp)
@@ -725,7 +836,14 @@ fun UsernameAndEmailOsintScreen(
                                         modifier = Modifier.padding(vertical = 2.dp)
                                     )
                                 }
-                                uiState.liveHits.forEach { hit ->
+                                cleanHandleHits.forEach { hit ->
+                                    val cleanSiteLabel = hit.site
+                                        .removePrefix("https://")
+                                        .removePrefix("http://")
+                                        .removePrefix("www.")
+                                        .substringBefore('/')
+                                        .ifBlank { hit.site }
+
                                     OutlinedCard(
                                         onClick = { openUrl(context, hit.profileUrl) },
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
@@ -737,7 +855,7 @@ fun UsernameAndEmailOsintScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                hit.site,
+                                                cleanSiteLabel,
                                                 fontWeight = FontWeight.Bold,
                                                 style = MaterialTheme.typography.titleMedium,
                                                 modifier = Modifier.weight(1f)

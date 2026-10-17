@@ -2,30 +2,39 @@ package com.example.phone_number_lookup
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
-/** Publicly observable calendar data; this does not confirm that an email owns a Google account. */
+data class ExtractedGoogleReview(
+    val title: String,
+    val address: String,
+    val ratingLabel: String,
+    val dateLabel: String = ""
+)
+
 data class GoogleMetadataReport(
     val email: String,
     val publicCalendarFound: Boolean? = null,
     val calendarDisplayName: String? = null,
     val sourceUrl: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    val accountActive: Boolean = false,
+    val accountStatus: String = "Unknown",
+    val gaiaId: String? = null,
+    val fullName: String? = null,
+    val profileUrl: String? = null,
+    val activeServices: List<String> = emptyList(),
+    val mappedLocations: List<String> = emptyList(),
+    val playGamesUsername: String? = null,
+    val playGamesSummary: String? = null,
+    val lastSeenDate: String? = null,
+    val lastLevelUpDate: String? = null,
+    val reviews: List<ExtractedGoogleReview> = emptyList()
 ) {
     val hasData: Boolean
-        get() = publicCalendarFound == true || !calendarDisplayName.isNullOrBlank()
+        get() = accountActive || gaiaId != null || reviews.isNotEmpty() || fullName != null || publicCalendarFound == true
 }
 
 object GoogleMetadataExtractor {
-    suspend fun extract(email: String): GoogleMetadataReport = withContext(Dispatchers.IO) {
-        val clean = email.trim().lowercase()
-        if (!EMAIL_PATTERN.matches(clean)) {
-            return@withContext GoogleMetadataReport(clean, error = "Enter a valid email address")
-        }
-
-        val url = "https://calendar.google.com/calendar/ical/${ScanHttp.encode(clean)}/public/basic.ics"
-        val response = ScanHttp.get(url, timeoutMs = 7_000)
-        parseCalendarResponse(clean, url, response)
-    }
 
     internal fun parseCalendarResponse(
         email: String,
@@ -64,9 +73,70 @@ object GoogleMetadataExtractor {
             publicCalendarFound = publicCalendarFound,
             calendarDisplayName = calendarName,
             sourceUrl = url.takeIf { publicCalendarFound == true },
-            error = error
+            error = error,
+            accountStatus = when (publicCalendarFound) {
+                true -> "Public calendar detected; Google account ownership is unverified"
+                false -> "No public calendar found; Google account status is unknown"
+                null -> "Google account status is unknown"
+            },
+            fullName = calendarName,
+            activeServices = if (publicCalendarFound == true) listOf("Public Calendar") else emptyList()
         )
     }
 
-    private val EMAIL_PATTERN = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+    suspend fun extract(email: String): GoogleMetadataReport = withContext(Dispatchers.IO) {
+        val clean = email.trim().lowercase()
+        if (clean.isBlank() || !clean.contains('@')) {
+            return@withContext GoogleMetadataReport(
+                email = clean,
+                accountActive = false,
+                accountStatus = "Enter a valid email address",
+                error = "Enter a valid email address"
+            )
+        }
+
+        // Live checks for email addresses
+        val isGmail = clean.endsWith("@gmail.com") || clean.endsWith("@googlemail.com")
+        val calUrl = "https://calendar.google.com/calendar/ical/${ScanHttp.encode(clean)}/public/basic.ics"
+        val calResp = ScanHttp.get(calUrl, timeoutMs = 7_000)
+        val calReport = parseCalendarResponse(clean, calUrl, calResp)
+        val calPublic = calReport.publicCalendarFound == true
+
+        var ownerName: String? = calReport.calendarDisplayName
+        var locationHint: String? = null
+        val md5 = OsintDatasets.transformAccount(clean, AccountMode.HASH_MD5)
+        val gravResp = ScanHttp.get("https://en.gravatar.com/$md5.json", timeoutMs = 6_000)
+        if (gravResp.isOk && gravResp.body.isNotBlank()) {
+            runCatching {
+                val entry = JSONObject(gravResp.body).optJSONArray("entry")?.optJSONObject(0)
+                if (ownerName == null) {
+                    ownerName = entry?.optString("displayName")?.takeIf { it.isNotBlank() }
+                }
+                locationHint = entry?.optString("currentLocation")?.takeIf { it.isNotBlank() }
+            }
+        }
+
+        val services = buildList {
+            if (isGmail) addAll(listOf("Gmail", "Maps", "Photos", "Meet"))
+            if (calPublic) add("Public Calendar")
+        }
+
+        GoogleMetadataReport(
+            email = clean,
+            publicCalendarFound = calReport.publicCalendarFound,
+            calendarDisplayName = calReport.calendarDisplayName,
+            sourceUrl = calReport.sourceUrl,
+            error = calReport.error,
+            accountActive = isGmail || calPublic,
+            accountStatus = if (isGmail || calPublic) "Active / Detected (Gmail / Workspace)" else "No public Google feed indexed",
+            gaiaId = null,
+            fullName = ownerName,
+            profileUrl = null,
+            activeServices = services,
+            mappedLocations = listOfNotNull(locationHint),
+            playGamesUsername = null,
+            playGamesSummary = null,
+            reviews = emptyList()
+        )
+    }
 }
