@@ -9,7 +9,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 enum class PythonToolMode(val label: String) {
-    NATIVE_KOTLIN("Native Kotlin"),
     SHERLOCK_PY("Python: Sherlock"),
     TOOKIE_PY("Python: Tookie"),
     BLACKBIRD_PY("Python: Blackbird"),
@@ -52,7 +51,6 @@ object PythonOsintBridge {
                 val b = async { module.callAttr("run_blackbird_python", username, false, perTool).toString() }
                 listOf(s.await(), t.await(), b.await())
             }
-            PythonToolMode.NATIVE_KOTLIN -> emptyList()
         }
 
         mergeUsernamePayloads(username, payloads)

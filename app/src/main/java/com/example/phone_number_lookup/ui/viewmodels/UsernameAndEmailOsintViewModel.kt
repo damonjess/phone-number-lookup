@@ -10,6 +10,8 @@ import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EmailDomainScanner
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.EmailScanner
+import com.example.phone_number_lookup.GoogleAccountOsint
+import com.example.phone_number_lookup.GoogleAccountOsintReport
 import com.example.phone_number_lookup.IdentityEnricher
 import com.example.phone_number_lookup.IdentityEnrichmentReport
 import com.example.phone_number_lookup.PythonOsintBridge
@@ -59,6 +61,8 @@ data class UsernameAndEmailOsintUiState(
     val isEnrichingIdentity: Boolean = false,
     val networkOsintReport: DomainOsintReport? = null,
     val isNetworkScanning: Boolean = false,
+    val googleOsintReport: GoogleAccountOsintReport? = null,
+    val isGoogleScanning: Boolean = false,
 )
 
 class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewModel(application) {
@@ -126,6 +130,8 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isEnrichingIdentity = false,
                 networkOsintReport = null,
                 isNetworkScanning = false,
+                googleOsintReport = null,
+                isGoogleScanning = false,
             )
         }
 
@@ -141,14 +147,15 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
 
         scans.start(token) { active ->
             val limit = UsernameScanner.limitForDepth(depth)
-            val outcome = if (mode == PythonToolMode.NATIVE_KOTLIN) {
-                UsernameScanner.scanWithVariants(target, limit = limit) { checked, total ->
-                    if (scans.isCurrent(active)) {
-                        _uiState.update { it.copy(scanProgress = checked, scanTotal = total) }
+            val outcome = try {
+                PythonOsintBridge.scanUsername(getApplication(), target, mode, limit)
+            } catch (e: Exception) {
+                if (scans.isCurrent(active)) {
+                    _uiState.update {
+                        it.copy(liveError = "Embedded Python scan failed: ${e.message ?: "unknown error"}", isLiveScanning = false)
                     }
                 }
-            } else {
-                PythonOsintBridge.scanUsername(getApplication(), target, mode, limit)
+                return@start
             }
 
             if (scans.isCurrent(active)) {
@@ -187,19 +194,38 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isRegistrationScanning = true,
                 isBreachScanning = true,
                 isDomainScanning = true,
-                isEnrichingIdentity = true
+                isEnrichingIdentity = true,
+                isGoogleScanning = true
             )
         }
 
         scans.start(token) { active ->
-            val outcome = if (mode == PythonToolMode.BLACKBIRD_PY || mode == PythonToolMode.ALL_PYTHON) {
+            val googleReport = GoogleAccountOsint.scan(target)
+            if (scans.isCurrent(active)) {
+                _uiState.update {
+                    it.copy(
+                        googleOsintReport = googleReport,
+                        isGoogleScanning = false
+                    )
+                }
+            }
+        }
+
+        scans.start(token) { active ->
+            // Email registration checks always use the Python Blackbird-compatible runner.
+            val outcome = try {
                 PythonOsintBridge.scanEmailBlackbirdPython(getApplication(), target)
-            } else {
-                EmailRegistrationScanner.scan(target) { checked, _ ->
-                    if (scans.isCurrent(active)) {
-                        _uiState.update { it.copy(registrationChecked = checked) }
+            } catch (e: Exception) {
+                if (scans.isCurrent(active)) {
+                    _uiState.update {
+                        it.copy(
+                            registrationFailed = true,
+                            registrationNotice = "Embedded Python email scan failed: ${e.message ?: "unknown error"}",
+                            isRegistrationScanning = false
+                        )
                     }
                 }
+                return@start
             }
             if (scans.isCurrent(active)) {
                 _uiState.update {
@@ -241,7 +267,19 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         val handle = EmailRegistrationScanner.localPart(target) ?: return
         scans.start(token) { active ->
             _uiState.update { it.copy(isLiveScanning = true) }
-            val outcome = UsernameScanner.scanWithVariants(handle, limit = UsernameScanner.QUICK_LIMIT)
+            // Correlate the email local-part with public usernames using the selected Python toolset.
+            val outcome = try {
+                PythonOsintBridge.scanUsername(
+                    getApplication(), handle, mode, UsernameScanner.QUICK_LIMIT
+                )
+            } catch (e: Exception) {
+                if (scans.isCurrent(active)) {
+                    _uiState.update {
+                        it.copy(liveError = "Embedded Python username correlation failed: ${e.message ?: "unknown error"}", isLiveScanning = false)
+                    }
+                }
+                return@start
+            }
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(
