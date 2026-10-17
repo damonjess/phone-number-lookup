@@ -12,6 +12,8 @@ import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.EmailScanner
 import com.example.phone_number_lookup.GoogleAccountOsint
 import com.example.phone_number_lookup.GoogleAccountOsintReport
+import com.example.phone_number_lookup.GoogleMetadataExtractor
+import com.example.phone_number_lookup.GoogleMetadataReport
 import com.example.phone_number_lookup.IdentityEnricher
 import com.example.phone_number_lookup.IdentityEnrichmentReport
 import com.example.phone_number_lookup.PythonOsintBridge
@@ -63,6 +65,8 @@ data class UsernameAndEmailOsintUiState(
     val isNetworkScanning: Boolean = false,
     val googleOsintReport: GoogleAccountOsintReport? = null,
     val isGoogleScanning: Boolean = false,
+    val googleMetadata: GoogleMetadataReport? = null,
+    val isGoogleMetadataScanning: Boolean = false,
 )
 
 class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewModel(application) {
@@ -132,6 +136,8 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isNetworkScanning = false,
                 googleOsintReport = null,
                 isGoogleScanning = false,
+                googleMetadata = null,
+                isGoogleMetadataScanning = false,
             )
         }
 
@@ -195,8 +201,21 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isBreachScanning = true,
                 isDomainScanning = true,
                 isEnrichingIdentity = true,
-                isGoogleScanning = true
+                isGoogleScanning = true,
+                isGoogleMetadataScanning = true
             )
+        }
+
+        scans.start(token) { active ->
+            val meta = GoogleMetadataExtractor.extract(target)
+            if (scans.isCurrent(active)) {
+                _uiState.update {
+                    it.copy(
+                        googleMetadata = meta,
+                        isGoogleMetadataScanning = false
+                    )
+                }
+            }
         }
 
         scans.start(token) { active ->

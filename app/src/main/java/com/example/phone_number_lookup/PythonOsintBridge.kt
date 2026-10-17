@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 enum class PythonToolMode(val label: String) {
+    NATIVE_KOTLIN("Native Kotlin"),
     SHERLOCK_PY("Python: Sherlock"),
     TOOKIE_PY("Python: Tookie"),
     BLACKBIRD_PY("Python: Blackbird"),
@@ -18,8 +19,12 @@ enum class PythonToolMode(val label: String) {
 object PythonOsintBridge {
 
     fun ensureStarted(context: Context) {
-        if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(context.applicationContext))
+        try {
+            if (!Python.isStarted()) {
+                Python.start(AndroidPlatform(context.applicationContext))
+            }
+        } catch (_: Exception) {
+            // Python is already initialized; safely ignore
         }
     }
 
@@ -51,6 +56,7 @@ object PythonOsintBridge {
                 val b = async { module.callAttr("run_blackbird_python", username, false, perTool).toString() }
                 listOf(s.await(), t.await(), b.await())
             }
+            PythonToolMode.NATIVE_KOTLIN -> emptyList()
         }
 
         mergeUsernamePayloads(username, payloads)
@@ -155,7 +161,7 @@ object PythonOsintBridge {
                     for (i in 0 until issArr.length()) {
                         val iss = issArr.optJSONObject(i) ?: continue
                         val code = iss.optInt("code", 0)
-                        val failure = when (code) {
+                        val reason = when (code) {
                             0 -> ProbeFailure.NETWORK
                             401, 403 -> ProbeFailure.FORBIDDEN
                             429 -> ProbeFailure.RATE_LIMITED
@@ -165,7 +171,7 @@ object PythonOsintBridge {
                         issues += SiteIssue(
                             site = iss.optString("site", "Unknown"),
                             profileUrl = iss.optString("profileUrl", ""),
-                            reason = failure,
+                            reason = reason,
                             detail = iss.optString("detail", "")
                         )
                     }
@@ -173,9 +179,8 @@ object PythonOsintBridge {
             }
         }
 
-        val dedupedHits = hits.distinctBy { h ->
-            h.profileUrl.lowercase().trimEnd('/').replace("https://", "").replace("http://", "").replace("www.", "").ifEmpty { h.site.lowercase() }
-        }.sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() }))
+        val dedupedHits = hits.distinctBy { SiteKey.of(it.profileUrl).ifEmpty { it.site.lowercase() } }
+            .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() }))
 
         return UsernameScanOutcome(
             sitesChecked = totalChecked,

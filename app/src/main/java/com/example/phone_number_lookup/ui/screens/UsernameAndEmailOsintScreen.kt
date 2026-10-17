@@ -440,14 +440,13 @@ fun UsernameAndEmailOsintScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                     }
 
-                    // Epieos-Style Google Account Intelligence Card
-                    OsintToolSectionCard(
-                        toolTitle = "Google Account Footprint (Epieos Style)",
-                        subtitle = "Public Google Maps reviews, photos, Gaia ID & Play Games activity for $target",
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                    ) {
-                        val report = uiState.googleOsintReport
-                        if (uiState.isGoogleScanning) {
+                    // Dynamic Epieos-Style Google Account Intelligence Card
+                    if (uiState.isGoogleMetadataScanning) {
+                        OsintToolSectionCard(
+                            toolTitle = "Google Account Footprint (Epieos Style)",
+                            subtitle = "Public Google calendar syndication & profile status for $target",
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                        ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -456,36 +455,23 @@ fun UsernameAndEmailOsintScreen(
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text("Querying public Google endpoints & Gaia ID...", style = MaterialTheme.typography.bodyMedium)
                             }
-                        } else {
-                            val status = when {
-                                report?.error != null -> "Detected (${report.error})"
-                                report?.hasData == true -> "Active / Confirmed"
-                                else -> "Active / Detected"
-                            }
-                            val gaia = report?.gaiaId ?: "102672672532796901756"
-                            val playGamesStr = report?.playGames?.let {
-                                "${it.username} (Level ${it.level} - ${it.lastPlayedGame})"
-                            } ?: "Level 10 (Doomsday Last Survivors)"
-
-                            ResultRow("Google Account Status", status)
-                            ResultRow("Gaia ID", gaia)
-                            ResultRow("Active Google Services", "Photos, Maps, Meet, Play Games")
-                            ResultRow("Mapped Locations", "Scunthorpe, Hull, Cottingham (UK)")
-                            ResultRow("Google Play Games", playGamesStr)
-
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Recent Google Maps Reviews", fontWeight = FontWeight.Bold)
-
-                            val reviews = report?.reviews
-                            if (!reviews.isNullOrEmpty()) {
-                                reviews.forEach { rev ->
-                                    Text("• ${rev.title} (${rev.stars} ★) - ${rev.address}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                    } else {
+                        uiState.googleMetadata?.let { meta ->
+                            OsintToolSectionCard(
+                                toolTitle = "Google Account Footprint (Epieos Style)",
+                                subtitle = "Public Google calendar syndication & profile status for $target",
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                            ) {
+                                ResultRow("Google Account Status", if (meta.accountActive) "Active / Detected" else "Not Publicly Indexed")
+                                meta.gaiaId?.let { ResultRow("Inferred Gaia ID", it) }
+                                meta.fullName?.let { ResultRow("Owner Name (Calendar)", it) }
+                                if (meta.activeServices.isNotEmpty()) {
+                                    ResultRow("Active Google Services", meta.activeServices.joinToString(", "))
                                 }
-                            } else {
-                                Text("• Bellingham stores (5 ★) - 53 Bellingham Rd, Scunthorpe", style = MaterialTheme.typography.bodySmall)
-                                Text("• The Trichologist (5 ★) - 296 Ashby High St, Scunthorpe", style = MaterialTheme.typography.bodySmall)
-                                Text("• Castle Hill Hospital (5 ★) - Castle Rd, Cottingham", style = MaterialTheme.typography.bodySmall)
                             }
+                            Spacer(modifier = Modifier.height(16.dp))
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
