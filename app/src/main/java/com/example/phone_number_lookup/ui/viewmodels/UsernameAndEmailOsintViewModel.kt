@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 data class UsernameAndEmailOsintUiState(
     val subTabState: Int = 0, // 0: Username, 1: Email, 2: Domain & Network
@@ -346,20 +345,23 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         if (state.isRetryingIssues || before.none { it.retryable }) return
 
         _uiState.update { it.copy(isRetryingIssues = true) }
-        viewModelScope.launch {
+        val token = scans.supersede()
+        scans.start(token) { active ->
             val outcome = UsernameScanner.retry(target, before)
-            _uiState.update { s ->
-                if (s.usernameIssues !== before) return@update s.copy(isRetryingIssues = false)
-                val retried = before.filter { it.retryable }.map { it.site.lowercase() }.toSet()
-                val remaining = s.usernameIssues.filterNot { it.site.lowercase() in retried } + outcome.issues
-                s.copy(
-                    liveHits = (s.liveHits + outcome.confirmed)
-                        .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() })),
-                    usernameIssues = remaining,
-                    unreachableCount = remaining.size,
-                    discardedCount = s.discardedCount + outcome.discarded.size,
-                    isRetryingIssues = false,
-                )
+            if (scans.isCurrent(active)) {
+                _uiState.update { s ->
+                    if (s.usernameIssues !== before) return@update s.copy(isRetryingIssues = false)
+                    val retried = before.filter { it.retryable }.map { it.site.lowercase() }.toSet()
+                    val remaining = s.usernameIssues.filterNot { it.site.lowercase() in retried } + outcome.issues
+                    s.copy(
+                        liveHits = (s.liveHits + outcome.confirmed)
+                            .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() })),
+                        usernameIssues = remaining,
+                        unreachableCount = remaining.size,
+                        discardedCount = s.discardedCount + outcome.discarded.size,
+                        isRetryingIssues = false,
+                    )
+                }
             }
         }
     }
@@ -367,17 +369,20 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
     fun recheckUsername(site: String) {
         val target = _uiState.value.activeTarget ?: return
         _uiState.update { it.copy(recheckingSite = site) }
-        viewModelScope.launch {
+        val token = scans.supersede()
+        scans.start(token) { active ->
             val updated = UsernameScanner.recheck(target, site)
-            if (updated != null) {
-                _uiState.update { state ->
-                    state.copy(
-                        liveHits = state.liveHits.filterNot { it.site.equals(site, true) } + updated,
-                        recheckingSite = null
-                    )
+            if (scans.isCurrent(active)) {
+                if (updated != null) {
+                    _uiState.update { state ->
+                        state.copy(
+                            liveHits = state.liveHits.filterNot { it.site.equals(site, true) } + updated,
+                            recheckingSite = null
+                        )
+                    }
+                } else {
+                    _uiState.update { it.copy(recheckingSite = null) }
                 }
-            } else {
-                _uiState.update { it.copy(recheckingSite = null) }
             }
         }
     }
@@ -385,17 +390,20 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
     fun recheckEmail(site: String) {
         val target = _uiState.value.activeTarget ?: return
         _uiState.update { it.copy(recheckingSite = site) }
-        viewModelScope.launch {
+        val token = scans.supersede()
+        scans.start(token) { active ->
             val updated = EmailRegistrationScanner.recheck(target, site)
-            if (updated != null) {
-                _uiState.update { state ->
-                    state.copy(
-                        registeredSites = state.registeredSites.filterNot { it.site.equals(site, true) } + updated,
-                        recheckingSite = null
-                    )
+            if (scans.isCurrent(active)) {
+                if (updated != null) {
+                    _uiState.update { state ->
+                        state.copy(
+                            registeredSites = state.registeredSites.filterNot { it.site.equals(site, true) } + updated,
+                            recheckingSite = null
+                        )
+                    }
+                } else {
+                    _uiState.update { it.copy(recheckingSite = null) }
                 }
-            } else {
-                _uiState.update { it.copy(recheckingSite = null) }
             }
         }
     }

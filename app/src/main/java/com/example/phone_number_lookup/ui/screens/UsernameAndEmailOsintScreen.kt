@@ -209,6 +209,21 @@ fun UsernameAndEmailOsintScreen(
             Text(buttonLabel)
         }
 
+        if (uiState.subTabState == 1) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Privacy Notice: Executing an email scan queries public third-party services (XposedOrNot breach API, Cloudflare DoH, and public profile endpoints) directly from your device over HTTPS.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
 
         uiState.activeTarget?.let { target ->

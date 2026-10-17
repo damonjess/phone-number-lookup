@@ -176,7 +176,7 @@ object GitHubOsint {
                 val parts = key.split(' ')
                 val type = parts.getOrNull(0).orEmpty()
                 val body = parts.getOrNull(1)?.let { "${it.take(16)}…${it.takeLast(12)}" }.orEmpty()
-                "$type $body".trim()
+                "[Key Snippet] $type $body".trim()
             } else {
                 null
             }

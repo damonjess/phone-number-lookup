@@ -31,41 +31,26 @@ data class GoogleMetadataReport(
 
 object GoogleMetadataExtractor {
 
+    /**
+     * Extracts public Google metadata for an email address.
+     * Operates natively without hard-coded demo profiles or domain-string assumptions.
+     */
     suspend fun extract(email: String): GoogleMetadataReport = withContext(Dispatchers.IO) {
         val clean = email.trim().lowercase()
-        
-        // Force a sample Epieos-style profile for test/demo email
-        if (clean == "alex.smith@gmail.com") {
+        if (clean.isBlank() || !clean.contains("@")) {
             return@withContext GoogleMetadataReport(
                 email = clean,
-                accountActive = true,
-                accountStatus = "Active / Detected",
-                gaiaId = "100000000000000000000",
-                fullName = "Alex Smith",
-                profileUrl = "https://www.google.com/maps/contrib/100000000000000000000",
-                activeServices = listOf("Photos", "Maps", "Meet", "Play Games"),
-                mappedLocations = listOf(
-                    "123 Main St, London SW1A 1AA, UK",
-                    "45 High St, London WC1A 1AA, UK",
-                    "78 Park Ave, London E1 6AN, UK",
-                    "10 Station Rd, London N1 9AL, UK"
-                ),
-                playGamesSummary = "Level 10 (Sample Games) • 54 Achievements • 56 Games",
-                reviews = listOf(
-                    ExtractedGoogleReview("Local Store", "123 Main St, London SW1A 1AA", "5 ★"),
-                    ExtractedGoogleReview("City Taxis", "45 High St, London WC1A 1AA", "4 ★"),
-                    ExtractedGoogleReview("Central Clinic", "78 Park Ave, London E1 6AN", "5 ★"),
-                    ExtractedGoogleReview("Station Hospital", "10 Station Rd, London N1 9AL", "5 ★")
-                )
+                accountActive = false,
+                accountStatus = "Invalid email format"
             )
         }
 
-        val isGmail = clean.endsWith("@gmail.com") || clean.endsWith("@googlemail.com")
+        // Truthful native evaluation: without an authenticated public Google Gaia ID lookup endpoint,
+        // we do not synthesize or assume Google account status.
         GoogleMetadataReport(
             email = clean,
-            accountActive = isGmail,
-            accountStatus = if (isGmail) "Active / Detected (Gmail)" else "No public index",
-            activeServices = if (isGmail) listOf("Gmail", "Maps", "Photos") else emptyList()
+            accountActive = false,
+            accountStatus = "No public index found without direct Gaia ID"
         )
     }
 }

@@ -82,7 +82,7 @@ object PythonOsintBridge {
                         profileUrl = h.optString("profileUrl", ""),
                         statusCode = h.optInt("statusCode", 200),
                         evidence = h.optString("evidence", "Matched via Python Blackbird"),
-                        confidence = "High",
+                        confidence = "Medium (Upstream Match)",
                         verificationStatus = "Registered response"
                     )
                 }
@@ -137,7 +137,7 @@ object PythonOsintBridge {
                             profileUrl = h.optString("profileUrl", ""),
                             statusCode = h.optInt("statusCode", 200),
                             evidence = h.optString("evidence", "Matched in Python"),
-                            confidence = "High",
+                            confidence = "Medium (Upstream Match)",
                             verificationStatus = "Matched",
                             queriedName = username
                         )
