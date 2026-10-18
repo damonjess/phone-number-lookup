@@ -3,6 +3,7 @@ package com.example.phone_number_lookup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -94,28 +95,45 @@ object EmailRegistrationScanner {
         }.awaitAll()
 
         // Control check: a made-up address at the same domain must come back "not registered".
-        // A site that still says "exists" answers yes to everything, so its hit is meaningless.
+        // Routed through ResilientProbe for retries; judged as passed, failed, or unverified.
         val domain = clean.substringAfter('@')
         val found = results.filter { it.verdict == ProbeVerdict.FOUND }
-        val (kept, dropped) = HitVerifier.splitByControl(found, concurrency) { hit ->
-            OsintDatasets.evaluate(
-                hit.site,
-                HitVerifier.randomLocalPart() + "@" + domain,
-                timeoutMs = 12_000
-            ).verdict == ProbeVerdict.FOUND
+        val (kept, dropped) = coroutineScope {
+            val controlSemaphore = Semaphore(concurrency.coerceAtLeast(1))
+            val controlResults = found.map { hit ->
+                async {
+                    controlSemaphore.withPermit {
+                        val fakeEmail = HitVerifier.randomLocalPart() + "@" + domain
+                        ResilientProbe.evaluate(hit.site, fakeEmail, timeoutMs = 12_000)
+                    }
+                }
+            }.awaitAll()
+
+            val keptList = ArrayList<Pair<ProbeResult, ProbeResult>>()
+            val droppedList = ArrayList<String>()
+            found.forEachIndexed { i, hit ->
+                val control = controlResults[i]
+                if (control.verdict == ProbeVerdict.FOUND) {
+                    droppedList += hit.site.name
+                } else {
+                    keptList += hit to control
+                }
+            }
+            keptList to droppedList
         }
 
         val registered = kept
-            .map {
+            .map { (hit, control) ->
+                val controlInconclusive = control.verdict == ProbeVerdict.UNKNOWN
                 RegistrationHit(
-                    site = it.site.name,
-                    category = it.site.category,
-                    source = it.site.source,
-                    profileUrl = it.profileUrl,
-                    statusCode = it.statusCode,
-                    finalUrl = it.finalUrl,
-                    evidence = it.evidence + " • control check passed",
-                    confidence = confidenceFor(it),
+                    site = hit.site.name,
+                    category = hit.site.category,
+                    source = hit.site.source,
+                    profileUrl = hit.profileUrl,
+                    statusCode = hit.statusCode,
+                    finalUrl = hit.finalUrl,
+                    evidence = hit.evidence + if (controlInconclusive) " • control check inconclusive" else " • control check passed",
+                    confidence = if (controlInconclusive) "Medium" else confidenceFor(hit),
                     // The UI counts hits by this exact string, so it must stay unchanged.
                     verificationStatus = "Registered response"
                 )
@@ -129,7 +147,7 @@ object EmailRegistrationScanner {
             sitesChecked = probes.size,
             registered = registered,
             unreachable = unreachable.get(),
-            discarded = dropped.map { it.site.name },
+            discarded = dropped,
             notice = if (fullListLoaded) null else
                 "Only ${probes.size} built-in checks ran because the full site list could not be downloaded. " +
                     "Check your connection and scan again for complete coverage."
@@ -139,6 +157,30 @@ object EmailRegistrationScanner {
     suspend fun recheck(email: String, siteName: String): RegistrationHit? = withContext(Dispatchers.IO) {
         val probe = OsintDatasets.findEmailProbe(siteName) ?: return@withContext null
         val result = OsintDatasets.evaluate(probe, email, timeoutMs = 12_000)
+        if (result.verdict != ProbeVerdict.FOUND) {
+            return@withContext RegistrationHit(
+                site = result.site.name,
+                category = result.site.category,
+                source = result.site.source,
+                profileUrl = result.profileUrl,
+                statusCode = result.statusCode,
+                finalUrl = result.finalUrl,
+                evidence = result.evidence,
+                confidence = confidenceFor(result),
+                verificationStatus = when (result.verdict) {
+                    ProbeVerdict.NOT_FOUND -> "Not registered response"
+                    else -> "Unavailable / uncertain"
+                }
+            )
+        }
+
+        val domain = email.substringAfter('@')
+        val control = ResilientProbe.evaluate(probe, HitVerifier.randomLocalPart() + "@" + domain, timeoutMs = 12_000)
+        if (control.verdict == ProbeVerdict.FOUND) {
+            return@withContext null
+        }
+
+        val controlInconclusive = control.verdict == ProbeVerdict.UNKNOWN
         RegistrationHit(
             site = result.site.name,
             category = result.site.category,
@@ -146,13 +188,9 @@ object EmailRegistrationScanner {
             profileUrl = result.profileUrl,
             statusCode = result.statusCode,
             finalUrl = result.finalUrl,
-            evidence = result.evidence,
-            confidence = confidenceFor(result),
-            verificationStatus = when (result.verdict) {
-                ProbeVerdict.FOUND -> "Registered response"
-                ProbeVerdict.NOT_FOUND -> "Not registered response"
-                ProbeVerdict.UNKNOWN -> "Unavailable / uncertain"
-            }
+            evidence = result.evidence + if (controlInconclusive) " • control check inconclusive" else " • control check passed",
+            confidence = if (controlInconclusive) "Medium" else confidenceFor(result),
+            verificationStatus = "Registered response"
         )
     }
 

@@ -44,7 +44,14 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.12"
-        buildPython("/usr/bin/python3")
+        val pythonProp = project.findProperty("buildPython") as? String
+        if (!pythonProp.isNullOrBlank()) {
+            buildPython(pythonProp)
+        } else if (System.getProperty("os.name").lowercase().contains("win")) {
+            buildPython("py", "-3.12")
+        } else {
+            buildPython("python3.12")
+        }
         pip {
             install("requests")
             install("certifi")
