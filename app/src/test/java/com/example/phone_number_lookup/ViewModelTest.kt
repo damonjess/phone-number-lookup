@@ -20,8 +20,8 @@ class ViewModelTest {
         val viewModel = PhoneLookupViewModel(android.app.Application())
         assertEquals("", viewModel.uiState.value.phoneNumberInput)
 
-        viewModel.onPhoneNumberInputChanged("01782 447307")
-        assertEquals("01782 447307", viewModel.uiState.value.phoneNumberInput)
+        viewModel.onPhoneNumberInputChanged("020 7946 0958")
+        assertEquals("020 7946 0958", viewModel.uiState.value.phoneNumberInput)
 
         viewModel.clear()
         assertEquals("", viewModel.uiState.value.phoneNumberInput)

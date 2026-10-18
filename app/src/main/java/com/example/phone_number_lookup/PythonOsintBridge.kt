@@ -111,6 +111,25 @@ object PythonOsintBridge {
         }
     }
 
+    /**
+     * Tookie reports a base URL such as "https://www.facebook.com/" as the site, which would
+     * otherwise be shown as a truncated profile link and would never match a probe name for
+     * rechecks. Keep proper site names, but reduce URL-shaped values to their host.
+     */
+    private fun displaySite(raw: String): String {
+        val value = raw.trim()
+        if (!value.startsWith("http://", ignoreCase = true) &&
+            !value.startsWith("https://", ignoreCase = true)
+        ) {
+            return value.ifBlank { "Unknown" }
+        }
+        return value.substringAfter("://")
+            .removePrefix("www.")
+            .substringBefore('/')
+            .substringBefore('?')
+            .ifBlank { value }
+    }
+
     private fun mergeUsernamePayloads(username: String, payloads: List<String>): UsernameScanOutcome {
         var totalChecked = 0
         val hits = ArrayList<UsernameHit>()
@@ -131,7 +150,7 @@ object PythonOsintBridge {
                         val src = h.optString("source", "Python")
                         datasetCounts[src] = (datasetCounts[src] ?: 0) + 1
                         hits += UsernameHit(
-                            site = h.optString("site", "Unknown"),
+                            site = displaySite(h.optString("site", "Unknown")),
                             category = h.optString("category", "general"),
                             source = src,
                             profileUrl = h.optString("profileUrl", ""),
@@ -164,7 +183,7 @@ object PythonOsintBridge {
                             else -> ProbeFailure.HTTP_ERROR
                         }
                         issues += SiteIssue(
-                            site = iss.optString("site", "Unknown"),
+                            site = displaySite(iss.optString("site", "Unknown")),
                             profileUrl = iss.optString("profileUrl", ""),
                             reason = reason,
                             detail = iss.optString("detail", "")

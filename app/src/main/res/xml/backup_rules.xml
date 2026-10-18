@@ -6,8 +6,7 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <!-- Scan history and the PhoneInfoga server address stay on the device only. -->
+    <exclude domain="sharedpref" path="number_finder_history.xml"/>
+    <exclude domain="sharedpref" path="phoneinfoga_prefs.xml"/>
 </full-backup-content>

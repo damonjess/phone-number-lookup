@@ -43,7 +43,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.IdentityEnrichmentReport
@@ -52,11 +54,22 @@ import com.example.phone_number_lookup.OsintTools
 import com.example.phone_number_lookup.PdfSection
 import com.example.phone_number_lookup.PythonToolMode
 import com.example.phone_number_lookup.UsernameScanner
+import com.example.phone_number_lookup.ui.components.AppButton
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
 import com.example.phone_number_lookup.ui.components.IssuesSection
+import com.example.phone_number_lookup.ui.components.LoadingRow
+import com.example.phone_number_lookup.ui.components.Notice
 import com.example.phone_number_lookup.ui.components.NumberedLinksHubCard
+import com.example.phone_number_lookup.ui.components.OsintResultCard
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
+import com.example.phone_number_lookup.ui.components.Pill
 import com.example.phone_number_lookup.ui.components.ResultRow
+import com.example.phone_number_lookup.ui.components.ScreenHeader
+import com.example.phone_number_lookup.ui.components.SearchField
+import com.example.phone_number_lookup.ui.components.SegmentedTabs
+import com.example.phone_number_lookup.ui.components.Space
+import com.example.phone_number_lookup.ui.components.SubHeading
+import com.example.phone_number_lookup.ui.components.Tone
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.UsernameAndEmailOsintViewModel
 import java.text.SimpleDateFormat
@@ -65,68 +78,47 @@ import java.util.Locale
 
 @Composable
 fun UsernameAndEmailOsintScreen(
-    viewModel: UsernameAndEmailOsintViewModel = viewModel()
+    viewModel: UsernameAndEmailOsintViewModel = viewModel(),
+    modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val scrollState = rememberScrollState()
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 20.dp),
+        horizontalAlignment = Alignment.Start
     ) {
-        Text(
-            text = "Target OSINT Engine",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        Text(
-            text = "Python-backed username/email scans, breaches, PGP/Keybase & domain recon",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 16.dp)
+        ScreenHeader(
+            eyebrow = "Profiles",
+            title = "Follow the handle",
+            subtitle = "Username, email and domain checks against public sources, run from this device."
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            FilterChip(
-                selected = uiState.subTabState == 0,
-                onClick = { viewModel.onSubTabChanged(0) },
-                label = { Text("Username") }
-            )
-            FilterChip(
-                selected = uiState.subTabState == 1,
-                onClick = { viewModel.onSubTabChanged(1) },
-                label = { Text("Email") }
-            )
-            FilterChip(
-                selected = uiState.subTabState == 2,
-                onClick = { viewModel.onSubTabChanged(2) },
-                label = { Text("Domain & IP") }
-            )
-        }
+        SegmentedTabs(
+            options = listOf("Username", "Email", "Domain & IP"),
+            selectedIndex = uiState.subTabState,
+            onSelect = { viewModel.onSubTabChanged(it) },
+            modifier = Modifier.padding(bottom = Space.md),
+        )
 
         if (uiState.subTabState == 0) {
             Text(
-                text = "Username engine: embedded upstream Python (Chaquopy / Python 3.12):",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.Start).padding(bottom = 4.dp)
+                text = "PYTHON ENGINE",
+                style = MaterialTheme.typography.labelSmall,
+                letterSpacing = 1.2.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = Space.sm, bottom = 6.dp)
             )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(bottom = Space.md),
+                horizontalArrangement = Arrangement.spacedBy(Space.sm)
             ) {
                 PythonToolMode.entries.forEach { mode ->
                     FilterChip(
@@ -136,44 +128,34 @@ fun UsernameAndEmailOsintScreen(
                     )
                 }
             }
+            SegmentedTabs(
+                options = listOf(
+                    "Quick ${UsernameScanner.QUICK_LIMIT}",
+                    "Standard ${UsernameScanner.STANDARD_LIMIT}",
+                    "Full sweep"
+                ),
+                selectedIndex = uiState.scanDepth,
+                onSelect = { viewModel.onScanDepthChanged(it) },
+                modifier = Modifier.padding(bottom = Space.md),
+            )
         } else if (uiState.subTabState == 1) {
             Text(
-                text = "Email registration engine: embedded upstream Blackbird Python",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.Start).padding(bottom = 12.dp)
+                text = "EMAIL ENGINE · BLACKBIRD",
+                style = MaterialTheme.typography.labelSmall,
+                letterSpacing = 1.2.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = Space.sm, bottom = Space.md)
             )
-        }
-
-        if (uiState.subTabState == 0) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(
-                    "Quick (${UsernameScanner.QUICK_LIMIT})" to 0,
-                    "Standard (${UsernameScanner.STANDARD_LIMIT})" to 1,
-                    "Full sweep" to 2
-                ).forEach { (label, index) ->
-                    FilterChip(
-                        selected = uiState.scanDepth == index,
-                        onClick = { viewModel.onScanDepthChanged(index) },
-                        label = { Text(label, style = MaterialTheme.typography.labelMedium) }
-                    )
-                }
-            }
         }
 
         val inputLabel = when (uiState.subTabState) {
             0 -> "Enter Username (e.g. alex_smith)"
-            1 -> "Enter Email (e.g. alex.smith@gmail.com)"
+            1 -> "Enter Email (e.g. name@example.com)"
             else -> "Enter Domain (e.g. example.com)"
         }
         val inputPlaceholder = when (uiState.subTabState) {
             0 -> "e.g. alex_smith or john_doe"
-            1 -> "e.g. alex.smith@gmail.com"
+            1 -> "e.g. name@example.com"
             else -> "e.g. github.com or company.co.uk"
         }
         val buttonLabel = when (uiState.subTabState) {
@@ -182,49 +164,35 @@ fun UsernameAndEmailOsintScreen(
             else -> "Run Domain, Subdomain & Shodan Recon"
         }
 
-        OutlinedTextField(
+        SearchField(
             value = uiState.targetInput,
             onValueChange = { viewModel.onTargetInputChanged(it) },
-            label = { Text(inputLabel) },
-            placeholder = { Text(inputPlaceholder) },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { viewModel.runScan() }),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            trailingIcon = {
+            label = inputLabel,
+            placeholder = inputPlaceholder,
+            onSearch = { viewModel.runScan() },
+            trailing = {
                 if (uiState.targetInput.isNotEmpty()) {
                     IconButton(onClick = { viewModel.onTargetInputChanged("") }) {
                         Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear input")
                     }
                 }
-            }
+            },
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(Modifier.height(Space.md))
 
-        Button(
+        AppButton(
+            text = buttonLabel,
             onClick = { viewModel.runScan() },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(buttonLabel)
-        }
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         if (uiState.subTabState == 1) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "Privacy Notice: Executing an email scan queries public third-party services (XposedOrNot breach API, Cloudflare DoH, and public profile endpoints) directly from your device over HTTPS.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(12.dp)
-                )
-            }
+            Spacer(Modifier.height(Space.md))
+            Notice("Email scans query public third-party services (XposedOrNot, Cloudflare DoH and public profile endpoints) directly from this device over HTTPS.", tone = Tone.NEUTRAL)
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.xl))
 
         uiState.activeTarget?.let { target ->
             when (uiState.subTabState) {
@@ -232,24 +200,16 @@ fun UsernameAndEmailOsintScreen(
                     OsintToolSectionCard(
                         toolTitle = "Live Username Scan ($target)",
                         subtitle = if (uiState.liveSitesChecked > 0)
-                            "${uiState.liveSitesChecked} real HTTP checks across Verified APIs, WhatsMyName, Maigret, Sherlock and Tookie"
-                        else "Real HTTP checks across the merged community site databases",
+                            "Checked ${uiState.liveSitesChecked} sites across WhatsMyName, Sherlock and Tookie"
+                        else "Real HTTP checks across the merged site databases",
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
                     ) {
                         when {
-                            uiState.isLiveScanning -> Row(
-                                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    if (uiState.scanTotal > 0) "Scanned ${uiState.scanProgress} of ${uiState.scanTotal} sites..."
-                                    else "Downloading site databases...",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                            uiState.liveError != null -> Text(uiState.liveError!!, style = MaterialTheme.typography.bodyMedium)
+                            uiState.isLiveScanning -> LoadingRow(
+                                if (uiState.scanTotal > 0) "Scanned ${uiState.scanProgress} of ${uiState.scanTotal} sites…"
+                                else "Downloading site databases…"
+                            )
+                            uiState.liveError != null -> Notice(uiState.liveError!!, tone = Tone.DANGER)
                             uiState.liveHits.isEmpty() -> Column {
                                 Text(
                                     "No public profiles matched this username.",
@@ -271,14 +231,14 @@ fun UsernameAndEmailOsintScreen(
                             }
                             else -> {
                                 Text(
-                                    "${uiState.liveHits.count { it.verificationStatus == "Matched" }} confirmed profile(s) • ${uiState.liveHits.size} result(s)",
+                                    "${countLabel(uiState.liveHits.count { it.verificationStatus == "Matched" }, "matched profile", "matched profiles")} • ${countLabel(uiState.liveHits.size, "result", "results")}",
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.titleMedium,
                                     modifier = Modifier.padding(bottom = 4.dp)
                                 )
                                 if (uiState.discardedCount > 0) {
                                     Text(
-                                        "${uiState.discardedCount} site(s) said \"found\" for a made-up username too, so they were ignored as unreliable.",
+                                        "${countLabel(uiState.discardedCount, "site", "sites")} said \"found\" for a made-up username too, so they were ignored as unreliable.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.padding(bottom = 4.dp)
@@ -291,69 +251,23 @@ fun UsernameAndEmailOsintScreen(
                                     onOpen = { url -> openUrl(context, url) }
                                 )
                                 uiState.liveHits.forEach { hit ->
-                                    OutlinedCard(
+                                    OsintResultCard(
+                                        site = hit.site,
+                                        source = hit.source,
+                                        verificationStatus = hit.verificationStatus,
+                                        confidence = hit.confidence,
+                                        evidence = hit.evidence,
+                                        isRechecking = uiState.recheckingSite == hit.site,
                                         onClick = { openUrl(context, hit.profileUrl) },
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                hit.site,
-                                                fontWeight = FontWeight.Bold,
-                                                style = MaterialTheme.typography.titleMedium,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                shape = MaterialTheme.shapes.extraSmall,
-                                                color = MaterialTheme.colorScheme.primaryContainer
-                                            ) {
-                                                Text(
-                                                    text = hit.source,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                shape = MaterialTheme.shapes.extraSmall,
-                                                color = MaterialTheme.colorScheme.secondaryContainer
-                                            ) {
-                                                Text(
-                                                    text = hit.category,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            "${hit.verificationStatus} • Confidence: ${hit.confidence} • HTTP ${if (hit.statusCode < 0) "network error" else hit.statusCode}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(horizontal = 12.dp)
-                                        )
-                                        Text(
-                                            hit.evidence,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-                                        )
-                                        TextButton(
-                                            onClick = { viewModel.recheckUsername(hit.site) },
-                                            enabled = uiState.recheckingSite != hit.site
-                                        ) {
-                                            Text(if (uiState.recheckingSite == hit.site) "Rechecking..." else "Recheck result")
-                                        }
-                                    }
+                                        onRecheck = { viewModel.recheckUsername(hit.site, hit.profileUrl) },
+                                        modifier = Modifier.padding(vertical = 3.dp),
+                                    )
                                 }
-                                if (uiState.datasetSizes.isNotEmpty()) {
+                                val sourceCounts = uiState.liveHits.groupingBy { it.source }.eachCount()
+                                if (sourceCounts.isNotEmpty()) {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        "Databases: " + uiState.datasetSizes.entries.joinToString(", ") { "${it.key} ${it.value}" },
+                                        "Found via: " + sourceCounts.entries.joinToString(", ") { "${it.key} ${it.value}" },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -439,9 +353,9 @@ fun UsernameAndEmailOsintScreen(
                             subtitle = "Aggregated identity metrics and exposure overview for $target",
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         ) {
-                            ResultRow("Mailbox Status", if (domain.acceptsMail == true) "Active / Accepting Mail" else "Unverified")
-                            ResultRow("Hosting Provider", domain.mxProvider ?: "Standard MX Gateway")
-                            ResultRow("Confirmed Registrations", "$regCount platform(s) found via signup flow")
+                            ResultRow("Domain accepts mail", if (domain.acceptsMail == true) "Yes — MX records found" else "Unverified")
+                            ResultRow("Mail Provider (MX)", domain.mxProvider ?: "Standard MX Gateway")
+                            ResultRow("Reported Registrations", "$regCount platform(s) reported via signup flow")
                             ResultRow("Handle Cross-Matches", "$handleHitsCount profile(s) found via username reuse")
                             ResultRow("Breach & Infostealer Logs", "$breachCount exposure record(s)")
                             ResultRow("Verified Cryptographic Proofs", "$proofCount Keybase/PGP proof(s)")
@@ -462,8 +376,8 @@ fun UsernameAndEmailOsintScreen(
 
                     if (uiState.isGoogleMetadataScanning) {
                         OsintToolSectionCard(
-                            toolTitle = "Google Account Footprint (Epieos Style)",
-                            subtitle = "Checking publicly readable Google metadata for $target",
+                            toolTitle = "Google Account Status",
+                            subtitle = "Evaluating public Google account indicators for $target",
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer
                         ) {
                             Row(
@@ -472,7 +386,7 @@ fun UsernameAndEmailOsintScreen(
                             ) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Text("Checking for a public calendar feed...", style = MaterialTheme.typography.bodyMedium)
+                                Text("Evaluating account status...", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
@@ -480,8 +394,8 @@ fun UsernameAndEmailOsintScreen(
 
                     uiState.googleMetadata?.let { meta ->
                         OsintToolSectionCard(
-                            toolTitle = "Google Account Footprint (Epieos Style)",
-                            subtitle = "Public Google Maps reviews, photos, Gaia ID & Play Games activity for $target",
+                            toolTitle = "Google Account Status",
+                            subtitle = "Public status check for $target",
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer
                         ) {
                             ResultRow("Google Account Status", meta.accountStatus)
@@ -534,14 +448,12 @@ fun UsernameAndEmailOsintScreen(
                             },
                             containerColor = MaterialTheme.colorScheme.secondaryContainer
                         ) {
-                            val allNames = buildList {
-                                addAll(attr.namesFound)
-                                attr.stealerProfile?.computerUsername?.let {
-                                    add(com.example.phone_number_lookup.AttributedValue(it, "Stealer Log"))
-                                }
-                            }
+                            // Computer/host names are deliberately excluded here: the engine
+                            // already filters machine names like DESKTOP-*, and the stealer
+                            // profile below shows the host under its own heading.
+                            val allNames = attr.namesFound
                             if (allNames.isNotEmpty()) {
-                                Text("Names Found", fontWeight = FontWeight.Bold)
+                                SubHeading("Names found")
                                 allNames.forEach { n ->
                                     Text("• ${n.value} (${n.source})", style = MaterialTheme.typography.bodySmall)
                                 }
@@ -556,7 +468,7 @@ fun UsernameAndEmailOsintScreen(
                             }.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
 
                             if (allUsernames.isNotEmpty()) {
-                                Text("Usernames", fontWeight = FontWeight.Bold)
+                                SubHeading("Usernames")
                                 allUsernames.forEach { u ->
                                     Text("• ${u.value} (${u.source})", style = MaterialTheme.typography.bodySmall)
                                 }
@@ -577,7 +489,7 @@ fun UsernameAndEmailOsintScreen(
                             }.distinctBy { it.url.lowercase() }
 
                             if (combinedLinks.isNotEmpty()) {
-                                Text("Profile Links", fontWeight = FontWeight.Bold)
+                                SubHeading("Profile links")
                                 combinedLinks.forEach { link ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -594,15 +506,14 @@ fun UsernameAndEmailOsintScreen(
 
                             if (attr.timeline.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text("Activity Timeline", fontWeight = FontWeight.Bold)
+                                SubHeading("Activity timeline")
                                 attr.timeline.forEach { ev ->
                                     Text("• ${ev.date} — ${ev.label} · ${ev.source}", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
 
                             attr.stealerProfile?.let { sp ->
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("Infostealer Subject Profile (HudsonRock)", fontWeight = FontWeight.Bold)
+                                SubHeading("Infostealer profile · HudsonRock")
                                 sp.computerUsername?.let { ResultRow("Username / Host", it) }
                                 sp.maskedIp?.let { ResultRow("IP Address", it) }
                                 sp.operatingSystem?.let { ResultRow("Operating System", it) }
@@ -615,85 +526,40 @@ fun UsernameAndEmailOsintScreen(
 
                     OsintToolSectionCard(
                         toolTitle = "Accounts Registered ($target)",
-                        subtitle = "Signup & availability endpoints queried directly - the same method Holehe and Blackbird use",
+                        subtitle = "Signup endpoints queried directly for this address",
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
                     ) {
                         when {
-                            uiState.isRegistrationScanning -> Row(
-                                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    "Checking signup endpoints (${uiState.registrationChecked} done)...",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                            uiState.registrationFailed -> Text(
-                                uiState.registrationNotice ?: "The account check could not run. Try again.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.error
+                            uiState.isRegistrationScanning -> LoadingRow(
+                                "Checking signup endpoints · ${uiState.registrationChecked} done"
                             )
-                            uiState.registeredSites.isEmpty() -> Text(
+                            uiState.registrationFailed -> Notice(
+                                uiState.registrationNotice ?: "The account check could not run. Try again.",
+                                tone = Tone.DANGER,
+                            )
+                            uiState.registeredSites.isEmpty() -> Notice(
                                 "No service reported an existing account for this address.",
-                                style = MaterialTheme.typography.bodyMedium
+                                tone = Tone.NEUTRAL,
                             )
                             else -> {
                                 Text(
-                                    "${uiState.registeredSites.count { it.verificationStatus == "Registered response" }} confirmed registration(s) • ${uiState.registeredSites.size} result(s)",
+                                    "${countLabel(uiState.registeredSites.count { it.verificationStatus == "Registered response" }, "reported registration", "reported registrations")} • ${countLabel(uiState.registeredSites.size, "result", "results")}",
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.titleMedium,
                                     modifier = Modifier.padding(bottom = 4.dp)
                                 )
                                 uiState.registeredSites.forEach { hit ->
-                                    OutlinedCard(
+                                    OsintResultCard(
+                                        site = hit.site,
+                                        source = hit.source,
+                                        verificationStatus = hit.verificationStatus,
+                                        confidence = hit.confidence,
+                                        evidence = hit.evidence,
+                                        isRechecking = uiState.recheckingSite == hit.site,
                                         onClick = { openUrl(context, hit.profileUrl) },
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                hit.site,
-                                                fontWeight = FontWeight.Bold,
-                                                style = MaterialTheme.typography.titleMedium,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                shape = MaterialTheme.shapes.extraSmall,
-                                                color = MaterialTheme.colorScheme.primaryContainer
-                                            ) {
-                                                Text(
-                                                    text = hit.source,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            "${hit.verificationStatus} • Confidence: ${hit.confidence} • HTTP ${if (hit.statusCode < 0) "network error" else hit.statusCode}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(horizontal = 12.dp)
-                                        )
-                                        Text(
-                                            hit.evidence,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-                                        )
-                                        TextButton(
-                                            onClick = { viewModel.recheckEmail(hit.site) },
-                                            enabled = uiState.recheckingSite != hit.site
-                                        ) {
-                                            Text(if (uiState.recheckingSite == hit.site) "Rechecking..." else "Recheck result")
-                                        }
-                                    }
+                                        onRecheck = { viewModel.recheckEmail(hit.site) },
+                                        modifier = Modifier.padding(vertical = 3.dp),
+                                    )
                                 }
                             }
                         }
@@ -708,7 +574,7 @@ fun UsernameAndEmailOsintScreen(
                         if (uiState.registrationDiscarded > 0 && !uiState.isRegistrationScanning) {
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                "${uiState.registrationDiscarded} site(s) also said an account exists for a made-up address, so they were ignored as unreliable.",
+                                "${countLabel(uiState.registrationDiscarded, "site", "sites")} also said an account exists for a made-up address, so they were ignored as unreliable.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -719,22 +585,14 @@ fun UsernameAndEmailOsintScreen(
 
                     OsintToolSectionCard(
                         toolTitle = "Email Domain Intelligence",
-                        subtitle = "Public DNS checks and an explained local assessment; no IntelBase account or API is used",
+                        subtitle = "DNS, mail authentication and a local reputation check",
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         when {
-                            uiState.isDomainScanning -> Row(
-                                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text("Checking MX, SPF, DMARC & Gravatar records...", style = MaterialTheme.typography.bodyMedium)
-                            }
-                            uiState.domainReport?.error != null -> Text(
+                            uiState.isDomainScanning -> LoadingRow("Checking MX, SPF, DMARC & Gravatar records…")
+                            uiState.domainReport?.error != null -> Notice(
                                 uiState.domainReport!!.error!!,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.error
+                                tone = Tone.DANGER,
                             )
                             uiState.domainReport != null -> {
                                 val domain = uiState.domainReport!!
@@ -748,8 +606,15 @@ fun UsernameAndEmailOsintScreen(
                                 ResultRow("Role mailbox", domain.roleAddress.toString())
                                 domain.qualityScore?.let { ResultRow("Local quality assessment", "$it / 100") }
                                 if (domain.reasons.isNotEmpty()) {
-                                    Text("Why", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-                                    domain.reasons.forEach { reason -> Text("• $reason", style = MaterialTheme.typography.bodySmall) }
+                                    SubHeading("Why")
+                                    domain.reasons.forEach { reason ->
+                                        Text(
+                                            "• $reason",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.padding(vertical = 1.dp),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -788,7 +653,7 @@ fun UsernameAndEmailOsintScreen(
                                     Text("• $name", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
-                                Text("Evidence timeline", fontWeight = FontWeight.Bold)
+                                SubHeading("Evidence timeline")
                                 Text(
                                     "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(report.checkedAt))} — XposedOrNot & HudsonRock lookup completed",
                                     style = MaterialTheme.typography.bodySmall,
@@ -819,17 +684,10 @@ fun UsernameAndEmailOsintScreen(
                         val handle = EmailRegistrationScanner.localPart(target)
                         when {
                             handle == null -> Text("Could not derive a handle from this address.", style = MaterialTheme.typography.bodyMedium)
-                            uiState.isLiveScanning -> Row(
-                                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text("Scanning sites for \"$handle\"...", style = MaterialTheme.typography.bodyMedium)
-                            }
-                            uiState.liveHits.isEmpty() -> Text(
-                                "No public profile matched the handle \"$handle\". (Scanned ${uiState.liveSitesChecked} sites.)",
-                                style = MaterialTheme.typography.bodyMedium
+                            uiState.isLiveScanning -> LoadingRow("Scanning sites for \"$handle\"…")
+                            uiState.liveHits.isEmpty() -> Notice(
+                                "No public profile matched the handle \"$handle\". Scanned ${uiState.liveSitesChecked} sites.",
+                                tone = Tone.NEUTRAL,
                             )
                             else -> {
                                 val cleanHandleHits = uiState.liveHits.filterNot {
@@ -838,10 +696,9 @@ fun UsernameAndEmailOsintScreen(
                                         it.category.equals("nsfw", ignoreCase = true)
                                 }
                                 Text(
-                                    "${cleanHandleHits.size} profile(s) found for \"$handle\"",
-                                    fontWeight = FontWeight.Bold,
+                                    "${countLabel(cleanHandleHits.size, "profile", "profiles")} found for \"$handle\"",
                                     style = MaterialTheme.typography.titleMedium,
-                                    modifier = Modifier.padding(bottom = 4.dp)
+                                    modifier = Modifier.padding(bottom = 6.dp)
                                 )
                                 uiState.correlationHints.forEach { hint ->
                                     Text(
@@ -859,33 +716,25 @@ fun UsernameAndEmailOsintScreen(
                                         .substringBefore('/')
                                         .ifBlank { hit.site }
 
-                                    OutlinedCard(
+                                    Surface(
                                         onClick = { openUrl(context, hit.profileUrl) },
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                        shape = MaterialTheme.shapes.small,
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                                     ) {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
                                                 cleanSiteLabel,
-                                                fontWeight = FontWeight.Bold,
-                                                style = MaterialTheme.typography.titleMedium,
-                                                modifier = Modifier.weight(1f)
+                                                style = MaterialTheme.typography.titleSmall,
+                                                modifier = Modifier.weight(1f),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                             )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                shape = MaterialTheme.shapes.extraSmall,
-                                                color = MaterialTheme.colorScheme.primaryContainer
-                                            ) {
-                                                Text(
-                                                    text = hit.source,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
+                                            Spacer(Modifier.width(Space.sm))
+                                            Pill(hit.source, tone = Tone.INFO)
                                         }
                                     }
                                 }
@@ -946,7 +795,7 @@ fun UsernameAndEmailOsintScreen(
                     val net = uiState.networkOsintReport
                     OsintToolSectionCard(
                         toolTitle = "Domain & Network Recon ($target)",
-                        subtitle = "Cloudflare DoH, RDAP ownership, crt.sh Certificate Transparency & Shodan InternetDB",
+                        subtitle = "DNS, ownership records, subdomains and exposed services",
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         when {
@@ -971,8 +820,7 @@ fun UsernameAndEmailOsintScreen(
                                 if (net.nsRecords.isNotEmpty()) ResultRow("Nameservers", net.nsRecords.joinToString(", "))
 
                                 net.rdap?.let { rdap ->
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("RDAP Registration & Ownership", fontWeight = FontWeight.Bold)
+                                    SubHeading("RDAP registration & ownership")
                                     rdap.registrar?.let { ResultRow("Registrar", it) }
                                     rdap.registeredDate?.let { ResultRow("Registered", it) }
                                     rdap.expirationDate?.let { ResultRow("Expires", it) }
@@ -980,8 +828,7 @@ fun UsernameAndEmailOsintScreen(
                                 }
 
                                 net.shodanHost?.let { shodan ->
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("Shodan InternetDB (${shodan.ip})", fontWeight = FontWeight.Bold)
+                                    SubHeading("Shodan InternetDB · ${shodan.ip}")
                                     ResultRow("Open Ports", if (shodan.ports.isNotEmpty()) shodan.ports.joinToString(", ") else "None reported")
                                     if (shodan.hostnames.isNotEmpty()) ResultRow("Hostnames", shodan.hostnames.joinToString(", "))
                                     if (shodan.tags.isNotEmpty()) ResultRow("Tags", shodan.tags.joinToString(", "))
@@ -992,16 +839,19 @@ fun UsernameAndEmailOsintScreen(
                                 }
 
                                 if (net.subdomains.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("Certificate Transparency Subdomains (${net.subdomains.size})", fontWeight = FontWeight.Bold)
+                                    SubHeading("Certificate transparency · ${net.subdomains.size} subdomains")
                                     net.subdomains.take(25).forEach { sub ->
-                                        Text("• $sub", style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            sub,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                            modifier = Modifier.padding(vertical = 1.dp),
+                                        )
                                     }
                                 }
 
                                 net.wayback?.let { wb ->
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("Wayback Machine History", fontWeight = FontWeight.Bold)
+                                    SubHeading("Wayback machine")
                                     ResultRow("Snapshots", "${wb.snapshotCount}+ captures (${wb.firstSeen ?: "?"} to ${wb.lastSeen ?: "?"})")
                                     wb.latestArchiveUrl?.let { url ->
                                         TextButton(onClick = { openUrl(context, url) }) {
@@ -1029,27 +879,20 @@ private fun IdentityEnrichmentSection(
 
     OsintToolSectionCard(
         toolTitle = "Cryptographic Proofs, PGP & Archive History",
-        subtitle = "Keybase identity graph, Ubuntu OpenPGP Keyserver & Wayback Machine CDX snapshots",
+        subtitle = "Keybase proofs, public PGP keys and archived captures",
         containerColor = MaterialTheme.colorScheme.secondaryContainer
     ) {
         when {
-            isLoading -> Row(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                Spacer(modifier = Modifier.width(10.dp))
-                Text("Querying Keybase, OpenPGP & Wayback Machine...", style = MaterialTheme.typography.bodyMedium)
-            }
-            report == null || !report.hasData -> Text(
-                "No Keybase proofs, PGP keys, or Wayback profile snapshots returned for this target.",
-                style = MaterialTheme.typography.bodyMedium
+            isLoading -> LoadingRow("Querying Keybase, OpenPGP & Wayback Machine…")
+            report == null || !report.hasData -> Notice(
+                "No Keybase proofs, PGP keys or Wayback snapshots returned for this target.",
+                tone = Tone.NEUTRAL,
             )
             else -> {
                 report.keybaseDisplayName?.let { ResultRow("Keybase Name", it) }
                 report.keybaseBio?.let { ResultRow("Keybase Bio", it) }
                 if (report.keybaseProofs.isNotEmpty()) {
-                    Text("Verified Keybase Accounts", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+                    SubHeading("Verified Keybase accounts")
                     report.keybaseProofs.forEach { proof ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1064,8 +907,7 @@ private fun IdentityEnrichmentSection(
                     }
                 }
                 if (report.pgpRecords.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text("OpenPGP Public Key UIDs", fontWeight = FontWeight.Bold)
+                    SubHeading("OpenPGP public key UIDs")
                     report.pgpRecords.forEach { pgp ->
                         Text(
                             "Key ${pgp.keyId}" + (pgp.createdDate?.let { " (created $it)" } ?: ""),
@@ -1078,8 +920,7 @@ private fun IdentityEnrichmentSection(
                     }
                 }
                 if (report.waybackSnapshots.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text("Wayback Machine Archived Profiles", fontWeight = FontWeight.Bold)
+                    SubHeading("Wayback archived profiles")
                     report.waybackSnapshots.forEach { wb ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1122,3 +963,7 @@ private fun IdentityEnrichmentSection(
         }
     }
 }
+
+/** "1 result" / "3 results" — avoids the "(s)" shorthand in result headers. */
+private fun countLabel(count: Int, singular: String, plural: String): String =
+    if (count == 1) "1 $singular" else "$count $plural"

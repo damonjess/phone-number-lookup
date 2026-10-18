@@ -482,14 +482,14 @@ class OsintParsingTest {
     @Test
     fun tellows_parsesScoreLocationAndComments() {
         val body =
-            """{"tellows":{"number":"01782447307","normalizedNumber":"01782-447307","score":"5","searches":"1","comments":"3","location":"Stoke-on-Trent","country":"United Kingdom"}}Partner Data not correct"""
+            """{"tellows":{"number":"02079460958","normalizedNumber":"020-7946-0958","score":"5","searches":"1","comments":"3","location":"London","country":"United Kingdom"}}Partner Data not correct"""
 
-        val report = SpamScanner.parseReport(body, "+441782447307", "https://www.tellows.co.uk")
+        val report = SpamScanner.parseReport(body, "+442079460958", "https://www.tellows.co.uk")
 
         assertNotNull(report)
         assertEquals(5, report!!.score)
         assertEquals(3, report.comments)
-        assertEquals("Stoke-on-Trent", report.location)
+        assertEquals("London", report.location)
         assertEquals("United Kingdom", report.country)
         assertEquals("tellows.co.uk", report.source)
         assertEquals("Suspicious / possible spam", report.riskLabel)
@@ -497,12 +497,12 @@ class OsintParsingTest {
 
     @Test
     fun tellows_zeroCommentsIsUnratedRatherThanSuspicious() {
-        // Real response for 01782 447307: tellows hands out a default 5 when nobody has
-        // reported the number. Calling that "suspicious" would invent a warning.
+        // tellows hands out a default 5 when nobody has reported the number.
+        // Calling that "suspicious" would invent a warning.
         val body =
-            """{"tellows":{"number":"01782447307","score":"5","searches":"1","comments":"0","location":"Stoke-on-Trent","country":"United Kingdom"}}"""
+            """{"tellows":{"number":"02079460958","score":"5","searches":"1","comments":"0","location":"London","country":"United Kingdom"}}"""
 
-        val report = SpamScanner.parseReport(body, "+441782447307", "https://www.tellows.co.uk")!!
+        val report = SpamScanner.parseReport(body, "+442079460958", "https://www.tellows.co.uk")!!
 
         assertFalse("an unreported number must not signal reports", report.hasCommunityReports)
         assertEquals("Unrated - no community reports yet", report.riskLabel)
@@ -516,7 +516,7 @@ class OsintParsingTest {
     fun tellows_withCommunityReportsStillBandsTheScore() {
         val body = """{"tellows":{"score":"5","searches":"9","comments":"4"}}"""
 
-        val report = SpamScanner.parseReport(body, "+441782447307", "https://www.tellows.co.uk")!!
+        val report = SpamScanner.parseReport(body, "+442079460958", "https://www.tellows.co.uk")!!
 
         assertTrue(report.hasCommunityReports)
         assertEquals("Suspicious / possible spam", report.riskLabel)
@@ -578,7 +578,7 @@ class OsintParsingTest {
     @Test
     fun reputationSourcesAreAdvertisedForSupportedNumbers() {
         assertEquals(listOf("WhoCallsMe", "800notes"), PhoneReputation.supportedSources("+18554208313"))
-        assertEquals(listOf("Should I Answer UK", "WhoCallsMe"), PhoneReputation.supportedSources("+447782447307"))
+        assertEquals(listOf("Should I Answer UK", "WhoCallsMe"), PhoneReputation.supportedSources("+447700900123"))
         assertTrue(PhoneReputation.supportedSources("+3312345678").isEmpty())
     }
 }

@@ -1,58 +1,64 @@
 package com.example.phone_number_lookup.ui.theme
 
-import android.app.Activity
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+/**
+ * A single dark scheme on purpose: this is a recon console, and a light pastel variant would
+ * undercut the terminal language the rest of the UI is built around.
+ */
+private val CyberColors = darkColorScheme(
+    primary = Phosphor,
+    onPrimary = PhosphorInk,
+    primaryContainer = PhosphorDim,
+    onPrimaryContainer = PhosphorWash,
+    secondary = Cyber,
+    onSecondary = CyberInk,
+    secondaryContainer = CyberDim,
+    onSecondaryContainer = CyberWash,
+    tertiary = Amber,
+    onTertiary = AmberInk,
+    tertiaryContainer = AmberDim,
+    onTertiaryContainer = AmberWash,
+    error = Alert,
+    onError = AlertInk,
+    errorContainer = AlertDim,
+    onErrorContainer = AlertWash,
+    background = Void,
+    onBackground = TextPrimary,
+    surface = Panel,
+    onSurface = TextPrimary,
+    surfaceVariant = PanelRaised,
+    onSurfaceVariant = TextMuted,
+    outline = Edge,
+    outlineVariant = EdgeDim,
+    scrim = Void,
+    inverseSurface = TextPrimary,
+    inverseOnSurface = Void,
+    inversePrimary = PhosphorDim,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+private val TerminalShapes = Shapes(
+    extraSmall = RoundedCornerShape(2.dp),
+    small = RoundedCornerShape(4.dp),
+    medium = RoundedCornerShape(6.dp),
+    large = RoundedCornerShape(8.dp),
+    extraLarge = RoundedCornerShape(12.dp),
 )
 
 @Composable
 fun PhonenumberlookupTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
+    darkTheme: Boolean = true,
+    content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = CyberColors,
         typography = Typography,
-        content = content
+        shapes = TerminalShapes,
+        content = content,
     )
 }

@@ -5,10 +5,9 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <!-- Scan history and the PhoneInfoga server address stay on the device only. -->
+        <exclude domain="sharedpref" path="number_finder_history.xml"/>
+        <exclude domain="sharedpref" path="phoneinfoga_prefs.xml"/>
     </cloud-backup>
     <!--
     <device-transfer>

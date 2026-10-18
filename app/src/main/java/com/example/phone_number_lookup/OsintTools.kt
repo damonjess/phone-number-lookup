@@ -47,7 +47,7 @@ object OsintTools {
             ),
             OsintDork(
                 title = "PhoneInfoga: Spam & Caller DBs",
-                description = "Checks WhoCalled, Tellws, ShouldICall, and SpamCalls reporting databases.",
+                description = "Checks WhoCalled, Tellows, ShouldICall, and SpamCalls reporting databases.",
                 url = "https://www.google.com/search?q=$qSpam",
                 toolSource = "PhoneInfoga"
             ),

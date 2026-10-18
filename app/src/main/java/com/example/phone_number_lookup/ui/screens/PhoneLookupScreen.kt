@@ -1,7 +1,9 @@
 package com.example.phone_number_lookup.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,12 +41,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.HealthState
 import com.example.phone_number_lookup.HistoryEntry
@@ -54,17 +58,27 @@ import com.example.phone_number_lookup.PdfSection
 import com.example.phone_number_lookup.PhoneInfogaStatus
 import com.example.phone_number_lookup.PhoneNumberUtils
 import com.example.phone_number_lookup.PhoneReputation
+import com.example.phone_number_lookup.ui.components.AppButton
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
+import com.example.phone_number_lookup.ui.components.LoadingRow
+import com.example.phone_number_lookup.ui.components.Notice
 import com.example.phone_number_lookup.ui.components.NumberedLinksHubCard
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
+import com.example.phone_number_lookup.ui.components.Pill
 import com.example.phone_number_lookup.ui.components.ResultRow
+import com.example.phone_number_lookup.ui.components.ScreenHeader
+import com.example.phone_number_lookup.ui.components.SearchField
+import com.example.phone_number_lookup.ui.components.SectionCard
+import com.example.phone_number_lookup.ui.components.Space
+import com.example.phone_number_lookup.ui.components.Tone
 import com.example.phone_number_lookup.ui.components.VerdictCard
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.PhoneLookupViewModel
 
 @Composable
 fun PhoneLookupScreen(
-    viewModel: PhoneLookupViewModel = viewModel()
+    viewModel: PhoneLookupViewModel = viewModel(),
+    modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -73,40 +87,26 @@ fun PhoneLookupScreen(
     var numverifyKey by rememberSaveable { mutableStateOf("") }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 20.dp),
+        horizontalAlignment = Alignment.Start
     ) {
-        Text(
-            text = "Phone OSINT Suite",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        Text(
-            text = "Native in-app checks: numbering data, caller reports & live web search",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 16.dp)
+        ScreenHeader(
+            eyebrow = "Phone",
+            title = "Who's calling?",
+            subtitle = "Numbering data, caller reports and live web search, all on this device."
         )
 
-        OutlinedTextField(
+        SearchField(
             value = uiState.phoneNumberInput,
             onValueChange = { viewModel.onPhoneNumberInputChanged(it) },
-            label = { Text("Enter phone number") },
-            placeholder = { Text("e.g. 01782 447307 or +44 1782...") },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Phone,
-                imeAction = ImeAction.Search
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = { viewModel.scanNumber() }
-            ),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            trailingIcon = {
+            label = "Phone number",
+            placeholder = "020 7946 0958 or +44 20 7946 0958",
+            keyboardType = KeyboardType.Phone,
+            onSearch = { viewModel.scanNumber() },
+            trailing = {
                 if (uiState.phoneNumberInput.isNotEmpty()) {
                     IconButton(onClick = { viewModel.onPhoneNumberInputChanged("") }) {
                         Icon(
@@ -115,31 +115,34 @@ fun PhoneLookupScreen(
                         )
                     }
                 }
-            }
+            },
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(Modifier.height(Space.md))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            Button(
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
+            AppButton(
+                text = "Scan number",
                 onClick = { viewModel.scanNumber() },
-                modifier = Modifier.weight(1f).padding(end = 8.dp)
-            ) {
-                Text("Scan Number")
-            }
-
-            OutlinedButton(
+                modifier = Modifier.weight(1f),
+            )
+            AppButton(
+                text = "Clear",
                 onClick = { viewModel.clear() },
-                modifier = Modifier.weight(1f).padding(start = 8.dp)
-            ) {
-                Text("Clear")
-            }
+                subdued = true,
+                modifier = Modifier.weight(1f),
+            )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.xl))
+
+        if (uiState.resultNumber == null && !uiState.isSearching) {
+            Notice(
+                "Enter a number to see its formats, region, line type, caller reports and web matches. Every check runs on this device.",
+                tone = Tone.NEUTRAL,
+            )
+            Spacer(Modifier.height(Space.xl))
+        }
 
         uiState.resultNumber?.let { input ->
             val normalized = PhoneNumberUtils.normalize(input)
@@ -211,21 +214,11 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Overview Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
+            SectionCard(
+                title = "Number breakdown",
+                subtitle = "Formats, region and line type from public numbering data",
+                tone = Tone.NEUTRAL,
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Phone Number Breakdown",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-
                     ResultRow("Original", input)
                     ResultRow("E.164 Normalized", formats.e164)
                     ResultRow("International", formats.international)
@@ -244,16 +237,15 @@ fun PhoneLookupScreen(
                         "Type, range block and time zone are estimates from public numbering data; they do not prove the current carrier or caller location.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp)
+                        modifier = Modifier.padding(top = 8.dp)
                     )
-                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(Space.lg))
 
             DorkLauncherCard(
                 title = "Phonia & Direct Messaging Triggers",
-                subtitle = "Replaces `python phonia.py -n` — direct WhatsApp, Telegram, Truecaller & Viber checks",
+                subtitle = "Direct WhatsApp, Telegram, Truecaller and Viber checks",
                 dorks = phoniaDorks
             )
 
@@ -269,7 +261,7 @@ fun PhoneLookupScreen(
 
             OsintToolSectionCard(
                 toolTitle = "PhoneInfoga Native Scan",
-                subtitle = "Local PhoneInfoga data is automatic. Numverify carrier data requires your apilayer key and is fetched inside the app.",
+                subtitle = "Offline numbering data, plus an optional Numverify carrier lookup with your apilayer key",
                 containerColor = MaterialTheme.colorScheme.primaryContainer
             ) {
                 Text("Local scanner", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -290,13 +282,15 @@ fun PhoneLookupScreen(
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                 )
-                Button(
+                Spacer(Modifier.height(Space.sm))
+                AppButton(
+                    text = "Run native Numverify",
                     onClick = { viewModel.runPhoneInfogaNumverify(numverifyKey) },
                     enabled = numverifyKey.isNotBlank() && !uiState.isPhoneInfogaScanning,
-                    modifier = Modifier.padding(top = 8.dp)
-                ) { Text("Run native Numverify") }
+                )
                 when {
                     uiState.isPhoneInfogaScanning -> CircularProgressIndicator(
                         modifier = Modifier.padding(top = 10.dp).size(20.dp), strokeWidth = 2.dp
@@ -322,7 +316,7 @@ fun PhoneLookupScreen(
 
             OsintToolSectionCard(
                 toolTitle = "PhoneInfoga",
-                subtitle = "Uses your PhoneInfoga server if one is running, otherwise runs built-in versions of its Google-dork and OVH scanners. The OVH check contacts OVH.",
+                subtitle = "Use your own PhoneInfoga server, or the built-in dork and OVH scanners",
                 containerColor = MaterialTheme.colorScheme.secondaryContainer
             ) {
                 OutlinedTextField(
@@ -332,13 +326,15 @@ fun PhoneLookupScreen(
                     placeholder = { Text("http://127.0.0.1:5000") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Button(
+                Spacer(Modifier.height(Space.sm))
+                AppButton(
+                    text = "Run PhoneInfoga",
                     onClick = { viewModel.runPhoneInfogaServer() },
                     enabled = !uiState.isPhoneInfogaServerRunning,
-                    modifier = Modifier.padding(top = 8.dp)
-                ) { Text("Run PhoneInfoga") }
+                )
 
                 val piReport = uiState.phoneInfogaReport
                 piReport?.note?.let { note ->
@@ -412,32 +408,29 @@ fun PhoneLookupScreen(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Save to private history", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Stored only on this phone. No contacts, call log, or upload is used.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 6.dp)
-                    )
-                    OutlinedTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Personal note (optional)") },
-                        placeholder = { Text("What did the caller say?") },
-                        minLines = 2,
-                        maxLines = 4
-                    )
-                    Button(
-                        onClick = {
-                            viewModel.saveCurrentToHistory(note)
-                            note = ""
-                        },
-                        modifier = Modifier.padding(top = 8.dp)
-                    ) { Text("Save scan") }
-                }
+            SectionCard(
+                title = "Save to private history",
+                subtitle = "Stored only on this phone. No contacts, call log or upload is used.",
+                tone = Tone.NEUTRAL,
+            ) {
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Personal note (optional)") },
+                    placeholder = { Text("What did the caller say?") },
+                    minLines = 2,
+                    maxLines = 4,
+                    shape = MaterialTheme.shapes.medium,
+                )
+                Spacer(Modifier.height(Space.sm))
+                AppButton(
+                    text = "Save scan",
+                    onClick = {
+                        viewModel.saveCurrentToHistory(note)
+                        note = ""
+                    },
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -538,73 +531,55 @@ fun PhoneLookupScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Live Web Search Matches",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.Start).padding(bottom = 8.dp)
+                text = "WEB SEARCH",
+                style = MaterialTheme.typography.labelSmall,
+                letterSpacing = 1.4.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = Space.sm)
             )
 
             if (uiState.isSearching) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(24.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Searching public databases...")
-                }
+                LoadingRow("Searching public databases…")
             } else if (uiState.searchError != null) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-                ) {
-                    Text(
-                        text = uiState.searchError!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(16.dp)
-                    )
-                }
+                Notice(uiState.searchError!!, tone = Tone.DANGER)
             } else if (uiState.hasSearched && uiState.searchResults.isEmpty()) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Text(
-                        text = "No indexed web matches found for this number in this search.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(16.dp)
-                    )
-                }
+                Notice("No indexed web matches found for this number in this search.", tone = Tone.NEUTRAL)
             } else {
                 uiState.searchResults.forEach { result ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    Surface(
+                        onClick = { openUrl(context, result.url) },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = result.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = result.snippet,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            TextButton(
-                                onClick = { openUrl(context, result.url) },
-                                modifier = Modifier.align(Alignment.End)
-                            ) {
-                                Text("Open Link ↗")
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = result.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = result.snippet,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
                             }
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "↗",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
                     }
                 }
@@ -618,10 +593,11 @@ fun PhoneLookupScreen(
             subtitle = "Tests every lookup source with a harmless test number, so a blocked or changed site isn't mistaken for \"nothing found\".",
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         ) {
-            Button(
+            AppButton(
+                text = "Check all sources",
                 onClick = { viewModel.runSourceHealth(numverifyKey) },
-                enabled = !uiState.isCheckingHealth
-            ) { Text("Check all sources") }
+                enabled = !uiState.isCheckingHealth,
+            )
 
             if (uiState.isCheckingHealth) {
                 CircularProgressIndicator(
@@ -629,29 +605,44 @@ fun PhoneLookupScreen(
                 )
             }
             uiState.sourceHealth.forEach { result ->
-                val color = when (result.state) {
-                    HealthState.OK -> MaterialTheme.colorScheme.primary
-                    HealthState.NOT_CONFIGURED -> MaterialTheme.colorScheme.onSurfaceVariant
-                    else -> MaterialTheme.colorScheme.error
+                val tone = when (result.state) {
+                    HealthState.OK -> Tone.ACCENT
+                    HealthState.NOT_CONFIGURED -> Tone.NEUTRAL
+                    HealthState.CHANGED -> Tone.WARNING
+                    else -> Tone.DANGER
                 }
-                val symbol = when (result.state) {
-                    HealthState.OK -> "✓"
-                    HealthState.BLOCKED, HealthState.UNREACHABLE -> "✗"
-                    HealthState.CHANGED -> "!"
-                    HealthState.NOT_CONFIGURED -> "–"
+                val label = when (result.state) {
+                    HealthState.OK -> "OK"
+                    HealthState.BLOCKED, HealthState.UNREACHABLE -> "FAIL"
+                    HealthState.CHANGED -> "CHANGED"
+                    HealthState.NOT_CONFIGURED -> "NOT SET"
                 }
-                Column(modifier = Modifier.padding(top = 8.dp)) {
-                    Text(
-                        "$symbol ${result.source} (${result.millis} ms)",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = color
-                    )
-                    Text(
-                        result.detail,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Pill(label, tone = tone)
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = result.source,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = "${result.millis} ms",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            text = result.detail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
                 }
             }
         }
@@ -669,6 +660,12 @@ fun PhoneLookupScreen(
     }
 }
 
+private fun historyStatusTone(status: String): Tone = when (status) {
+    "Suspected spam" -> Tone.DANGER
+    "Trusted" -> Tone.ACCENT
+    else -> Tone.NEUTRAL
+}
+
 @Composable
 private fun HistorySection(
     entries: List<HistoryEntry>,
@@ -684,46 +681,80 @@ private fun HistorySection(
     var showClearDialog by remember { mutableStateOf(false) }
     var editingEntry by remember { mutableStateOf<HistoryEntry?>(null) }
     var editedNote by remember { mutableStateOf("") }
-    Spacer(modifier = Modifier.height(20.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    Spacer(Modifier.height(Space.xl))
+    SectionCard(
+        title = "Saved history",
+        subtitle = "Local only · up to 50 entries",
+        tone = Tone.NEUTRAL,
     ) {
-        Text("Saved history", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        TextButton(onClick = { showClearDialog = true }) { Text("Clear all") }
-    }
-    Text(
-        "Local-only history, maximum 50 entries.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-    entries.forEach { entry ->
-        Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(entry.number, fontWeight = FontWeight.Bold)
-                Text(entry.label, style = MaterialTheme.typography.bodySmall)
-                Text("Status: ${entry.status}", style = MaterialTheme.typography.bodySmall)
-                Text(formatter.format(java.util.Date(entry.createdAt)), style = MaterialTheme.typography.bodySmall)
-                if (entry.note.isNotBlank()) {
-                    Text("Note: ${entry.note}", modifier = Modifier.padding(top = 4.dp))
+        entries.forEach { entry ->
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = entry.number,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Pill(entry.status, tone = historyStatusTone(entry.status))
+                    }
+                    Text(
+                        text = entry.label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    Text(
+                        text = formatter.format(java.util.Date(entry.createdAt)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (entry.note.isNotBlank()) {
+                        Text(
+                            text = entry.note,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        TextButton(
+                            onClick = { onRescan(entry.number) },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("Rescan", style = MaterialTheme.typography.labelMedium) }
+                        TextButton(
+                            onClick = {
+                                val next = when (entry.status) {
+                                    "Unknown" -> "Suspected spam"
+                                    "Suspected spam" -> "Trusted"
+                                    else -> "Unknown"
+                                }
+                                onStatusChange(entry.id, next)
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("Status", style = MaterialTheme.typography.labelMedium) }
+                        TextButton(
+                            onClick = {
+                                editedNote = entry.note
+                                editingEntry = entry
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("Note", style = MaterialTheme.typography.labelMedium) }
+                        TextButton(
+                            onClick = { onDelete(entry.id) },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("Delete", style = MaterialTheme.typography.labelMedium) }
+                    }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { onRescan(entry.number) }) { Text("Scan again") }
-                    TextButton(onClick = {
-                        val next = when (entry.status) {
-                            "Unknown" -> "Suspected spam"
-                            "Suspected spam" -> "Trusted"
-                            else -> "Unknown"
-                        }
-                        onStatusChange(entry.id, next)
-                    }) { Text("Status") }
-                    TextButton(onClick = {
-                        editedNote = entry.note
-                        editingEntry = entry
-                    }) { Text("Edit note") }
-                    TextButton(onClick = { onDelete(entry.id) }) { Text("Delete") }
-                }
+            }
+        }
+        if (entries.isNotEmpty()) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { showClearDialog = true }) { Text("Clear all") }
             }
         }
     }

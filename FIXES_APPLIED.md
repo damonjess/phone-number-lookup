@@ -3,7 +3,7 @@
 This version keeps the existing app features and fixes the highest-impact accuracy and reliability issues:
 
 - Added Google's `libphonenumber` dependency for international/UK number parsing.
-- Correctly handles `01782...`, `0044...`, `+44...`, and international input formats.
+- Correctly handles `020 7946...`, `0044...`, `+44...`, and international input formats.
 - Corrected Germany, Spain, and Italy time-zone labels.
 - Renamed line type output to `Estimated number type` and added a disclaimer that prefix data does not prove the current carrier or caller location.
 - Fixed the `tellws.co.uk` typo to `tellows.co.uk`.

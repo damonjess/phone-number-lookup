@@ -162,7 +162,27 @@ class RiskAssessorTest {
     @Test
     fun ukNumber_coverageExplainsWhyNorthAmericanSourcesWereSkipped() {
         val v = assess(spam = tellows(5, 0))
-        assertTrue(v.coverage.contains("only cover US/Canada"))
+        assertTrue(v.coverage.contains("800notes covers US/Canada"))
+        // WhoCallsMe does cover the UK, so it must not be written off with 800notes.
+        assertFalse(v.coverage.contains("WhoCallsMe and 800notes"))
+    }
+
+    @Test
+    fun ukNumber_communitySourcesThatAnsweredAreReportedAsChecked() {
+        val v = assess(
+            spam = tellows(5, 0),
+            reputation = listOf(rep("Should I Answer UK", 0), rep("WhoCallsMe", 0)),
+        )
+        assertTrue(v.coverage.contains("Checked: numbering rules, tellows, Should I Answer UK, WhoCallsMe."))
+    }
+
+    @Test
+    fun ukNumber_failedCommunitySourceIsReportedAsUnavailable() {
+        val v = assess(
+            spam = tellows(5, 0),
+            reputation = listOf(rep("WhoCallsMe", 0, error = "blocked")),
+        )
+        assertTrue(v.coverage.contains("Unavailable: WhoCallsMe"))
     }
 
     @Test

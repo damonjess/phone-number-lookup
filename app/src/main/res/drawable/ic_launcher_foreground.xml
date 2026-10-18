@@ -1,68 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-
-    <!-- Outer Search Lens Glow Ring -->
+    <!-- Reticle: the app's one job is locating a subject across open sources. -->
     <path
-        android:fillColor="#00000000"
-        android:pathData="M48,48 m-24,0 a24,24 0 1,0 48,0 a24,24 0 1,0 -48,0"
-        android:strokeWidth="5"
-        android:strokeLineCap="round">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="24"
-                android:startY="24"
-                android:endX="72"
-                android:endY="72"
-                android:type="linear">
-                <item android:color="#00E5FF" android:offset="0.0" />
-                <item android:color="#D0BCFF" android:offset="0.5" />
-                <item android:color="#AB47BC" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Magnifying Glass Handle -->
+        android:pathData="M54,32 a22,22 0 1,0 0.01,0"
+        android:strokeColor="#3BFFA8"
+        android:strokeWidth="4"
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#00000000"
-        android:pathData="M65,65 L79,79"
-        android:strokeWidth="7"
-        android:strokeLineCap="round">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="65"
-                android:startY="65"
-                android:endX="79"
-                android:endY="79"
-                android:type="linear">
-                <item android:color="#D0BCFF" android:offset="0.0" />
-                <item android:color="#8E24AA" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Target Crosshair Reticle Ticks -->
+        android:pathData="M54,20 L54,27"
+        android:strokeColor="#3BFFA8"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#00000000"
-        android:pathData="M48,17 L48,21 M48,75 L48,79 M17,48 L21,48 M75,48 L79,48"
-        android:strokeWidth="2.5"
-        android:strokeColor="#80D8FF"
-        android:strokeLineCap="round" />
-
-    <!-- Central Phone Handset Graphic -->
+        android:pathData="M54,81 L54,88"
+        android:strokeColor="#3BFFA8"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M41,33 C41,32 42,31 43,31 L46.2,31 C47.2,31 48.1,31.7 48.3,32.7 L49.1,36 C49.3,36.9 49,37.8 48.3,38.4 L46.6,39.8 C48,42.6 50.3,44.9 53.1,46.3 L54.5,44.6 C55.1,43.9 56.1,43.6 57,43.8 L60.3,44.6 C61.3,44.8 62,45.7 62,46.7 L62,50 C62,51.1 61.1,52 60,52 C49.5,52 41,43.5 41,33Z" />
-
-    <!-- Lens Glass Reflection Arc -->
+        android:pathData="M20,54 L27,54"
+        android:strokeColor="#3BFFA8"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#00000000"
-        android:pathData="M32,38 A20,20 0 0,1 58,28"
-        android:strokeWidth="2"
-        android:strokeColor="#80FFFFFF"
-        android:strokeLineCap="round" />
+        android:pathData="M81,54 L88,54"
+        android:strokeColor="#3BFFA8"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,48 a6,6 0 1,0 0.01,0"
+        android:fillColor="#3BFFA8" />
 </vector>

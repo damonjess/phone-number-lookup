@@ -295,18 +295,20 @@ object RiskAssessor {
         }
 
         val northAmerican = facts.countryCallingCode == 1
-        if (northAmerican) {
-            if (reputation.isEmpty()) {
-                if (stillChecking) pending += "WhoCallsMe/800notes"
-            } else {
-                reputation.forEach { if (it.error != null) unavailable += it.source else checked += it.source }
-            }
+        if (reputation.isEmpty()) {
+            // Only North America is expected to supply these sources, so don't claim something
+            // is loading for a country that has no source at all.
+            if (stillChecking && northAmerican) pending += "WhoCallsMe/800notes"
+        } else {
+            // WhoCallsMe also covers the UK, so every returned source is reported honestly
+            // instead of being written off as a US/Canada-only database.
+            reputation.forEach { if (it.error != null) unavailable += it.source else checked += it.source }
         }
 
         val parts = mutableListOf("Checked: ${checked.joinToString(", ")}.")
         if (unavailable.isNotEmpty()) parts += "Unavailable: ${unavailable.joinToString(", ")}."
         if (pending.isNotEmpty()) parts += "Still loading: ${pending.joinToString(", ")}."
-        if (!northAmerican) parts += "WhoCallsMe and 800notes only cover US/Canada numbers, so they weren't used."
+        if (!northAmerican) parts += "800notes covers US/Canada numbers only, so it wasn't used."
         return parts.joinToString(" ")
     }
 

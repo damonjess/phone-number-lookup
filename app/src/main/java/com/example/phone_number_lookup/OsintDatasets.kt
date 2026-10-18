@@ -144,8 +144,20 @@ object OsintDatasets {
         return ProbeResult(probe, verdict, profileUrl, response.code, finalUrl, evidence, failure)
     }
 
-    suspend fun findUsernameProbe(siteName: String): SiteProbe? =
-        loadUsernameDatabases().firstOrNull { it.name.equals(siteName, ignoreCase = true) }
+    suspend fun findUsernameProbe(
+        siteName: String,
+        profileUrl: String? = null,
+        username: String? = null
+    ): SiteProbe? {
+        val sites = loadUsernameDatabases()
+        sites.firstOrNull { it.name.equals(siteName, ignoreCase = true) }?.let { return it }
+        // Python-only hits (Tookie) can name a site that was merged away in favour of another
+        // source with the same profile URL, so fall back to matching the rendered URL.
+        if (profileUrl.isNullOrBlank() || username.isNullOrBlank()) return null
+        val key = SiteKey.of(profileUrl)
+        if (key.isEmpty()) return null
+        return sites.firstOrNull { SiteKey.of(it.profileTemplate.replace("{account}", username)) == key }
+    }
 
     suspend fun findEmailProbe(siteName: String): SiteProbe? =
         loadEmailDatabase().firstOrNull { it.name.equals(siteName, ignoreCase = true) }

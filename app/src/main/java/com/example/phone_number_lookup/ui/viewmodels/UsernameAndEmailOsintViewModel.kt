@@ -366,17 +366,21 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    fun recheckUsername(site: String) {
+    fun recheckUsername(site: String, profileUrl: String = "") {
         val target = _uiState.value.activeTarget ?: return
         _uiState.update { it.copy(recheckingSite = site) }
         val token = scans.supersede()
         scans.start(token) { active ->
-            val updated = UsernameScanner.recheck(target, site)
+            val updated = UsernameScanner.recheck(target, site, profileUrl)
             if (scans.isCurrent(active)) {
                 if (updated != null) {
                     _uiState.update { state ->
+                        val remaining = state.liveHits.filterNot { it.site.equals(site, true) }
                         state.copy(
-                            liveHits = state.liveHits.filterNot { it.site.equals(site, true) } + updated,
+                            // A recheck that now says "not found" removes the stale hit instead
+                            // of leaving a false positive in the results list.
+                            liveHits = if (updated.verificationStatus == "Not found") remaining
+                            else remaining + updated,
                             recheckingSite = null
                         )
                     }

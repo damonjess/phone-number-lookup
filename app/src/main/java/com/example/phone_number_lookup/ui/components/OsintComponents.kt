@@ -7,21 +7,21 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,39 +32,48 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.phone_number_lookup.OsintDork
 import com.example.phone_number_lookup.SiteIssue
 
+/** A label/value pair. Values stay right-aligned so long lists of metadata can be scanned. */
 @Composable
-fun ResultRow(label: String, value: String) {
+fun ResultRow(label: String, value: String, mono: Boolean = true) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(vertical = 5.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Text(
-            text = label,
-            fontWeight = FontWeight.SemiBold,
-            style = MaterialTheme.typography.bodyMedium,
+            text = label.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            letterSpacing = 0.6.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(Modifier.width(Space.md))
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1.2f),
+            fontFamily = if (mono) FontFamily.Monospace else null,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1.35f),
         )
     }
 }
 
+/**
+ * Compatibility wrapper kept for the existing call sites: the colour they pass is now a tone
+ * hint for the section's accent bar instead of the whole card's background.
+ */
 @Composable
 fun OsintToolSectionCard(
     toolTitle: String,
@@ -72,75 +81,102 @@ fun OsintToolSectionCard(
     containerColor: Color,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = toolTitle,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 12.dp),
-            )
-            content()
-        }
-    }
+    SectionCard(
+        title = toolTitle,
+        subtitle = subtitle,
+        tone = toneFor(containerColor),
+        content = content,
+    )
 }
 
+/**
+ * One OSINT finding, shared by the username and email result lists.
+ *
+ * The site name gets its own line so a long name can never squeeze the provenance chip, and the
+ * verification facts sit on a short status row rather than a "status • confidence • HTTP"
+ * sentence. Recheck is a quiet trailing action, not a footer button.
+ */
 @Composable
-fun IssuesSection(
-    issues: List<SiteIssue>,
-    isRetrying: Boolean,
-    onRetry: () -> Unit,
-    onOpen: (String) -> Unit
+fun OsintResultCard(
+    site: String,
+    source: String,
+    verificationStatus: String,
+    confidence: String,
+    evidence: String,
+    isRechecking: Boolean,
+    onClick: () -> Unit,
+    onRecheck: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    if (issues.isEmpty()) return
-    val retryableCount = issues.count { it.retryable }
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                text = "${issues.size} site(s) couldn't be checked automatically",
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleSmall
-            )
-            issues.forEach { issue ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+        Column(modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 2.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Text(
+                    text = site,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(Space.sm))
+                // Display-only trim: the chip stays short so the site name keeps its full width.
+                Pill(
+                    source.removePrefix("Python: ").removeSuffix(" upstream"),
+                    tone = Tone.INFO,
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (verificationStatus.isNotBlank()) {
+                    Pill(verificationStatus, tone = Tone.ACCENT)
+                }
+                if (confidence.isNotBlank()) {
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "• ${issue.site}: ${issue.reason}",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = confidence,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    if (issue.profileUrl.isNotBlank()) {
-                        TextButton(onClick = { onOpen(issue.profileUrl) }) {
-                            Text("Open", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
                 }
             }
-            if (retryableCount > 0) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Button(
-                    onClick = onRetry,
-                    enabled = !isRetrying,
-                    modifier = Modifier.align(Alignment.End)
+
+            if (evidence.isNotBlank()) {
+                Text(
+                    text = evidence,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(top = 10.dp),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = onRecheck,
+                    enabled = !isRechecking,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 ) {
-                    Text(if (isRetrying) "Retrying..." else "Retry $retryableCount blocked site(s)")
+                    Text(
+                        text = if (isRechecking) "Rechecking…" else "Recheck",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
                 }
             }
         }
@@ -166,18 +202,19 @@ fun NumberedLinksHubCard(
     val context = LocalContext.current
     val visitedUrls = remember(distinctLinks) { mutableStateListOf<String>() }
 
-    OsintToolSectionCard(
-        toolTitle = title,
-        subtitle = "Numbered link queue (${visitedUrls.size}/${distinctLinks.size} opened) — replaces ~/links.txt & termux-open-url",
-        containerColor = MaterialTheme.colorScheme.surfaceVariant
+    SectionCard(
+        title = title,
+        subtitle = "Numbered queue · ${visitedUrls.size}/${distinctLinks.size} opened",
+        tone = Tone.NEUTRAL,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(Space.sm)
         ) {
             if (distinctLinks.isNotEmpty()) {
                 val nextPair = distinctLinks.firstOrNull { it.second !in visitedUrls }
-                Button(
+                AppButton(
+                    text = nextPair?.let { "Open next #${distinctLinks.indexOf(it) + 1}" } ?: "All opened",
                     onClick = {
                         nextPair?.let { (_, url) ->
                             if (url !in visitedUrls) visitedUrls.add(url)
@@ -185,94 +222,86 @@ fun NumberedLinksHubCard(
                         }
                     },
                     enabled = nextPair != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    val nextIndex = nextPair?.let { distinctLinks.indexOf(it) + 1 }
-                    Text(if (nextIndex != null) "Open Next (#$nextIndex)" else "All Opened ✓")
-                }
-
-                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                )
+                AppButton(
+                    text = "Copy list",
                     onClick = {
                         val formatted = distinctLinks.mapIndexed { i, (label, url) ->
-                            "${i + 1}\t$label -$url"
+                            "${i + 1}\t$label - $url"
                         }.joinToString("\n")
                         copyToClipboard(context, "OSINT Links", formatted)
                     },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Copy links.txt")
-                }
+                    subdued = true,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
 
         if (onExportPdf != null) {
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
+            Spacer(Modifier.height(Space.sm))
+            AppButton(
+                text = "Export PDF report",
                 onClick = onExportPdf,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Export PDF Report (Blackbird --pdf style)")
-            }
+                subdued = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
         if (distinctLinks.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(Modifier.height(Space.md))
             distinctLinks.take(40).forEachIndexed { index, (label, url) ->
                 val isVisited = url in visitedUrls
-                OutlinedCard(
+                Surface(
                     onClick = {
                         if (!isVisited) visitedUrls.add(url)
                         openUrl(context, url)
                     },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                    colors = CardDefaults.outlinedCardColors(
-                        containerColor = if (isVisited) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
-                        else MaterialTheme.colorScheme.surface
-                    )
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isVisited) 0.4f else 0.7f),
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Surface(
-                            shape = MaterialTheme.shapes.extraSmall,
-                            color = if (isVisited) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
-                        ) {
-                            Text(
-                                text = "#${index + 1}",
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Pill("#${index + 1}", tone = if (isVisited) Tone.NEUTRAL else Tone.ACCENT)
+                        Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = label,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = url,
                                 style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(Modifier.width(Space.sm))
                         Text(
-                            text = if (isVisited) "✓ Opened" else "Open ↗",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            text = if (isVisited) "✓" else "↗",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (isVisited) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.primary
                         )
                     }
                 }
+            }
+            if (distinctLinks.size > 40) {
+                Text(
+                    "+${distinctLinks.size - 40} more links in the PDF report",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
             }
         }
     }
@@ -287,46 +316,41 @@ fun DorkLauncherCard(
 ) {
     if (dorks.isEmpty()) return
     val context = LocalContext.current
-    OsintToolSectionCard(
-        toolTitle = title,
+    SectionCard(
+        title = title,
         subtitle = subtitle,
-        containerColor = containerColor
+        tone = toneFor(containerColor),
     ) {
         dorks.forEach { dork ->
-            OutlinedCard(
+            Surface(
                 onClick = { openUrl(context, dork.url) },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
             ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = dork.title,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Surface(
-                            shape = MaterialTheme.shapes.extraSmall,
-                            color = MaterialTheme.colorScheme.primaryContainer
-                        ) {
-                            Text(
-                                text = dork.toolSource,
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
+                        Text(
+                            text = dork.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = dork.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Spacer(Modifier.width(Space.sm))
+                    Pill(dork.toolSource, tone = Tone.NEUTRAL)
                 }
             }
         }

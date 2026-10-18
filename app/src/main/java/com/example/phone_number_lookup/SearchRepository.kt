@@ -60,7 +60,7 @@ object SearchRepository {
             val trimmed = raw.trim()
             if (trimmed.isBlank() || trimmed.startsWith("tel:", ignoreCase = true)) continue
             out += trimmed
-            // If a national format has spaces (e.g. "01782 447307"), also include the compact form ("01782447307")
+            // If a national format has spaces (e.g. "020 7946 0958"), also include the compact form ("02079460958")
             if (!trimmed.startsWith("+") && trimmed.contains(' ')) {
                 val compact = trimmed.filter { it.isDigit() }
                 if (compact.length >= 9) out += compact

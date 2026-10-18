@@ -73,10 +73,6 @@ object EmailAttributionEngine {
         val avatars = mutableListOf<String>()
         val timeline = mutableListOf<TimelineEvent>()
 
-        if (clean == "alex.smith@gmail.com") {
-            names += AttributedValue("Alex Smith", "Google / Profile Match")
-        }
-
         // 1. Google & Play Games Attribution
         val google = googleDef.await()
         google.fullName?.let { names += AttributedValue(it, "Google") }

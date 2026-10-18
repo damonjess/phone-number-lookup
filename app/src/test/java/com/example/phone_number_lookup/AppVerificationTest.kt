@@ -13,42 +13,42 @@ class AppVerificationTest {
 
     @Test
     fun verify1_normalisesUkNumber() {
-        val normalized = PhoneNumberUtils.normalize("01782 447307")
-        assertEquals("+441782447307", normalized)
+        val normalized = PhoneNumberUtils.normalize("020 7946 0958")
+        assertEquals("+442079460958", normalized)
 
-        val alt1 = PhoneNumberUtils.normalize("0044 1782 447307")
-        assertEquals("+441782447307", alt1)
+        val alt1 = PhoneNumberUtils.normalize("0044 20 7946 0958")
+        assertEquals("+442079460958", alt1)
 
-        val alt2 = PhoneNumberUtils.normalize("+44 1782 447307")
-        assertEquals("+441782447307", alt2)
+        val alt2 = PhoneNumberUtils.normalize("+44 20 7946 0958")
+        assertEquals("+442079460958", alt2)
     }
 
     @Test
-    fun verify2_showsStokeOnTrentAreaHint() {
-        val area = PhoneNumberUtils.getAreaInfo("+441782447307")
-        assertEquals("Stoke-on-Trent", area)
+    fun verify2_showsLondonAreaHint() {
+        val area = PhoneNumberUtils.getAreaInfo("+442079460958")
+        assertEquals("London", area)
     }
 
     @Test
     fun verify3_generatesAllFourNumberFormats() {
-        val normalized = "+441782447307"
-        val formats = PhoneNumberUtils.getFormattedFormats(normalized, "01782447307")
+        val normalized = "+442079460958"
+        val formats = PhoneNumberUtils.getFormattedFormats(normalized, "02079460958")
 
-        assertEquals("+441782447307", formats.e164)
-        assertEquals("+44 1782 447307", formats.international)
-        assertEquals("01782 447307", formats.national)
-        assertEquals("tel:+44-1782-447307", formats.rfc3966)
+        assertEquals("+442079460958", formats.e164)
+        assertEquals("+44 20 7946 0958", formats.international)
+        assertEquals("020 7946 0958", formats.national)
+        assertEquals("tel:+44-20-7946-0958", formats.rfc3966)
     }
 
     @Test
     fun verify4_evidenceConfidenceLabel() {
         val highConfidence = SpamReport(
             source = "tellows.co.uk",
-            number = "+441782447307",
+            number = "+442079460958",
             score = 8,
             searches = 50,
             comments = 5,
-            location = "Stoke-on-Trent",
+            location = "London",
             country = "United Kingdom",
             callerType = "Telemarketer"
         )
@@ -56,11 +56,11 @@ class AppVerificationTest {
 
         val lowConfidence = SpamReport(
             source = "tellows.co.uk",
-            number = "+441782447307",
+            number = "+442079460958",
             score = 6,
             searches = 5,
             comments = 1,
-            location = "Stoke-on-Trent",
+            location = "London",
             country = "United Kingdom",
             callerType = "Unknown"
         )
@@ -68,7 +68,7 @@ class AppVerificationTest {
 
         val noConfidence = SpamReport(
             source = "tellows.co.uk",
-            number = "+441782447307",
+            number = "+442079460958",
             score = 5,
             searches = 0,
             comments = 0,
@@ -83,7 +83,7 @@ class AppVerificationTest {
     fun verify5_clearErrorMessagesOnUnavailableSources() {
         val errorReport = SpamReport(
             source = "tellows",
-            number = "+441782447307",
+            number = "+442079460958",
             score = null,
             searches = null,
             comments = null,
@@ -101,23 +101,23 @@ class AppVerificationTest {
 
     @Test
     fun verify6_cachesSuccessfulResultsAndDoesNotCacheTemporaryErrors() = runBlocking {
-        val jsonPayload = """{"tellows":{"number":"+441782447307","score":"8","comments":"4","location":"Stoke-on-Trent","country":"United Kingdom"}}"""
-        val report = SpamScanner.parseReport(jsonPayload, "+441782447307", "https://www.tellows.co.uk")
+        val jsonPayload = """{"tellows":{"number":"+442079460958","score":"8","comments":"4","location":"London","country":"United Kingdom"}}"""
+        val report = SpamScanner.parseReport(jsonPayload, "+442079460958", "https://www.tellows.co.uk")
         assertNotNull(report)
         assertEquals("tellows.co.uk", report!!.source)
         assertEquals(8, report.score)
 
-        val successReport = SpamReport("tellows", "+441782447307", 8, 10, 4, "Stoke-on-Trent", "UK", "Spam", null)
+        val successReport = SpamReport("tellows", "+442079460958", 8, 10, 4, "London", "UK", "Spam", null)
         assertNull(successReport.error)
 
-        val failureReport = SpamReport("tellows", "+441782447307", null, null, null, null, null, null, "Network error")
+        val failureReport = SpamReport("tellows", "+442079460958", null, null, null, null, null, null, "Network error")
         assertNotNull(failureReport.error)
     }
 
     @Test
     fun verify7_clearingCurrentScanPreservesHistory() {
         val viewModel = PhoneLookupViewModel(Application())
-        viewModel.onPhoneNumberInputChanged("01782 447307")
+        viewModel.onPhoneNumberInputChanged("020 7946 0958")
         viewModel.clear()
 
         // Clearing scan screen does not erase history list
@@ -128,8 +128,8 @@ class AppVerificationTest {
     fun verify8_historyEntryStatusCyclingAndNoteEditing() {
         val entry = HistoryEntry(
             id = 1001L,
-            number = "+441782447307",
-            label = "Stoke-on-Trent",
+            number = "+442079460958",
+            label = "London",
             note = "Initial note",
             status = "Unknown",
             createdAt = System.currentTimeMillis()

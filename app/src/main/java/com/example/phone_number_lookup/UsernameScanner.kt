@@ -217,22 +217,24 @@ object UsernameScanner {
         )
     }
 
-    suspend fun recheck(username: String, siteName: String): UsernameHit? = withContext(Dispatchers.IO) {
-        val probe = OsintDatasets.findUsernameProbe(siteName) ?: return@withContext null
-        val result = OsintDatasets.evaluate(probe, username, timeoutMs = 12_000)
-        UsernameHit(
-            site = result.site.name,
-            category = result.site.category,
-            source = result.site.source,
-            profileUrl = result.profileUrl,
-            statusCode = result.statusCode,
-            finalUrl = result.finalUrl,
-            evidence = result.evidence,
-            confidence = confidenceFor(result),
-            verificationStatus = statusFor(result),
-            queriedName = username
-        )
-    }
+    suspend fun recheck(username: String, siteName: String, profileUrl: String = ""): UsernameHit? =
+        withContext(Dispatchers.IO) {
+            val probe = OsintDatasets.findUsernameProbe(siteName, profileUrl, username)
+                ?: return@withContext null
+            val result = OsintDatasets.evaluate(probe, username, timeoutMs = 12_000)
+            UsernameHit(
+                site = result.site.name,
+                category = result.site.category,
+                source = result.site.source,
+                profileUrl = result.profileUrl,
+                statusCode = result.statusCode,
+                finalUrl = result.finalUrl,
+                evidence = result.evidence,
+                confidence = confidenceFor(result),
+                verificationStatus = statusFor(result),
+                queriedName = username
+            )
+        }
 
     private fun toHit(result: ProbeResult, name: String) = UsernameHit(
         site = result.site.name,
@@ -269,7 +271,7 @@ object UsernameScanner {
         val discarded = mutableListOf<String>()
 
         for (issue in retryable) {
-            val probe = OsintDatasets.findUsernameProbe(issue.site)
+            val probe = OsintDatasets.findUsernameProbe(issue.site, issue.profileUrl, username)
             if (probe == null) {
                 newIssues += issue
                 continue

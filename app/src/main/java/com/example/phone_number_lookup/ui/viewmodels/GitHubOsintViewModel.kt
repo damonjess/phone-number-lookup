@@ -55,7 +55,7 @@ class GitHubOsintViewModel : ViewModel() {
                     it.copy(
                         users = result,
                         isScanning = false,
-                        error = if (result.isEmpty()) "No GitHub users returned (you may be rate-limited — the public API allows ~10 searches/min)." else null,
+                        error = if (result.isEmpty()) "No GitHub users matched. GitHub's public search also rate-limits (~10 searches/min), so an empty list can mean either." else null,
                     )
                 }
             }
@@ -85,7 +85,7 @@ class GitHubOsintViewModel : ViewModel() {
                     it.copy(
                         repos = result,
                         isScanning = false,
-                        error = if (result.isEmpty()) "No GitHub repositories returned (you may be rate-limited — the public API allows ~10 searches/min)." else null,
+                        error = if (result.isEmpty()) "No GitHub repositories matched. GitHub's public search also rate-limits (~10 searches/min), so an empty list can mean either." else null,
                     )
                 }
             }
@@ -115,7 +115,7 @@ class GitHubOsintViewModel : ViewModel() {
                     it.copy(
                         commits = result,
                         isScanning = false,
-                        error = if (result.isEmpty()) "No GitHub commits matched (you may be rate-limited — the public API allows ~10 searches/min)." else null,
+                        error = if (result.isEmpty()) "No GitHub commits matched. GitHub's public search also rate-limits (~10 searches/min), so an empty list can mean either." else null,
                     )
                 }
             }
