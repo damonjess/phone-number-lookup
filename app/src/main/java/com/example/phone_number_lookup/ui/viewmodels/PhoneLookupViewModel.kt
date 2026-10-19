@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 data class PhoneLookupUiState(
     val phoneNumberInput: String = "",
     val resultNumber: String? = null,
+    val scanStartedAt: Long = 0L,
     val searchResults: List<SearchResultItem> = emptyList(),
     val searchError: String? = null,
     val isSearching: Boolean = false,
@@ -88,6 +89,7 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         _uiState.update {
             it.copy(
                 resultNumber = input,
+                scanStartedAt = System.currentTimeMillis(),
                 hasSearched = true,
                 isSearching = true,
                 isSpamScanning = true,

@@ -33,6 +33,7 @@ data class UsernameAndEmailOsintUiState(
     val pythonToolMode: PythonToolMode = PythonToolMode.ALL_PYTHON,
     val targetInput: String = "",
     val activeTarget: String? = null,
+    val scanStartedAt: Long = 0L,
     val liveHits: List<UsernameHit> = emptyList(),
     val liveSitesChecked: Int = 0,
     val isLiveScanning: Boolean = false,
@@ -58,6 +59,8 @@ data class UsernameAndEmailOsintUiState(
     val registrationDiscarded: Int = 0,
     val registrationFailed: Boolean = false,
     val registrationNotice: String? = null,
+    val registrationIssues: List<SiteIssue> = emptyList(),
+    val isRetryingRegistrationIssues: Boolean = false,
     val usernameIssues: List<SiteIssue> = emptyList(),
     val isRetryingIssues: Boolean = false,
     val identityEnrichment: IdentityEnrichmentReport? = null,
@@ -67,6 +70,7 @@ data class UsernameAndEmailOsintUiState(
     val googleMetadata: GoogleMetadataReport? = null,
     val isGoogleMetadataScanning: Boolean = false,
     val attributionReport: EmailAttributionReport? = null,
+    val isAttributionScanning: Boolean = false,
 )
 
 class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewModel(application) {
@@ -106,11 +110,13 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         val currentSubTab = _uiState.value.subTabState
         val depth = _uiState.value.scanDepth
         val mode = _uiState.value.pythonToolMode
+        val scanStartedAt = System.currentTimeMillis()
         val token = scans.supersede()
 
         _uiState.update {
             it.copy(
                 activeTarget = target,
+                scanStartedAt = scanStartedAt,
                 liveHits = emptyList(),
                 liveSitesChecked = 0,
                 liveError = null,
@@ -129,6 +135,8 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 registrationDiscarded = 0,
                 registrationFailed = false,
                 registrationNotice = null,
+                registrationIssues = emptyList(),
+                isRetryingRegistrationIssues = false,
                 usernameIssues = emptyList(),
                 isRetryingIssues = false,
                 identityEnrichment = null,
@@ -138,6 +146,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 googleMetadata = null,
                 isGoogleMetadataScanning = false,
                 attributionReport = null,
+                isAttributionScanning = false,
             )
         }
 
@@ -201,7 +210,8 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isBreachScanning = true,
                 isDomainScanning = true,
                 isEnrichingIdentity = true,
-                isGoogleMetadataScanning = true
+                isGoogleMetadataScanning = true,
+                isAttributionScanning = true
             )
         }
 
@@ -269,6 +279,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                         registrationFailed = outcome.error != null,
                         registrationNotice = outcome.error ?: outcome.notice,
                         registrationDiscarded = outcome.discarded.size,
+                        registrationIssues = outcome.issues,
                         isRegistrationScanning = false,
                     )
                 }
@@ -292,7 +303,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         scans.start(token) { active ->
             val attribution = EmailAttributionEngine.analyze(target)
             if (scans.isCurrent(active)) {
-                _uiState.update { it.copy(attributionReport = attribution) }
+                _uiState.update { it.copy(attributionReport = attribution, isAttributionScanning = false) }
             }
         }
 
@@ -428,12 +439,46 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                         val remaining = state.registeredSites.filterNot { it.site.equals(site, true) }
                         state.copy(
                             registeredSites = if (updated.verificationStatus == "Not found" || updated.verificationStatus == "Unavailable / uncertain") remaining
-                            else remaining + updated
+                            else remaining + updated,
+                            registrationIssues = state.registrationIssues.filterNot { it.site.equals(site, true) }
                         )
                     } else state
                 }
             } finally {
                 _uiState.update { it.copy(recheckingSite = null) }
+            }
+        }
+    }
+
+    fun retryEmailIssues() {
+        val state = _uiState.value
+        val target = state.activeTarget ?: return
+        val before = state.registrationIssues
+        if (state.isRetryingRegistrationIssues || before.none { it.retryable }) return
+        _uiState.update { it.copy(isRetryingRegistrationIssues = true) }
+        viewModelScope.launch {
+            try {
+                val outcome = EmailRegistrationScanner.retry(target, before)
+                if (_uiState.value.activeTarget != target) return@launch
+                _uiState.update { current ->
+                    val retriedNames = before.filter { it.retryable }.map { it.site.lowercase() }.toSet()
+                    val remaining = current.registrationIssues
+                        .filterNot { it.site.lowercase() in retriedNames } + outcome.issues
+                    current.copy(
+                        registeredSites = (current.registeredSites.filterNot { hit ->
+                            outcome.registered.any { it.site.equals(hit.site, true) }
+                        } + outcome.registered).distinctBy { it.site.lowercase() },
+                        registrationIssues = remaining.distinctBy { it.site.lowercase() },
+                        registrationChecked = (current.registrationChecked + outcome.sitesChecked).coerceAtMost(current.registrationSitesTotal),
+                        emailUnreachable = remaining.size,
+                        registrationDiscarded = current.registrationDiscarded + outcome.discarded.size,
+                        isRetryingRegistrationIssues = false,
+                    )
+                }
+            } finally {
+                if (_uiState.value.activeTarget == target) {
+                    _uiState.update { it.copy(isRetryingRegistrationIssues = false) }
+                }
             }
         }
     }

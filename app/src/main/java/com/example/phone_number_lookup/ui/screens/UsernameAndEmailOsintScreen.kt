@@ -54,6 +54,7 @@ import com.example.phone_number_lookup.OsintTools
 import com.example.phone_number_lookup.PdfSection
 import com.example.phone_number_lookup.PythonToolMode
 import com.example.phone_number_lookup.UsernameScanner
+import com.example.phone_number_lookup.UnifiedEvidenceBuilder
 import com.example.phone_number_lookup.ui.components.AppButton
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
 import com.example.phone_number_lookup.ui.components.EmailIntelDashboard
@@ -71,6 +72,7 @@ import com.example.phone_number_lookup.ui.components.SegmentedTabs
 import com.example.phone_number_lookup.ui.components.Space
 import com.example.phone_number_lookup.ui.components.SubHeading
 import com.example.phone_number_lookup.ui.components.Tone
+import com.example.phone_number_lookup.ui.components.UnifiedEvidenceCard
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.UsernameAndEmailOsintViewModel
 import java.text.SimpleDateFormat
@@ -198,6 +200,22 @@ fun UsernameAndEmailOsintScreen(
         uiState.activeTarget?.let { target ->
             when (uiState.subTabState) {
                 0 -> {
+                    UnifiedEvidenceCard(
+                        report = UnifiedEvidenceBuilder.username(
+                            target = target,
+                            startedAt = uiState.scanStartedAt,
+                            hits = uiState.liveHits,
+                            sitesChecked = uiState.liveSitesChecked,
+                            datasetSizes = uiState.datasetSizes,
+                            issues = uiState.usernameIssues,
+                            discarded = uiState.discardedCount,
+                            isScanning = uiState.isLiveScanning,
+                            identity = uiState.identityEnrichment,
+                            isIdentityScanning = uiState.isEnrichingIdentity,
+                        ),
+                        onOpenUrl = { openUrl(context, it) },
+                    )
+                    Spacer(Modifier.height(16.dp))
                     OsintToolSectionCard(
                         toolTitle = "Live Username Scan ($target)",
                         subtitle = if (uiState.liveSitesChecked > 0)
@@ -348,6 +366,32 @@ fun UsernameAndEmailOsintScreen(
                         handleHits = uiState.liveHits,
                         breachReport = uiState.breachReport,
                         isLoading = uiState.isRegistrationScanning || uiState.isBreachScanning || uiState.isEnrichingIdentity,
+                        onOpenUrl = { openUrl(context, it) },
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    UnifiedEvidenceCard(
+                        report = UnifiedEvidenceBuilder.email(
+                            target = target,
+                            startedAt = uiState.scanStartedAt,
+                            registrations = uiState.registeredSites,
+                            registrationChecked = uiState.registrationChecked,
+                            registrationTotal = uiState.registrationSitesTotal,
+                            registrationIssues = uiState.registrationIssues,
+                            registrationDiscarded = uiState.registrationDiscarded,
+                            isRegistrationScanning = uiState.isRegistrationScanning,
+                            registrationFailed = uiState.registrationFailed,
+                            breach = uiState.breachReport,
+                            isBreachScanning = uiState.isBreachScanning,
+                            domain = uiState.domainReport,
+                            isDomainScanning = uiState.isDomainScanning,
+                            attribution = uiState.attributionReport,
+                            isAttributionScanning = uiState.isAttributionScanning,
+                            handleHits = uiState.liveHits,
+                            handleSitesChecked = uiState.liveSitesChecked,
+                            isHandleScanning = uiState.isLiveScanning,
+                            identity = uiState.identityEnrichment,
+                            isIdentityScanning = uiState.isEnrichingIdentity,
+                        ),
                         onOpenUrl = { openUrl(context, it) },
                     )
                     Spacer(modifier = Modifier.height(16.dp))
@@ -622,6 +666,12 @@ fun UsernameAndEmailOsintScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        IssuesSection(
+                            issues = uiState.registrationIssues,
+                            isRetrying = uiState.isRetryingRegistrationIssues,
+                            onRetry = viewModel::retryEmailIssues,
+                            onOpen = { url -> openUrl(context, url) },
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -836,6 +886,16 @@ fun UsernameAndEmailOsintScreen(
 
                 else -> {
                     val net = uiState.networkOsintReport
+                    UnifiedEvidenceCard(
+                        report = UnifiedEvidenceBuilder.domain(
+                            target = target,
+                            startedAt = uiState.scanStartedAt,
+                            report = net,
+                            isScanning = uiState.isNetworkScanning,
+                        ),
+                        onOpenUrl = { openUrl(context, it) },
+                    )
+                    Spacer(Modifier.height(16.dp))
                     OsintToolSectionCard(
                         toolTitle = "Domain & Network Recon ($target)",
                         subtitle = "DNS, ownership records, subdomains and exposed services",

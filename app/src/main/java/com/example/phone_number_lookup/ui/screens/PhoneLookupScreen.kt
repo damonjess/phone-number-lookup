@@ -58,6 +58,7 @@ import com.example.phone_number_lookup.PdfSection
 import com.example.phone_number_lookup.PhoneInfogaStatus
 import com.example.phone_number_lookup.PhoneNumberUtils
 import com.example.phone_number_lookup.PhoneReputation
+import com.example.phone_number_lookup.UnifiedEvidenceBuilder
 import com.example.phone_number_lookup.ui.components.AppButton
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
 import com.example.phone_number_lookup.ui.components.LoadingRow
@@ -71,6 +72,7 @@ import com.example.phone_number_lookup.ui.components.SearchField
 import com.example.phone_number_lookup.ui.components.SectionCard
 import com.example.phone_number_lookup.ui.components.Space
 import com.example.phone_number_lookup.ui.components.Tone
+import com.example.phone_number_lookup.ui.components.UnifiedEvidenceCard
 import com.example.phone_number_lookup.ui.components.VerdictCard
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.PhoneLookupViewModel
@@ -170,6 +172,26 @@ fun PhoneLookupScreen(
                 phoniaDorks.forEach { add(it.title to it.url) }
                 phoneInfogaDorks.forEach { add(it.title to it.url) }
             }
+
+            UnifiedEvidenceCard(
+                report = UnifiedEvidenceBuilder.phone(
+                    target = formats.e164,
+                    startedAt = uiState.scanStartedAt,
+                    searchResults = uiState.searchResults,
+                    searchError = uiState.searchError,
+                    isSearching = uiState.isSearching,
+                    spam = uiState.spamReport,
+                    isSpamScanning = uiState.isSpamScanning,
+                    reputations = uiState.reputationReports,
+                    supportedReputationSources = PhoneReputation.supportedSources(normalized),
+                    isReputationScanning = uiState.isReputationScanning,
+                    phoneInfoga = uiState.phoneInfogaReport,
+                    isPhoneInfogaScanning = uiState.isPhoneInfogaScanning || uiState.isPhoneInfogaServerRunning,
+                    numverify = uiState.phoneInfogaResult,
+                ),
+                onOpenUrl = { openUrl(context, it) },
+            )
+            Spacer(Modifier.height(16.dp))
 
             NumberedLinksHubCard(
                 title = "Quick Links Queue ($normalized)",

@@ -47,7 +47,9 @@ data class EmailRegistrationOutcome(
     /** Sites that said "account exists" even for a made-up address, so their hits were discarded. */
     val discarded: List<String> = emptyList(),
     /** Non-fatal warning, e.g. only the built-in checks ran because the full list failed to download. */
-    val notice: String? = null
+    val notice: String? = null,
+    /** Site-level failures for transparent reporting and targeted retry. */
+    val issues: List<SiteIssue> = emptyList()
 )
 
 object EmailRegistrationScanner {
@@ -141,6 +143,16 @@ object EmailRegistrationScanner {
             .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() }))
 
         val fullListLoaded = probes.any { it.source == OsintDatasets.SRC_BLACKBIRD }
+        val issues = results
+            .filter { it.verdict == ProbeVerdict.UNKNOWN }
+            .map { result ->
+                SiteIssue(
+                    site = result.site.name,
+                    profileUrl = result.profileUrl,
+                    reason = result.failure ?: ProbeFailure.INCONCLUSIVE,
+                    detail = result.evidence
+                )
+            }
 
         EmailRegistrationOutcome(
             email = clean,
@@ -148,9 +160,89 @@ object EmailRegistrationScanner {
             registered = registered,
             unreachable = unreachable.get(),
             discarded = dropped,
+            issues = issues,
             notice = if (fullListLoaded) null else
                 "Only ${probes.size} built-in checks ran because the full site list could not be downloaded. " +
                     "Check your connection and scan again for complete coverage."
+        )
+    }
+
+    /** Retries only transiently failed email endpoints; known bot challenges are left alone. */
+    suspend fun retry(
+        email: String,
+        issues: List<SiteIssue>,
+        concurrency: Int = 2
+    ): EmailRegistrationOutcome = withContext(Dispatchers.IO) {
+        val clean = email.trim()
+        val retryable = issues.filter { it.retryable }
+        if (retryable.isEmpty()) return@withContext EmailRegistrationOutcome(clean, 0, emptyList(), issues = issues)
+        val wanted = retryable.map { it.site.lowercase() }.toSet()
+        val probes = OsintDatasets.loadEmailDatabase().filter { it.name.lowercase() in wanted }
+        val foundNames = probes.map { it.name.lowercase() }.toSet()
+        val pending = (issues.filterNot { it.retryable } + retryable.filter { it.site.lowercase() !in foundNames }).toMutableList()
+        val semaphore = Semaphore(concurrency.coerceAtLeast(1))
+        val results = coroutineScope {
+            probes.map { probe ->
+                async {
+                    HostGate.run(HostGate.hostKey(probe.urlTemplate)) {
+                        semaphore.withPermit { probe to ResilientProbe.evaluate(probe, clean, timeoutMs = 12_000) }
+                    }
+                }
+            }.awaitAll()
+        }
+        val found = results.filter { it.second.verdict == ProbeVerdict.FOUND }
+        val controls = coroutineScope {
+            val controlSemaphore = Semaphore(concurrency.coerceAtLeast(1))
+            found.map { (probe, _) ->
+                async {
+                    controlSemaphore.withPermit {
+                        probe.name.lowercase() to ResilientProbe.evaluate(
+                            probe,
+                            HitVerifier.randomLocalPart() + "@" + clean.substringAfter('@'),
+                            timeoutMs = 12_000
+                        )
+                    }
+                }
+            }.awaitAll().toMap()
+        }
+        val hits = mutableListOf<RegistrationHit>()
+        val discarded = mutableListOf<String>()
+        val stillFailed = mutableListOf<SiteIssue>()
+        results.forEach { (probe, result) ->
+            when (result.verdict) {
+                ProbeVerdict.NOT_FOUND -> Unit
+                ProbeVerdict.UNKNOWN -> stillFailed += SiteIssue(
+                    probe.name, result.profileUrl, result.failure ?: ProbeFailure.INCONCLUSIVE, result.evidence
+                )
+                ProbeVerdict.FOUND -> {
+                    val control = controls[probe.name.lowercase()]
+                    if (control?.verdict == ProbeVerdict.FOUND) {
+                        discarded += probe.name
+                    } else {
+                        val controlUnknown = control?.verdict == ProbeVerdict.UNKNOWN
+                        hits += RegistrationHit(
+                            site = probe.name,
+                            category = probe.category,
+                            source = probe.source,
+                            profileUrl = OsintDatasets.cleanProfileUrl(probe.name, result.profileUrl),
+                            statusCode = result.statusCode,
+                            finalUrl = result.finalUrl,
+                            evidence = result.evidence + if (controlUnknown) " • control check inconclusive" else " • control check passed",
+                            confidence = if (controlUnknown) "Uncertain" else confidenceFor(result),
+                            verificationStatus = if (controlUnknown) "Unavailable / uncertain" else "Registered response"
+                        )
+                    }
+                }
+            }
+        }
+        val issuesLeft = (pending + stillFailed).distinctBy { it.site.lowercase() }
+        EmailRegistrationOutcome(
+            email = clean,
+            sitesChecked = probes.size,
+            registered = hits,
+            unreachable = issuesLeft.size,
+            discarded = discarded,
+            issues = issuesLeft
         )
     }
 
