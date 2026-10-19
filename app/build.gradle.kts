@@ -62,12 +62,18 @@ chaquopy {
             install("rich")
             install("chardet")
             install("tomli")
+            install("httpx")
+            install("trio")
+            install("beautifulsoup4")
+            install("termcolor")
+            install("tqdm")
         }
     }
 }
 
 dependencies {
     implementation(libs.libphonenumber)
+    implementation("io.coil-kt:coil-compose:2.7.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

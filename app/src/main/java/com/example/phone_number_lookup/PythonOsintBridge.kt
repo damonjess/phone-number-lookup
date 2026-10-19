@@ -90,15 +90,36 @@ object PythonOsintBridge {
                 }
             }
             val discardedArr = root.optJSONArray("discarded")
-            val discarded = if (discardedArr != null) {
-                (0 until discardedArr.length()).mapNotNull { discardedArr.optString(it).takeIf { s -> s.isNotBlank() } }
-            } else emptyList()
+            val discarded = mutableListOf<String>()
+            if (discardedArr != null) {
+                for (i in 0 until discardedArr.length()) {
+                    discardedArr.optString(i).takeIf { it.isNotBlank() }?.let(discarded::add)
+                }
+            }
+            val verifiedHits = mutableListOf<RegistrationHit>()
+            for (hit in hits) {
+                val probe = OsintDatasets.findEmailProbe(hit.site)
+                if (probe == null) {
+                    verifiedHits += hit.copy(
+                        evidence = "Blackbird reported a match, but this app has no matching native probe to verify it",
+                        confidence = "Low (unverified upstream match)",
+                        verificationStatus = "Upstream match (unverified)"
+                    )
+                    continue
+                }
+                val checked = EmailRegistrationScanner.recheck(email, hit.site)
+                if (checked == null) {
+                    discarded += hit.site
+                } else {
+                    verifiedHits += checked.copy(source = hit.source)
+                }
+            }
             val issuesCount = root.optJSONArray("issues")?.length() ?: 0
 
             EmailRegistrationOutcome(
                 email = email,
                 sitesChecked = sitesChecked,
-                registered = hits,
+                registered = verifiedHits,
                 unreachable = issuesCount,
                 error = err,
                 discarded = discarded
@@ -109,6 +130,49 @@ object PythonOsintBridge {
                 sitesChecked = 0,
                 registered = emptyList(),
                 error = "Python Blackbird error: ${ex.message}"
+            )
+        }
+    }
+
+    suspend fun scanEmailHolehePython(
+        context: Context,
+        email: String
+    ): EmailRegistrationOutcome = withContext(Dispatchers.IO) {
+        ensureStarted(context)
+        val module = Python.getInstance().getModule("upstream_osint")
+        runCatching {
+            val root = JSONObject(module.callAttr("run_holehe_email", email, 8).toString())
+            val hitsArr = root.optJSONArray("hits")
+            val hits = mutableListOf<RegistrationHit>()
+            if (hitsArr != null) {
+                for (i in 0 until hitsArr.length()) {
+                    val hit = hitsArr.optJSONObject(i) ?: continue
+                    val site = hit.optString("site", "Unknown")
+                    hits += RegistrationHit(
+                        site = site,
+                        category = "general",
+                        source = "Holehe upstream",
+                        profileUrl = OsintDatasets.cleanProfileUrl(site, hit.optString("profileUrl", "")),
+                        statusCode = hit.optInt("statusCode", 200),
+                        evidence = hit.optString("evidence", "Holehe upstream reported a match; not independently verified"),
+                        confidence = "Unverified upstream report",
+                        verificationStatus = "Upstream match (unverified)"
+                    )
+                }
+            }
+            EmailRegistrationOutcome(
+                email = email,
+                sitesChecked = root.optInt("sitesChecked", 0),
+                registered = hits,
+                unreachable = root.optJSONArray("issues")?.length() ?: 0,
+                error = root.optString("error").takeIf { it.isNotBlank() }
+            )
+        }.getOrElse { ex ->
+            EmailRegistrationOutcome(
+                email = email,
+                sitesChecked = 0,
+                registered = emptyList(),
+                error = "Holehe email scan failed: ${ex.message ?: "unknown error"}"
             )
         }
     }

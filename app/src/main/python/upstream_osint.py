@@ -11,6 +11,7 @@ import random
 import sys
 import tempfile
 import traceback
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +19,8 @@ VENDOR = os.path.join(ROOT, "vendor")
 SHERLOCK_DIR = os.path.join(VENDOR, "sherlock_project")
 BLACKBIRD_DIR = os.path.join(VENDOR, "blackbird")
 TOOKIE_DIR = os.path.join(VENDOR, "tookie_osint")
+BLACKBIRD_EMAIL_URL = "https://raw.githubusercontent.com/p1ngul1n0/blackbird/main/data/email-data.json"
+MAX_EMAIL_DATASET_BYTES = 8 * 1024 * 1024
 
 
 def _json_result(sites_checked=0, hits=None, issues=None, error=None):
@@ -38,6 +41,32 @@ def _clear_cli_modules():
         if name == "modules" or name.startswith("modules.") or name == "config":
             del sys.modules[name]
     sys.path[:] = [p for p in sys.path if p not in (BLACKBIRD_DIR, TOOKIE_DIR)]
+
+
+def _prepare_email_dataset():
+    """Use the current upstream site list when reachable; never lose the bundled fallback."""
+    bundled_path = os.path.join(BLACKBIRD_DIR, "data", "email-data.json")
+    try:
+        request = urllib.request.Request(
+            BLACKBIRD_EMAIL_URL,
+            headers={"User-Agent": "PhoneNumberLookup/1.0", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=8) as response:
+            raw = response.read(MAX_EMAIL_DATASET_BYTES + 1)
+        if len(raw) > MAX_EMAIL_DATASET_BYTES:
+            return bundled_path
+        dataset = json.loads(raw.decode("utf-8"))
+        sites = dataset.get("sites") if isinstance(dataset, dict) else None
+        if not isinstance(sites, list) or not sites:
+            return bundled_path
+        if any(not isinstance(site, dict) or not site.get("name") or not site.get("uri_check") for site in sites):
+            return bundled_path
+        fd, path = tempfile.mkstemp(prefix="blackbird-email-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(dataset, output, ensure_ascii=False)
+        return path
+    except Exception:
+        return bundled_path
 
 
 def run_sherlock_python(username, max_sites=150):
@@ -94,6 +123,7 @@ def _blackbird_config(is_email, target, max_sites):
     config.USERNAME_LIST_FILENAME = "wmn-data.json"
     config.USERNAME_METADATA_LIST_FILENAME = "wmn-metadata.json"
     config.EMAIL_LIST_FILENAME = "email-data.json"
+    config.EMAIL_LIST_PATH = _prepare_email_dataset() if is_email else os.path.join(data_dir, "email-data.json")
     config.LOG_PATH = os.path.join(tempfile.gettempdir(), "blackbird.log")
     config.console = Console(file=io.StringIO(), force_terminal=False, no_color=True)
     config.max_concurrent_requests = 16
@@ -115,6 +145,7 @@ def _blackbird_config(is_email, target, max_sites):
     config.saveDirectory = tempfile.gettempdir()
     config.metadata_params = {"sites": {}}
     config._mobile_dataset_path = None
+    config._mobile_email_dataset_path = config.EMAIL_LIST_PATH if is_email and config.EMAIL_LIST_PATH != os.path.join(data_dir, "email-data.json") else None
 
     if not is_email and max_sites and int(max_sites) > 0:
         with open(config.USERNAME_LIST_PATH, "r", encoding="utf-8") as f:
@@ -211,9 +242,62 @@ def run_blackbird_python(target, is_email=False, max_sites=0):
                 os.remove(config._mobile_dataset_path)
             except OSError:
                 pass
+        if config._mobile_email_dataset_path:
+            try:
+                os.remove(config._mobile_email_dataset_path)
+            except OSError:
+                pass
         return output
     except Exception as exc:
         return json.dumps(_json_result(error="Blackbird upstream failed: " + str(exc)))
+
+
+def run_holehe_email(target, max_concurrent=8):
+    """Run Holehe's site checks without its CLI, update checks, or recovery-data output."""
+    target = str(target).strip()
+    if not target or "@" not in target:
+        return json.dumps(_json_result(error="Enter a valid email address"))
+    try:
+        if VENDOR not in sys.path:
+            sys.path.insert(0, VENDOR)
+        import httpx
+        import trio
+        from holehe.core import get_functions, import_submodules, launch_module
+
+        modules = import_submodules("holehe.modules")
+        websites = get_functions(modules)
+        findings = []
+        limiter = trio.Semaphore(max(1, min(int(max_concurrent), 12)))
+
+        async def check_one(website, client):
+            async with limiter:
+                await launch_module(website, target, client, findings)
+
+        async def run_checks():
+            async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+                async with trio.open_nursery() as nursery:
+                    for website in websites:
+                        nursery.start_soon(check_one, website, client)
+
+        trio.run(run_checks)
+        hits = []
+        issues = []
+        for item in findings:
+            name = str(item.get("name") or "Unknown")
+            domain = str(item.get("domain") or "")
+            if item.get("exists") is True:
+                hits.append({
+                    "site": name,
+                    "domain": domain,
+                    "profileUrl": "https://" + domain if domain else "",
+                    "statusCode": 200,
+                    "evidence": "Holehe upstream reported a match; independent verification is unavailable",
+                })
+            elif item.get("rateLimit") or item.get("error"):
+                issues.append({"site": name, "code": 429 if item.get("rateLimit") else 0})
+        return json.dumps({"sitesChecked": len(websites), "hits": hits, "discarded": [], "issues": issues})
+    except Exception as exc:
+        return json.dumps(_json_result(error="Holehe email scan failed: " + str(exc)))
 
 
 def run_tookie_python(username, max_sites=150):

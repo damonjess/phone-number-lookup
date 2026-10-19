@@ -47,6 +47,7 @@ data class UsernameAndEmailOsintUiState(
     val registeredSites: List<RegistrationHit> = emptyList(),
     val isRegistrationScanning: Boolean = false,
     val registrationChecked: Int = 0,
+    val registrationSitesTotal: Int = 0,
     val emailUnreachable: Int = 0,
     val recheckingSite: String? = null,
     val domainReport: EmailDomainReport? = null,
@@ -118,6 +119,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 breachReport = null,
                 registeredSites = emptyList(),
                 registrationChecked = 0,
+                registrationSitesTotal = 0,
                 emailUnreachable = 0,
                 domainReport = null,
                 isDomainScanning = false,
@@ -221,15 +223,37 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         }
 
         scans.start(token) { active ->
-            // Email account discovery uses the upstream Blackbird Python scan core.
+            // Use the combined native scanner: current Blackbird data plus curated probes,
+            // with independent control checks before a result is called registered.
             val outcome = try {
-                PythonOsintBridge.scanEmailBlackbirdPython(getApplication(), target)
+                val nativeOutcome = EmailRegistrationScanner.scan(target) { checked, total ->
+                    if (scans.isCurrent(active)) {
+                        _uiState.update { it.copy(registrationChecked = checked, registrationSitesTotal = total) }
+                    }
+                }
+                val holeheOutcome = PythonOsintBridge.scanEmailHolehePython(getApplication(), target)
+                val nativeConfirmedNames = nativeOutcome.registered
+                    .filter { it.verificationStatus == "Registered response" }
+                    .map { it.site.lowercase() }
+                    .toSet()
+                val holeheOnly = holeheOutcome.registered.filterNot { it.site.lowercase() in nativeConfirmedNames }
+                nativeOutcome.copy(
+                    sitesChecked = nativeOutcome.sitesChecked + holeheOutcome.sitesChecked,
+                    registered = (nativeOutcome.registered + holeheOnly)
+                        .distinctBy { "${it.site.lowercase()}|${it.verificationStatus}" },
+                    unreachable = nativeOutcome.unreachable + holeheOutcome.unreachable,
+                    notice = listOfNotNull(
+                        nativeOutcome.notice,
+                        holeheOutcome.error,
+                        if (holeheOnly.isNotEmpty()) "Holehe-only results are upstream reports and are not independently confirmed." else null
+                    ).joinToString(" ").takeIf { it.isNotBlank() }
+                )
             } catch (e: Exception) {
                 if (scans.isCurrent(active)) {
                     _uiState.update {
                         it.copy(
                             registrationFailed = true,
-                            registrationNotice = "Embedded Python email scan failed: ${e.message ?: "unknown error"}",
+                            registrationNotice = "Email registration scan failed: ${e.message ?: "unknown error"}",
                             isRegistrationScanning = false
                         )
                     }
@@ -240,6 +264,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 _uiState.update {
                     it.copy(
                         registeredSites = outcome.registered,
+                        registrationSitesTotal = outcome.sitesChecked,
                         emailUnreachable = outcome.unreachable,
                         registrationFailed = outcome.error != null,
                         registrationNotice = outcome.error ?: outcome.notice,

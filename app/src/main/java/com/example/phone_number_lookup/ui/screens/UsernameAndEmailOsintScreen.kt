@@ -56,6 +56,7 @@ import com.example.phone_number_lookup.PythonToolMode
 import com.example.phone_number_lookup.UsernameScanner
 import com.example.phone_number_lookup.ui.components.AppButton
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
+import com.example.phone_number_lookup.ui.components.EmailIntelDashboard
 import com.example.phone_number_lookup.ui.components.IssuesSection
 import com.example.phone_number_lookup.ui.components.LoadingRow
 import com.example.phone_number_lookup.ui.components.Notice
@@ -340,6 +341,17 @@ fun UsernameAndEmailOsintScreen(
                 }
 
                 1 -> {
+                    EmailIntelDashboard(
+                        target = target,
+                        attribution = uiState.attributionReport,
+                        registrations = uiState.registeredSites,
+                        handleHits = uiState.liveHits,
+                        breachReport = uiState.breachReport,
+                        isLoading = uiState.isRegistrationScanning || uiState.isBreachScanning || uiState.isEnrichingIdentity,
+                        onOpenUrl = { openUrl(context, it) },
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     // IntelBase-Style Profile Executive Summary
                     uiState.domainReport?.let { domain ->
                         val breachCount = uiState.breachReport?.breachNames?.size ?: 0

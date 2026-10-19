@@ -133,9 +133,9 @@ object EmailRegistrationScanner {
                     statusCode = hit.statusCode,
                     finalUrl = hit.finalUrl,
                     evidence = hit.evidence + if (controlInconclusive) " • control check inconclusive" else " • control check passed",
-                    confidence = if (controlInconclusive) "Medium" else confidenceFor(hit),
+                    confidence = if (controlInconclusive) "Uncertain" else confidenceFor(hit),
                     // The UI counts hits by this exact string, so it must stay unchanged.
-                    verificationStatus = "Registered response"
+                    verificationStatus = if (controlInconclusive) "Unavailable / uncertain" else "Registered response"
                 )
             }
             .sortedWith(compareBy({ it.category.lowercase() }, { it.site.lowercase() }))
@@ -189,8 +189,8 @@ object EmailRegistrationScanner {
             statusCode = result.statusCode,
             finalUrl = result.finalUrl,
             evidence = result.evidence + if (controlInconclusive) " • control check inconclusive" else " • control check passed",
-            confidence = if (controlInconclusive) "Medium" else confidenceFor(result),
-            verificationStatus = "Registered response"
+            confidence = if (controlInconclusive) "Uncertain" else confidenceFor(result),
+            verificationStatus = if (controlInconclusive) "Unavailable / uncertain" else "Registered response"
         )
     }
 
