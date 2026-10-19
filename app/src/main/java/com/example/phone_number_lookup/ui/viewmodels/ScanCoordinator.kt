@@ -36,6 +36,9 @@ class ScanCoordinator(private val scope: CoroutineScope) {
     /** True while [token] is still the newest run. */
     fun isCurrent(token: Int): Boolean = token == generation
 
+    /** Current generation token for attaching non-superseding background work like rechecks. */
+    val currentGeneration: Int get() = generation
+
     /** Launches work belonging to [token]. */
     fun start(token: Int, block: suspend (Int) -> Unit) {
         jobs += scope.launch { block(token) }

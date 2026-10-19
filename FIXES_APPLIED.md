@@ -9,7 +9,7 @@ This version keeps the existing app features and fixes the highest-impact accura
 - Fixed the `tellws.co.uk` typo to `tellows.co.uk`.
 - Made external lookup descriptions clear that coverage and identity results are not guaranteed.
 - Changed web search to distinguish `no matches` from timeout, HTTP failure, or blocking.
-- Reduced the default username scan limit from 300 to 100 for safer personal use.
+- Default username scan limit is 300 (Quick scan uses 150, Full scan covers all available sites).
 - Kept the existing scan-cancellation and stale-result protection.
 
 The project still needs Android Studio with Android SDK 37 to create an APK. No provider API keys were added.

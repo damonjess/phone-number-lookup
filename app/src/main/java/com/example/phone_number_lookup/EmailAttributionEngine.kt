@@ -47,6 +47,14 @@ data class EmailAttributionReport(
     val lastSeen: String?
         get() = timeline.mapNotNull { it.date.takeIf { d -> d.matches(Regex("\\d{4}-\\d{2}-\\d{2}.*")) } }
             .maxOrNull()
+
+    val hasData: Boolean
+        get() = namesFound.isNotEmpty() ||
+            usernamesFound.isNotEmpty() ||
+            profileLinks.isNotEmpty() ||
+            locationsFound.isNotEmpty() ||
+            timeline.isNotEmpty() ||
+            stealerProfile != null
 }
 
 object EmailAttributionEngine {
@@ -65,6 +73,9 @@ object EmailAttributionEngine {
         val gravatarDef = async { lookupGravatarByEmail(clean) }
         val hudsonDef = async { lookupHudsonRockProfile(clean) }
         val mfpDef = async { lookupMyFitnessPalHandle(clean.substringBefore('@')) }
+        val keybaseDef = async { lookupKeybaseByEmail(clean) }
+        val gitlabDef = async { lookupGitLabByEmail(clean) }
+        val openPgpDef = async { lookupOpenPgpKeysByEmail(clean) }
 
         val names = mutableListOf<AttributedValue>()
         val usernames = mutableListOf<AttributedValue>()
@@ -100,13 +111,36 @@ object EmailAttributionEngine {
             gh.updatedAt?.let { timeline += TimelineEvent(it, "Updated At", "GitHub") }
         }
 
-        // 3. MyFitnessPal Handle Check
+        // 3. Keybase Attribution
+        keybaseDef.await()?.let { kb ->
+            kb.fullName?.let { names += AttributedValue(it, "Keybase") }
+            usernames += AttributedValue(kb.username, "Keybase")
+            kb.avatarUrl?.let { avatars += it }
+            links += kb.proofs
+        }
+
+        // 4. GitLab Attribution
+        gitlabDef.await()?.let { gl ->
+            gl.fullName?.let { names += AttributedValue(it, "GitLab") }
+            usernames += AttributedValue(gl.username, "GitLab")
+            links += AttributedProfileLink(gl.username, "GitLab", gl.profileUrl)
+            gl.avatarUrl?.let { avatars += it }
+            gl.createdAt?.let { timeline += TimelineEvent(it, "Account Created", "GitLab") }
+        }
+
+        // 5. OpenPGP Keyserver Attribution
+        openPgpDef.await()?.let { pgp ->
+            links += AttributedProfileLink(pgp.email, "OpenPGP Key", pgp.profileUrl)
+            timeline += TimelineEvent("Public Key Verified", "OpenPGP Key Found", "OpenPGP Keyserver")
+        }
+
+        // 6. MyFitnessPal Handle Check
         mfpDef.await()?.let { mfpHandle ->
             usernames += AttributedValue(mfpHandle, "MyFitnessPal")
             links += AttributedProfileLink(mfpHandle, "MyFitnessPal", "https://www.myfitnesspal.com/profile/$mfpHandle")
         }
 
-        // 4. Duolingo Attribution
+        // 7. Duolingo Attribution
         duolingoDef.await()?.let { duo ->
             duo.fullName?.let { names += AttributedValue(it, "Duolingo") }
             duo.username?.let { u ->
@@ -117,7 +151,7 @@ object EmailAttributionEngine {
             duo.createdDate?.let { timeline += TimelineEvent(it, "Joined", "Duolingo") }
         }
 
-        // 5. Gravatar Attribution
+        // 8. Gravatar Attribution
         gravatarDef.await()?.let { grav ->
             grav.displayName?.let { names += AttributedValue(it, "Gravatar") }
             grav.username?.let { u ->
@@ -128,7 +162,7 @@ object EmailAttributionEngine {
             links += grav.verifiedAccounts
         }
 
-        // 6. HudsonRock Infostealer Profile
+        // 9. HudsonRock Infostealer Profile
         val stealer = hudsonDef.await()
         stealer?.computerUsername?.let { names += AttributedValue(it, "Stealer Log") }
         stealer?.dateCompromised?.let {
@@ -344,5 +378,89 @@ object EmailAttributionEngine {
             } else emptyList()
             StealerSubjectProfile(user, ip, os, date, avs)
         }.getOrNull()
+    }
+
+    private data class KeybaseEmailMatch(
+        val username: String,
+        val fullName: String?,
+        val profileUrl: String,
+        val avatarUrl: String?,
+        val bio: String?,
+        val proofs: List<AttributedProfileLink>
+    )
+
+    private fun lookupKeybaseByEmail(email: String): KeybaseEmailMatch? {
+        val url = "https://keybase.io/_/api/1.0/user/lookup.json?email=${ScanHttp.encode(email)}"
+        val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            val them = root.optJSONArray("them") ?: return null
+            if (them.length() == 0) return null
+            val user = them.optJSONObject(0) ?: return null
+            val basics = user.optJSONObject("basics") ?: return null
+            val username = basics.optString("username").takeIf { it.isNotBlank() } ?: return null
+            val profile = user.optJSONObject("profile")
+            val fullName = profile?.optString("full_name")?.takeIf { it.isNotBlank() }
+            val bio = profile?.optString("bio")?.takeIf { it.isNotBlank() }
+            val avatar = user.optJSONObject("pictures")?.optJSONObject("primary")?.optString("url")?.takeIf { it.isNotBlank() }
+
+            val proofLinks = mutableListOf<AttributedProfileLink>()
+            proofLinks += AttributedProfileLink(username, "Keybase", "https://keybase.io/$username")
+
+            val proofsSummary = user.optJSONObject("proofs_summary")
+            val allProofs = proofsSummary?.optJSONArray("all")
+            if (allProofs != null) {
+                for (i in 0 until allProofs.length()) {
+                    val p = allProofs.optJSONObject(i) ?: continue
+                    val type = p.optString("proof_type").takeIf { it.isNotBlank() } ?: continue
+                    val valName = p.optString("nametag").takeIf { it.isNotBlank() } ?: continue
+                    val pUrl = p.optString("service_url").takeIf { it.isNotBlank() }
+                        ?: "https://keybase.io/$username"
+                    proofLinks += AttributedProfileLink(valName, "Keybase Proof ($type)", pUrl)
+                }
+            }
+            KeybaseEmailMatch(username, fullName, "https://keybase.io/$username", avatar, bio, proofLinks)
+        }.getOrNull()
+    }
+
+    private data class GitLabEmailMatch(
+        val username: String,
+        val fullName: String?,
+        val profileUrl: String,
+        val avatarUrl: String?,
+        val createdAt: String?
+    )
+
+    private fun lookupGitLabByEmail(email: String): GitLabEmailMatch? {
+        val url = "https://gitlab.com/api/v4/users?search=${ScanHttp.encode(email)}"
+        val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val arr = org.json.JSONArray(resp.body)
+            if (arr.length() == 0) return null
+            val u = arr.optJSONObject(0) ?: return null
+            val username = u.optString("username").takeIf { it.isNotBlank() } ?: return null
+            val name = u.optString("name").takeIf { it.isNotBlank() }
+            val webUrl = u.optString("web_url").takeIf { it.isNotBlank() } ?: "https://gitlab.com/$username"
+            val avatar = u.optString("avatar_url").takeIf { it.isNotBlank() }
+            val created = u.optString("created_at").substringBefore('T').takeIf { it.isNotBlank() }
+            GitLabEmailMatch(username, name, webUrl, avatar, created)
+        }.getOrNull()
+    }
+
+    private data class OpenPgpEmailMatch(
+        val email: String,
+        val keyFound: Boolean,
+        val profileUrl: String
+    )
+
+    private fun lookupOpenPgpKeysByEmail(email: String): OpenPgpEmailMatch? {
+        val url = "https://keys.openpgp.org/vks/v1/by-email/${ScanHttp.encode(email)}"
+        val resp = ScanHttp.get(url, timeoutMs = 8_000)
+        if (resp.isOk && resp.body.contains("-----BEGIN PGP PUBLIC KEY BLOCK-----")) {
+            return OpenPgpEmailMatch(email, true, "https://keys.openpgp.org/search?q=${ScanHttp.encode(email)}")
+        }
+        return null
     }
 }

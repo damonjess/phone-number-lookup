@@ -14,7 +14,17 @@ object CuratedEmailChecks {
         github(),
         keybase(),
         mastodonSocial(),
-        openPgpKeys()
+        openPgpKeys(),
+        replit(),
+        gitlab(),
+        figma(),
+        dockerHub(),
+        substack(),
+        letterboxd(),
+        imgur(),
+        tumblr(),
+        pornhub(),
+        atlassian()
     )
 
     private fun mozillaFirefox() = SiteProbe(
@@ -184,6 +194,176 @@ object CuratedEmailChecks {
         foundStrings = listOf("-----BEGIN PGP PUBLIC KEY BLOCK-----"),
         missingCodes = setOf(404),
         missingStrings = listOf("No key found", "not found"),
+        missingUrls = emptyList()
+    )
+
+    private fun replit() = SiteProbe(
+        name = "Replit",
+        category = "coding",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://replit.com/data/user/exists?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://replit.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun gitlab() = SiteProbe(
+        name = "GitLab",
+        category = "coding",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://gitlab.com/api/v4/users?search={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://gitlab.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"username\":"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("[]"),
+        missingUrls = emptyList()
+    )
+
+    private fun figma() = SiteProbe(
+        name = "Figma",
+        category = "design",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.figma.com/api/users/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.figma.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun dockerHub() = SiteProbe(
+        name = "Docker Hub",
+        category = "tech",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://hub.docker.com/v2/users/{account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://hub.docker.com/u/{account}",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"username\":"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"detail\":\"Not found\""),
+        missingUrls = emptyList()
+    )
+
+    private fun substack() = SiteProbe(
+        name = "Substack",
+        category = "blog",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://substack.com/api/v1/user/email_availability?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://substack.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true", "\"available\":false"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"exists\":false", "\"available\":true"),
+        missingUrls = emptyList()
+    )
+
+    private fun letterboxd() = SiteProbe(
+        name = "Letterboxd",
+        category = "movies",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://letterboxd.com/user/check-email/?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://letterboxd.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true", "\"result\":false"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"exists\":false", "\"result\":true"),
+        missingUrls = emptyList()
+    )
+
+    private fun imgur() = SiteProbe(
+        name = "Imgur",
+        category = "images",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://imgur.com/signin/ajax/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://imgur.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"available\":false", "\"exists\":true"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"available\":true", "\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun tumblr() = SiteProbe(
+        name = "Tumblr",
+        category = "blog",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.tumblr.com/svc/account/register_check?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.tumblr.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"email_taken\":true", "\"taken\":true"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"email_taken\":false", "\"taken\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun pornhub() = SiteProbe(
+        name = "Pornhub",
+        category = "nsfw",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.pornhub.com/user/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.pornhub.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"status\":\"taken\"", "\"exists\":true"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"status\":\"available\"", "\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun atlassian() = SiteProbe(
+        name = "Atlassian",
+        category = "tech",
+        source = SRC_CURATED,
+        method = "POST",
+        urlTemplate = "https://id.atlassian.com/login/id-check",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://id.atlassian.com/",
+        headers = mapOf("Content-Type" to "application/json"),
+        bodyTemplate = "{\"username\":\"{account}\"}",
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"accountExists\":true", "\"account_exists\":true"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"accountExists\":false", "\"account_exists\":false"),
         missingUrls = emptyList()
     )
 }

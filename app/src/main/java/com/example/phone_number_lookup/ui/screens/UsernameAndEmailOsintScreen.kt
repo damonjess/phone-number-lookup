@@ -448,32 +448,14 @@ fun UsernameAndEmailOsintScreen(
                             },
                             containerColor = MaterialTheme.colorScheme.secondaryContainer
                         ) {
-                            // Computer/host names are deliberately excluded here: the engine
-                            // already filters machine names like DESKTOP-*, and the stealer
-                            // profile below shows the host under its own heading.
+                            val confirmedRegistered = uiState.registeredSites.filter { it.verificationStatus == "Registered response" }
                             val allNames = attr.namesFound
-                            if (allNames.isNotEmpty()) {
-                                SubHeading("Names found")
-                                allNames.forEach { n ->
-                                    Text("• ${n.value} (${n.source})", style = MaterialTheme.typography.bodySmall)
-                                }
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
-
                             val allUsernames = buildList {
                                 addAll(attr.usernamesFound)
                                 uiState.liveHits.forEach { hit ->
                                     add(com.example.phone_number_lookup.AttributedValue(hit.queriedName.ifBlank { target.substringBefore('@') }, hit.site))
                                 }
                             }.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
-
-                            if (allUsernames.isNotEmpty()) {
-                                SubHeading("Usernames")
-                                allUsernames.forEach { u ->
-                                    Text("• ${u.value} (${u.source})", style = MaterialTheme.typography.bodySmall)
-                                }
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
 
                             val combinedLinks = buildList {
                                 addAll(attr.profileLinks)
@@ -488,36 +470,85 @@ fun UsernameAndEmailOsintScreen(
                                 }
                             }.distinctBy { it.url.lowercase() }
 
-                            if (combinedLinks.isNotEmpty()) {
-                                SubHeading("Profile links")
-                                combinedLinks.forEach { link ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text("• ${link.handle} (${link.platform})", style = MaterialTheme.typography.bodySmall)
-                                        TextButton(onClick = { openUrl(context, link.url) }) {
-                                            Text("Open ↗")
+                            val hasAnyAttributionData = confirmedRegistered.isNotEmpty() ||
+                                allNames.isNotEmpty() ||
+                                allUsernames.isNotEmpty() ||
+                                combinedLinks.isNotEmpty() ||
+                                attr.timeline.isNotEmpty() ||
+                                attr.stealerProfile != null
+
+                            if (!hasAnyAttributionData) {
+                                Notice(
+                                    "No public identity attribution records, social handles, or verified account registrations were found for $target.",
+                                    tone = Tone.NEUTRAL
+                                )
+                            } else {
+                                if (confirmedRegistered.isNotEmpty()) {
+                                    SubHeading("Confirmed Accounts & Services")
+                                    confirmedRegistered.forEach { reg ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("• ${reg.site} (${reg.category.replaceFirstChar { it.uppercase() }})", style = MaterialTheme.typography.bodySmall)
+                                            if (reg.profileUrl.isNotBlank() && reg.profileUrl.startsWith("http")) {
+                                                TextButton(onClick = { openUrl(context, reg.profileUrl) }) {
+                                                    Text("Open ↗")
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+
+                                if (allNames.isNotEmpty()) {
+                                    SubHeading("Names found")
+                                    allNames.forEach { n ->
+                                        Text("• ${n.value} (${n.source})", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+
+                                if (allUsernames.isNotEmpty()) {
+                                    SubHeading("Usernames")
+                                    allUsernames.forEach { u ->
+                                        Text("• ${u.value} (${u.source})", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+
+                                if (combinedLinks.isNotEmpty()) {
+                                    SubHeading("Profile links")
+                                    combinedLinks.forEach { link ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("• ${link.handle} (${link.platform})", style = MaterialTheme.typography.bodySmall)
+                                            TextButton(onClick = { openUrl(context, link.url) }) {
+                                                Text("Open ↗")
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            if (attr.timeline.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                SubHeading("Activity timeline")
-                                attr.timeline.forEach { ev ->
-                                    Text("• ${ev.date} — ${ev.label} · ${ev.source}", style = MaterialTheme.typography.bodySmall)
+                                if (attr.timeline.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    SubHeading("Activity timeline")
+                                    attr.timeline.forEach { ev ->
+                                        Text("• ${ev.date} — ${ev.label} · ${ev.source}", style = MaterialTheme.typography.bodySmall)
+                                    }
                                 }
-                            }
 
-                            attr.stealerProfile?.let { sp ->
-                                SubHeading("Infostealer profile · HudsonRock")
-                                sp.computerUsername?.let { ResultRow("Username / Host", it) }
-                                sp.maskedIp?.let { ResultRow("IP Address", it) }
-                                sp.operatingSystem?.let { ResultRow("Operating System", it) }
-                                sp.dateCompromised?.let { ResultRow("Compromise Date", it) }
+                                attr.stealerProfile?.let { sp ->
+                                    SubHeading("Infostealer profile · HudsonRock")
+                                    sp.computerUsername?.let { ResultRow("Username / Host", it) }
+                                    sp.maskedIp?.let { ResultRow("IP Address", it) }
+                                    sp.operatingSystem?.let { ResultRow("Operating System", it) }
+                                    sp.dateCompromised?.let { ResultRow("Compromise Date", it) }
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))

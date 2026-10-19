@@ -168,7 +168,7 @@ object EmailRegistrationScanner {
                 evidence = result.evidence,
                 confidence = confidenceFor(result),
                 verificationStatus = when (result.verdict) {
-                    ProbeVerdict.NOT_FOUND -> "Not registered response"
+                    ProbeVerdict.NOT_FOUND -> "Not found"
                     else -> "Unavailable / uncertain"
                 }
             )

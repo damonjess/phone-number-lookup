@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 data class UsernameAndEmailOsintUiState(
     val subTabState: Int = 0, // 0: Username, 1: Email, 2: Domain & Network
@@ -368,46 +369,46 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
 
     fun recheckUsername(site: String, profileUrl: String = "") {
         val target = _uiState.value.activeTarget ?: return
+        val token = scans.currentGeneration
         _uiState.update { it.copy(recheckingSite = site) }
-        val token = scans.supersede()
-        scans.start(token) { active ->
-            val updated = UsernameScanner.recheck(target, site, profileUrl)
-            if (scans.isCurrent(active)) {
-                if (updated != null) {
-                    _uiState.update { state ->
+        viewModelScope.launch {
+            try {
+                val updated = UsernameScanner.recheck(target, site, profileUrl)
+                if (!scans.isCurrent(token) || _uiState.value.activeTarget != target) return@launch
+                _uiState.update { state ->
+                    if (updated != null) {
                         val remaining = state.liveHits.filterNot { it.site.equals(site, true) }
                         state.copy(
-                            // A recheck that now says "not found" removes the stale hit instead
-                            // of leaving a false positive in the results list.
-                            liveHits = if (updated.verificationStatus == "Not found") remaining
-                            else remaining + updated,
-                            recheckingSite = null
+                            liveHits = if (updated.verificationStatus == "Not found" || updated.verificationStatus == "Unavailable / uncertain") remaining
+                            else remaining + updated
                         )
-                    }
-                } else {
-                    _uiState.update { it.copy(recheckingSite = null) }
+                    } else state
                 }
+            } finally {
+                _uiState.update { it.copy(recheckingSite = null) }
             }
         }
     }
 
     fun recheckEmail(site: String) {
         val target = _uiState.value.activeTarget ?: return
+        val token = scans.currentGeneration
         _uiState.update { it.copy(recheckingSite = site) }
-        val token = scans.supersede()
-        scans.start(token) { active ->
-            val updated = EmailRegistrationScanner.recheck(target, site)
-            if (scans.isCurrent(active)) {
-                if (updated != null) {
-                    _uiState.update { state ->
+        viewModelScope.launch {
+            try {
+                val updated = EmailRegistrationScanner.recheck(target, site)
+                if (!scans.isCurrent(token) || _uiState.value.activeTarget != target) return@launch
+                _uiState.update { state ->
+                    if (updated != null) {
+                        val remaining = state.registeredSites.filterNot { it.site.equals(site, true) }
                         state.copy(
-                            registeredSites = state.registeredSites.filterNot { it.site.equals(site, true) } + updated,
-                            recheckingSite = null
+                            registeredSites = if (updated.verificationStatus == "Not found" || updated.verificationStatus == "Unavailable / uncertain") remaining
+                            else remaining + updated
                         )
-                    }
-                } else {
-                    _uiState.update { it.copy(recheckingSite = null) }
+                    } else state
                 }
+            } finally {
+                _uiState.update { it.copy(recheckingSite = null) }
             }
         }
     }
