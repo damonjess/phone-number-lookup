@@ -73,7 +73,7 @@ object OsintDatasets {
     fun evaluate(probe: SiteProbe, account: String, timeoutMs: Int = 10_000): ProbeResult {
         val target = transformAccount(account, probe.accountMode)
         val url = probe.urlTemplate.replace("{account}", ScanHttp.encode(target))
-        val profileUrl = probe.profileTemplate.replace("{account}", account)
+        val profileUrl = cleanProfileUrl(probe.name, probe.profileTemplate.replace("{account}", account))
         val body = probe.bodyTemplate?.replace("{account}", target)
 
         val response = if (probe.method.equals("POST", ignoreCase = true)) {
@@ -499,15 +499,16 @@ object OsintDatasets {
                 val mCode = s.optInt("m_code", 404)
                 val method = s.optString("method", "GET").uppercase()
 
+                val siteName = s.optString("name", "Unknown")
                 out.add(
                     SiteProbe(
-                        name = s.optString("name", "Unknown"),
+                        name = siteName,
                         category = s.optString("cat", "general"),
                         source = SRC_BLACKBIRD,
                         method = if (method == "POST") "POST" else "GET",
                         urlTemplate = uriCheck,
                         accountMode = op,
-                        profileTemplate = sanitizeProfile(uriCheck),
+                        profileTemplate = cleanProfileUrl(siteName, uriCheck),
                         headers = s.optJSONObject("headers").headerMap(),
                         bodyTemplate = data,
                         foundCodes = if (eCode > 0) setOf(eCode) else emptySet(),
@@ -523,8 +524,88 @@ object OsintDatasets {
         return out
     }
 
-    private fun sanitizeProfile(template: String): String =
-        template.replace("{account}", "").trimEnd('/')
+    fun cleanProfileUrl(siteName: String, rawUrl: String): String {
+        val siteLower = siteName.trim().lowercase()
+        val rawLower = rawUrl.trim().lowercase()
+
+        if (siteLower == "spotify" || rawLower.contains("spotify.com")) {
+            return "https://open.spotify.com/"
+        }
+        if (siteLower.contains("firefox") || rawLower.contains("accounts.firefox.com")) {
+            return "https://accounts.firefox.com/"
+        }
+        if (siteLower == "chess.com" || rawLower.contains("chess.com")) {
+            return "https://www.chess.com/"
+        }
+        if (siteLower == "github" || rawLower.contains("github.com")) {
+            return "https://github.com/"
+        }
+        if (siteLower == "duolingo" || rawLower.contains("duolingo.com")) {
+            return "https://www.duolingo.com/"
+        }
+        if (siteLower == "gravatar" || rawLower.contains("gravatar.com")) {
+            return "https://gravatar.com/"
+        }
+        if (siteLower.contains("wordpress") || rawLower.contains("wordpress.com")) {
+            return "https://wordpress.com/"
+        }
+        if (siteLower == "keybase" || rawLower.contains("keybase.io")) {
+            return "https://keybase.io/"
+        }
+        if (siteLower.contains("mastodon") || rawLower.contains("mastodon.social")) {
+            return "https://mastodon.social/"
+        }
+        if (siteLower == "replit" || rawLower.contains("replit.com")) {
+            return "https://replit.com/"
+        }
+        if (siteLower == "gitlab" || rawLower.contains("gitlab.com")) {
+            return "https://gitlab.com/"
+        }
+        if (siteLower == "figma" || rawLower.contains("figma.com")) {
+            return "https://www.figma.com/"
+        }
+        if (siteLower.contains("docker") || rawLower.contains("docker.com")) {
+            return "https://hub.docker.com/"
+        }
+        if (siteLower == "substack" || rawLower.contains("substack.com")) {
+            return "https://substack.com/"
+        }
+        if (siteLower == "letterboxd" || rawLower.contains("letterboxd.com")) {
+            return "https://letterboxd.com/"
+        }
+        if (siteLower == "imgur" || rawLower.contains("imgur.com")) {
+            return "https://imgur.com/"
+        }
+        if (siteLower == "tumblr" || rawLower.contains("tumblr.com")) {
+            return "https://www.tumblr.com/"
+        }
+        if (siteLower == "pornhub" || rawLower.contains("pornhub.com")) {
+            return "https://www.pornhub.com/"
+        }
+        if (siteLower == "atlassian" || rawLower.contains("atlassian.com")) {
+            return "https://id.atlassian.com/"
+        }
+
+        if (rawLower.contains("spclient") || rawLower.contains("/api/") || rawLower.contains("/v1/") ||
+            rawLower.contains("/v2/") || rawLower.contains("check_email") || rawLower.contains("validate=")
+        ) {
+            val uri = runCatching { java.net.URI(rawUrl) }.getOrNull()
+            if (uri?.host != null) {
+                val scheme = uri.scheme ?: "https"
+                var host = uri.host
+                if (host.startsWith("spclient.wg.")) {
+                    host = "open.spotify.com"
+                } else if (host.startsWith("api.")) {
+                    host = host.removePrefix("api.")
+                }
+                return "$scheme://$host/"
+            }
+        }
+
+        return rawUrl.replace("{account}", "").trimEnd('/')
+    }
+
+    private fun sanitizeProfile(template: String): String = cleanProfileUrl("", template)
 
     private fun hostLabel(url: String): String =
         url.removePrefix("https://").removePrefix("http://").removePrefix("www.")

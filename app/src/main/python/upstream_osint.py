@@ -128,6 +128,60 @@ def _blackbird_config(is_email, target, max_sites):
     return config
 
 
+def _clean_profile_url(site_name, raw_url):
+    name_lower = str(site_name).lower()
+    url_lower = str(raw_url).lower()
+    if "spotify" in name_lower or "spotify.com" in url_lower:
+        return "https://open.spotify.com/"
+    if "firefox" in name_lower or "firefox.com" in url_lower:
+        return "https://accounts.firefox.com/"
+    if "chess.com" in name_lower or "chess.com" in url_lower:
+        return "https://www.chess.com/"
+    if "github" in name_lower or "github.com" in url_lower:
+        return "https://github.com/"
+    if "duolingo" in name_lower or "duolingo.com" in url_lower:
+        return "https://www.duolingo.com/"
+    if "gravatar" in name_lower or "gravatar.com" in url_lower:
+        return "https://gravatar.com/"
+    if "wordpress" in name_lower or "wordpress.com" in url_lower:
+        return "https://wordpress.com/"
+    if "keybase" in name_lower or "keybase.io" in url_lower:
+        return "https://keybase.io/"
+    if "mastodon" in name_lower or "mastodon" in url_lower:
+        return "https://mastodon.social/"
+    if "replit" in name_lower or "replit.com" in url_lower:
+        return "https://replit.com/"
+    if "gitlab" in name_lower or "gitlab.com" in url_lower:
+        return "https://gitlab.com/"
+    if "figma" in name_lower or "figma.com" in url_lower:
+        return "https://www.figma.com/"
+    if "docker" in name_lower or "docker.com" in url_lower:
+        return "https://hub.docker.com/"
+    if "substack" in name_lower or "substack.com" in url_lower:
+        return "https://substack.com/"
+    if "letterboxd" in name_lower or "letterboxd.com" in url_lower:
+        return "https://letterboxd.com/"
+    if "imgur" in name_lower or "imgur.com" in url_lower:
+        return "https://imgur.com/"
+    if "tumblr" in name_lower or "tumblr.com" in url_lower:
+        return "https://www.tumblr.com/"
+    if "atlassian" in name_lower or "atlassian.com" in url_lower:
+        return "https://id.atlassian.com/"
+
+    if any(k in url_lower for k in ["spclient", "/api/", "/v1/", "/v2/", "check_email", "validate="]):
+        from urllib.parse import urlparse
+        parsed = urlparse(raw_url)
+        if parsed.netloc:
+            host = parsed.netloc
+            if host.startswith("spclient.wg."):
+                host = "open.spotify.com"
+            elif host.startswith("api."):
+                host = host[4:]
+            scheme = parsed.scheme or "https"
+            return f"{scheme}://{host}/"
+    return raw_url
+
+
 def run_blackbird_python(target, is_email=False, max_sites=0):
     target = str(target).strip()
     if not target:
@@ -143,10 +197,11 @@ def run_blackbird_python(target, is_email=False, max_sites=0):
         hits = []
         for item in found or []:
             url = str(item.get("url") or "")
-            hits.append({"site": item.get("name", "Unknown"),
+            site_name = item.get("name", "Unknown")
+            hits.append({"site": site_name,
                          "category": item.get("category", "general"),
                          "source": "Python: Blackbird upstream",
-                         "profileUrl": url,
+                         "profileUrl": _clean_profile_url(site_name, url),
                          "statusCode": int(item.get("status_code") or 200),
                          "evidence": "Blackbird upstream reported a match"})
         sites_checked = len(json.load(open(config.EMAIL_LIST_PATH if is_email else config.USERNAME_LIST_PATH, encoding="utf-8")).get("sites", []))

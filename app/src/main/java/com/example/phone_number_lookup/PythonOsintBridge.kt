@@ -75,11 +75,13 @@ object PythonOsintBridge {
             if (hitsArr != null) {
                 for (i in 0 until hitsArr.length()) {
                     val h = hitsArr.optJSONObject(i) ?: continue
+                    val siteName = h.optString("site", "Unknown")
+                    val rawUrl = h.optString("profileUrl", "")
                     hits += RegistrationHit(
-                        site = h.optString("site", "Unknown"),
+                        site = siteName,
                         category = h.optString("category", "general"),
                         source = h.optString("source", "Python: Blackbird"),
-                        profileUrl = h.optString("profileUrl", ""),
+                        profileUrl = OsintDatasets.cleanProfileUrl(siteName, rawUrl),
                         statusCode = h.optInt("statusCode", 200),
                         evidence = h.optString("evidence", "Matched via Python Blackbird"),
                         confidence = "Medium (Upstream Match)",

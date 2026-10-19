@@ -581,4 +581,15 @@ class OsintParsingTest {
         assertEquals(listOf("Should I Answer UK", "WhoCallsMe"), PhoneReputation.supportedSources("+447700900123"))
         assertTrue(PhoneReputation.supportedSources("+3312345678").isEmpty())
     }
+
+    @Test
+    fun cleanProfileUrlSanitizesApiEndpointsAndSpotify() {
+        val spotifyApiUrl = "https://spclient.wg.spotify.com/signup/public/v1/account?validate=1&email=test@example.com"
+        val cleanedSpotify = OsintDatasets.cleanProfileUrl("Spotify", spotifyApiUrl)
+        assertEquals("https://open.spotify.com/", cleanedSpotify)
+
+        val firefoxApiUrl = "https://api.accounts.firefox.com/v1/account/status"
+        val cleanedFirefox = OsintDatasets.cleanProfileUrl("Mozilla Firefox", firefoxApiUrl)
+        assertEquals("https://accounts.firefox.com/", cleanedFirefox)
+    }
 }
