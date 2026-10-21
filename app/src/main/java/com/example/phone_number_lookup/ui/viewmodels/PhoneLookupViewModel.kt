@@ -124,13 +124,13 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
 
         scans.start(token) { active ->
             val exactQueries = listOf(
+                localFormat,
                 formats.e164,
                 formats.international,
                 formats.national,
-                formats.rfc3966,
-                localFormat
+                formats.rfc3966
             ).distinct()
-            val primaryResponse = SearchRepository.searchWeb(exactQueries)
+            val primaryResponse = SearchRepository.searchPhoneNumber(exactQueries)
 
             if (primaryResponse.results.isEmpty() && primaryResponse.error == null) {
                 val prefixQueries = buildPrefixFallbackQueries(normalized, localFormat)

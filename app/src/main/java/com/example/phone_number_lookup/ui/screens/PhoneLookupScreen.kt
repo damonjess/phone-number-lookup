@@ -184,7 +184,7 @@ fun PhoneLookupScreen(
         ScreenHeader(
             eyebrow = "Phone",
             title = "Who's calling?",
-            subtitle = "Numbering data, caller reports and live web search, all on this device."
+            subtitle = "Numbering data, public caller reports and web matches."
         )
 
         SearchField(
@@ -226,7 +226,7 @@ fun PhoneLookupScreen(
 
         if (uiState.resultNumber == null && !uiState.isSearching) {
             Notice(
-                "Enter a number to see its formats, region, line type, caller reports and web matches. Every check runs on this device.",
+                "Enter a number to check its format, numbering region, estimated line type, public caller reports and indexed web matches. Online checks send the number to the listed third-party sources. Results cannot identify the caller or reveal their live location or private account registrations; caller ID can also be spoofed.",
                 tone = Tone.NEUTRAL,
             )
             Spacer(Modifier.height(Space.xl))

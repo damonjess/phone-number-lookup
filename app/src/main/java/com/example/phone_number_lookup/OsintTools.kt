@@ -23,7 +23,7 @@ object OsintTools {
         val qSocial = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:facebook.com OR site:linkedin.com OR site:instagram.com OR site:twitter.com OR site:x.com OR site:tiktok.com)")
         val qPastes = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:pastebin.com OR site:ghostbin.com OR site:justpaste.it OR site:github.com OR site:gitlab.com)")
         val qDocuments = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (filetype:pdf OR filetype:doc OR filetype:docx OR filetype:xls OR filetype:xlsx)")
-        val qSpam = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:whocalled.co.uk OR site:shouldicall.co.uk OR site:tellows.co.uk OR site:who-called.co.uk OR site:spamcalls.net)")
+        val qSpam = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:shouldianswer.co.uk OR site:tellows.co.uk OR site:who-called.co.uk OR site:whosringing.co.uk OR site:whocallsme.com OR site:spamcalls.net)")
         val qCompanies = Uri.encode("(\"$normalizedNumber\" OR \"$localNumber\") (site:gov.uk OR site:company-information.service.gov.uk OR site:yell.com OR site:companieshouse.gov.uk)")
 
         return listOf(
@@ -47,7 +47,7 @@ object OsintTools {
             ),
             OsintDork(
                 title = "PhoneInfoga: Spam & Caller DBs",
-                description = "Checks WhoCalled, Tellows, ShouldICall, and SpamCalls reporting databases.",
+                description = "Searches indexed caller reports from Tellows, Who Called, Who's Ringing, and other public directories.",
                 url = "https://www.google.com/search?q=$qSpam",
                 toolSource = "PhoneInfoga"
             ),
@@ -89,7 +89,16 @@ object OsintTools {
                 url = "https://whocallsme.com/Phone-Number.aspx/$localDigits",
                 toolSource = "PhoneInfoga"
             )
-        )
+        ) + if (normalizedNumber.startsWith("+44")) {
+            listOf(
+                OsintDork(
+                    title = "Who's Ringing UK Community Reports",
+                    description = "Open its public UK number page. The site blocks automated requests, so results are opened manually and are not counted as an in-app scan result.",
+                    url = "https://whosringing.co.uk/number/$localDigits",
+                    toolSource = "Public caller reports"
+                )
+            )
+        } else emptyList()
     }
 
     // --- Phonia OSINT Engine ---

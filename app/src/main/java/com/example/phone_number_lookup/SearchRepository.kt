@@ -1,6 +1,8 @@
 package com.example.phone_number_lookup
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
@@ -67,6 +69,45 @@ object SearchRepository {
             }
         }
         return out.take(4)
+    }
+
+    /** Public indexed-page searches; never probes account registration or private services. */
+    suspend fun searchPhoneNumber(numberFormats: List<String>): SearchResponse = withContext(Dispatchers.IO) {
+        val spellings = buildSearchSpellings(numberFormats)
+        if (spellings.isEmpty()) return@withContext SearchResponse(emptyList())
+        val queries = buildPhoneInvestigationQueries(spellings)
+        val responses = queries.map { query -> async { searchQuery(query) } }.awaitAll()
+        val merged = LinkedHashMap<String, SearchResultItem>()
+        responses.flatMap { it.results }.forEach { result ->
+            val key = result.url.trimEnd('/').lowercase()
+            if (key.isNotBlank()) merged.putIfAbsent(key, result)
+        }
+        val errors = responses.mapNotNull { it.error }.distinct()
+        SearchResponse(
+            results = merged.values.take(DdgParser.MAX_RESULTS * queries.size),
+            error = errors.takeIf { it.isNotEmpty() }?.joinToString(" ")
+        )
+    }
+
+    internal fun buildPhoneInvestigationQueries(spellings: List<String>): List<String> {
+        val exact = spellings.take(4).joinToString(" OR ") { "\"$it\"" }
+        val preferred = spellings.firstOrNull().orEmpty()
+        if (preferred.isBlank()) return emptyList()
+        val reputation = "\"$preferred\" (spam OR scam OR nuisance OR telemarketing OR \"who called\")"
+        val directories = "\"$preferred\" (site:tellows.co.uk OR site:who-called.co.uk OR site:shouldianswer.co.uk OR site:whocallsme.com OR site:whosringing.co.uk/number)"
+        return listOf(exact, reputation, directories).distinct()
+    }
+
+    private suspend fun searchQuery(query: String): SearchResponse = withContext(Dispatchers.IO) {
+        val key = "query:$query"
+        cache[key]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let { return@withContext it.response }
+        when (val outcome = fetch(query)) {
+            is DdgOutcome.Results -> remember(key, SearchResponse(outcome.items))
+            DdgOutcome.NoResults -> remember(key, SearchResponse(emptyList()))
+            is DdgOutcome.Blocked -> SearchResponse(emptyList(), BLOCKED_MESSAGE)
+            is DdgOutcome.Unrecognised -> SearchResponse(emptyList(), "Web search returned an unreadable page (${outcome.reason}). Nothing can be concluded from it.")
+            DdgOutcome.Unreachable -> SearchResponse(emptyList(), "Web search couldn't connect or timed out.")
+        }
     }
 
     suspend fun probe(): DdgOutcome = withContext(Dispatchers.IO) { fetch("wikipedia") }

@@ -6,7 +6,7 @@ The app contains several different kinds of OSINT features. They are intentional
 
 - **PhoneInfoga-compatible native modules:** the local scanner is automatic; Numverify carrier/line data is available through an optional apilayer key entered in the app; public footprint results use the app's native web-search request.
 - **Tellows:** the app requests the public caller-reputation response and parses its score, report count, location, and caller type when returned.
-- **DuckDuckGo web search:** the app requests a public HTML search and extracts result titles, snippets, and links. Results may be blocked or incomplete.
+- **DuckDuckGo web search:** the app requests exact-number, spam-term, and caller-directory-focused public HTML searches and extracts result titles, snippets, and links. Directory-focused terms include Tellows, Who Called UK, Should I Answer, WhoCallsMe, and Who’s Ringing. Results may be blocked, incomplete, or absent from the search index.
 - **GitHub OSINT:** the app uses GitHub's public REST endpoints for usernames and repositories. Unauthenticated requests are rate-limited.
 - **Username scanner:** the app embeds upstream Sherlock, Tookie-OSINT, and Blackbird Python scan cores through Chaquopy. The selected tool or all three can be run in-process; results are rendered by the Android UI rather than the upstream terminal interface.
 - **Email account discovery:** the app calls the upstream Blackbird Python email scan core. The email's local part is also checked against public username profiles using the selected upstream Python scanner.
@@ -24,6 +24,8 @@ The current UI does not expose Google dorks, PhoneInfoga/Phonia/IntelBase launch
 Result cards may still offer an optional link to the exact public profile or source record that was found. That link is evidence follow-up, not a second search and not a claim of verified ownership.
 
 Phonia-style WhatsApp, Telegram, Viber, and Truecaller shortcuts are not native public APIs and are not represented as successful checks. IntelBase has no supported public API in this project, so it is not queried or simulated.
+
+Who’s Ringing UK is included in the indexed web query and as an optional manual lookup link. Its public pages returned HTTP 403 to the app-style automated request during development, so the app does not scrape or report it as an automatically checked reputation source.
 
 ## Estimates
 
