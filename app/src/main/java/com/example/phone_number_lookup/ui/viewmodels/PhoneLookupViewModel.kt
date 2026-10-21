@@ -8,13 +8,13 @@ import androidx.lifecycle.viewModelScope
 import com.example.phone_number_lookup.HistoryEntry
 import com.example.phone_number_lookup.HistoryStore
 import com.example.phone_number_lookup.NumberFactsProvider
-import com.example.phone_number_lookup.PhoneReputation
-import com.example.phone_number_lookup.PhoneNumberUtils
 import com.example.phone_number_lookup.PhoneInfogaBuiltIn
 import com.example.phone_number_lookup.PhoneInfogaClient
 import com.example.phone_number_lookup.PhoneInfogaNative
 import com.example.phone_number_lookup.PhoneInfogaNumverifyResult
 import com.example.phone_number_lookup.PhoneInfogaReport
+import com.example.phone_number_lookup.PhoneNumberUtils
+import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.ReputationReport
 import com.example.phone_number_lookup.RiskAssessor
 import com.example.phone_number_lookup.RiskVerdict
@@ -39,6 +39,9 @@ data class PhoneLookupUiState(
     val searchError: String? = null,
     val isSearching: Boolean = false,
     val hasSearched: Boolean = false,
+    /** True when exact-number web search returned 0 hits and we fell back to the prefix block. */
+    val isPrefixWebFallback: Boolean = false,
+    val prefixSearched: String? = null,
     val spamReport: SpamReport? = null,
     val isSpamScanning: Boolean = false,
     val reputationReports: List<ReputationReport> = emptyList(),
@@ -96,6 +99,8 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                 isReputationScanning = true,
                 searchResults = emptyList(),
                 searchError = null,
+                isPrefixWebFallback = false,
+                prefixSearched = null,
                 spamReport = null,
                 reputationReports = emptyList(),
                 phoneInfogaResult = null,
@@ -118,15 +123,42 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         val token = scans.supersede()
 
         scans.start(token) { active ->
-            val response = SearchRepository.searchWeb(
-                listOf(formats.e164, formats.international, formats.national, formats.rfc3966)
-            )
+            val exactQueries = listOf(
+                formats.e164,
+                formats.international,
+                formats.national,
+                formats.rfc3966,
+                localFormat
+            ).distinct()
+            val primaryResponse = SearchRepository.searchWeb(exactQueries)
+
+            if (primaryResponse.results.isEmpty() && primaryResponse.error == null) {
+                val prefixQueries = buildPrefixFallbackQueries(normalized, localFormat)
+                if (prefixQueries.isNotEmpty()) {
+                    val fallbackResponse = SearchRepository.searchWeb(prefixQueries)
+                    if (scans.isCurrent(active) && fallbackResponse.results.isNotEmpty()) {
+                        _uiState.update {
+                            it.copy(
+                                searchResults = fallbackResponse.results,
+                                searchError = null,
+                                isSearching = false,
+                                isPrefixWebFallback = true,
+                                prefixSearched = prefixQueries.first()
+                            )
+                        }
+                        return@start
+                    }
+                }
+            }
+
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(
-                        searchResults = response.results,
-                        searchError = response.error,
-                        isSearching = false
+                        searchResults = primaryResponse.results,
+                        searchError = primaryResponse.error,
+                        isSearching = false,
+                        isPrefixWebFallback = false,
+                        prefixSearched = null
                     )
                 }
             }
@@ -146,6 +178,36 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                 _uiState.update { it.copy(reputationReports = reports, isReputationScanning = false) }
                 refreshVerdict()
             }
+        }
+    }
+
+    /**
+     * Builds prefix-block search queries when an exact number has 0 web hits.
+     * - For UK 01/02/03 switchboard/DDI blocks (e.g. 02036887393 -> "020 3688", "0203688"),
+     *   this surfaces the organisation or hospital switchboard that owns the 10,000-number block.
+     * - For UK 076/070/07 ranges (e.g. 07666516899 -> "07666", "076665"),
+     *   this surfaces community warnings about active spoofing waves on that prefix.
+     */
+    internal fun buildPrefixFallbackQueries(normalized: String, localFormat: String): List<String> {
+        val cleanDigits = localFormat.filter { it.isDigit() }
+        if (!normalized.startsWith("+44") || cleanDigits.length < 7) return emptyList()
+
+        return when {
+            cleanDigits.startsWith("020") && cleanDigits.length >= 7 -> {
+                val exchange = cleanDigits.substring(3, 7)
+                listOf("020 $exchange", "020$exchange", "+44 20 $exchange")
+            }
+            (cleanDigits.startsWith("01") || cleanDigits.startsWith("02") || cleanDigits.startsWith("03")) && cleanDigits.length >= 7 -> {
+                val prefix7 = cleanDigits.take(7)
+                val formattedPrefix = "${cleanDigits.take(4)} ${cleanDigits.substring(4, 7)}"
+                listOf(formattedPrefix, prefix7)
+            }
+            cleanDigits.startsWith("07") && cleanDigits.length >= 6 -> {
+                val prefix6 = cleanDigits.take(6)
+                val prefix5 = cleanDigits.take(5)
+                listOf(prefix6, prefix5)
+            }
+            else -> emptyList()
         }
     }
 

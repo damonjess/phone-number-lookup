@@ -40,6 +40,21 @@ object PhoneDorks {
         if (n.spellings.isEmpty()) return emptyList()
         val any = anyOf(n)
 
+        val rawDigits = n.rawLocal.filter { it.isDigit() }
+        val prefixGroup = if (rawDigits.length >= 6) {
+            val prefix5 = rawDigits.take(5)
+            val prefix6 = rawDigits.take(6)
+            listOf(
+                DorkGroup(
+                    "Prefix & spoofing wave ($prefix5…)",
+                    listOf(
+                        PhoneDork("Who Called UK prefix activity ($prefix6)", "site:who-called.co.uk \"$prefix6\" OR \"$prefix5\""),
+                        PhoneDork("Prefix scam & pager warnings ($prefix5)", "\"$prefix5\" (scam OR spam OR pager OR radiopaging OR \"who called\" OR ofcom)"),
+                    )
+                )
+            )
+        } else emptyList()
+
         return listOf(
             // One search for any page that mentions the number next to a social network. Per-site searches
             // such as site:facebook.com almost never match, because those sites don't publish numbers.
@@ -75,6 +90,6 @@ object PhoneDorks {
                     PhoneDork("With email or contact", "$any (email OR \"e-mail\" OR contact)"),
                 ),
             ),
-        )
+        ) + prefixGroup
     }
 }

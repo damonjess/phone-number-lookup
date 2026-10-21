@@ -13,20 +13,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,6 +70,98 @@ import com.example.phone_number_lookup.ui.components.UnifiedEvidenceCard
 import com.example.phone_number_lookup.ui.components.VerdictCard
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.PhoneLookupViewModel
+
+private data class TelecomTelemetry(
+    val capabilityBadge: String,
+    val capabilityTone: Tone,
+    val tariffBadge: String,
+    val tariffTone: Tone,
+    val prefixBlockLabel: String,
+    val cliAssessment: String,
+    val callbackAdvice: String,
+)
+
+private fun buildTelecomTelemetry(normalized: String, localFormat: String): TelecomTelemetry {
+    val cleanLocal = localFormat.filter { it.isDigit() }
+    val isUk = normalized.startsWith("+44")
+    val isUkPager = isUk && cleanLocal.startsWith("076") && !cleanLocal.startsWith("07624")
+    val isUkDramaOrUnalloc = isUk && (
+        cleanLocal.startsWith("01632") ||
+            cleanLocal.startsWith("07700900") ||
+            cleanLocal.startsWith("08081570") ||
+            cleanLocal.startsWith("09098790") ||
+            cleanLocal.startsWith("03069990") ||
+            cleanLocal.startsWith("071") ||
+            cleanLocal.startsWith("072")
+        )
+    val isUkPersonal = isUk && cleanLocal.startsWith("070")
+    val isUkPremiumOrSpecial = isUk && (
+        cleanLocal.startsWith("09") || cleanLocal.startsWith("084") || cleanLocal.startsWith("087")
+        )
+    val isUkFreephone = isUk && (cleanLocal.startsWith("0800") || cleanLocal.startsWith("0808"))
+    val isUkVoip = isUk && cleanLocal.startsWith("056")
+    val isUkGeographicDdi = isUk && (cleanLocal.startsWith("01") || cleanLocal.startsWith("02") || cleanLocal.startsWith("03"))
+
+    val (capBadge, capTone) = when {
+        isUkPager -> "RECEIVE-ONLY PAGER · CANNOT CALL OUT" to Tone.DANGER
+        isUkDramaOrUnalloc -> "UNALLOCATED / DRAMA RANGE · SPOOFED" to Tone.DANGER
+        isUkPersonal -> "070 PERSONAL FORWARDING TRAP" to Tone.DANGER
+        isUkVoip -> "LOCATION-INDEPENDENT VOIP" to Tone.WARNING
+        isUkGeographicDdi -> "GEOGRAPHIC / PBX DDI BLOCK" to Tone.NEUTRAL
+        else -> "VOICE & SMS CAPABLE" to Tone.ACCENT
+    }
+
+    val (tariffBadge, tariffTone) = when {
+        isUkPager || isUkPersonal || isUkPremiumOrSpecial -> "OUT-OF-BUNDLE CALLBACK RISK" to Tone.DANGER
+        isUkFreephone -> "FREEPHONE" to Tone.ACCENT
+        else -> "STANDARD RATE" to Tone.NEUTRAL
+    }
+
+    val prefixBlock = when {
+        isUk && cleanLocal.startsWith("020") && cleanLocal.length >= 7 ->
+            "020 ${cleanLocal.substring(3, 7)} xxxx (10,000-line DDI block)"
+        isUk && isUkGeographicDdi && cleanLocal.length >= 7 ->
+            "${cleanLocal.take(4)} ${cleanLocal.substring(4, 7)} xxxx (DDI / exchange block)"
+        isUk && cleanLocal.startsWith("07") && cleanLocal.length >= 6 ->
+            "${cleanLocal.take(5)} / ${cleanLocal.take(6)}xxxxx (Ofcom 07 block)"
+        else -> formatsPrefixFallback(normalized)
+    }
+
+    val cliAssessment = when {
+        isUkPager ->
+            "Radiopagers are strictly one-way, receive-only devices. A genuine ${cleanLocal.take(5)} pager cannot place outbound voice calls or send texts — an incoming call from this number proves Caller ID spoofing or a Wangiri callback trap."
+        isUkDramaOrUnalloc ->
+            "Reserved by Ofcom for TV/drama or currently unallocated. No real subscriber line can originate calls from this number; the Caller ID is guaranteed to be spoofed."
+        isUkPersonal ->
+            "070 personal numbers forward calls to hidden destinations and are heavily abused for parcel, vehicle-ad, and missed-call scams."
+        isUkGeographicDdi ->
+            "Geographic/non-geographic blocks (especially 020 3 and 03) are used by NHS trusts, councils, and businesses as Direct-Dial-In (DDI) SIP extensions, where individual desk extensions are unlisted. However, they are also frequently spoofed by outbound call centres."
+        else ->
+            "Standard two-way numbering range. Can legitimately originate calls, though any number can still be spoofed by automated dialers."
+    }
+
+    val callbackAdvice = when {
+        isUkPager || isUkPersonal || isUkPremiumOrSpecial ->
+            "Do NOT return missed calls to this range. 076, 070, 084, 087, and 09 prefixes are frequently excluded from free monthly mobile minutes and can incur high per-minute or connection charges."
+        isUkGeographicDdi ->
+            "If you are expecting an appointment (such as an NHS or GP referral), check your NHS App or call the clinic's main published switchboard rather than redialing an unrecognised DDI extension."
+        else ->
+            "If you do not recognise the caller and no voicemail was left, avoid calling back directly."
+    }
+
+    return TelecomTelemetry(
+        capabilityBadge = capBadge,
+        capabilityTone = capTone,
+        tariffBadge = tariffBadge,
+        tariffTone = tariffTone,
+        prefixBlockLabel = prefixBlock,
+        cliAssessment = cliAssessment,
+        callbackAdvice = callbackAdvice
+    )
+}
+
+private fun formatsPrefixFallback(normalized: String): String =
+    if (normalized.length > 6) "${normalized.take(6)}…" else normalized
 
 @Composable
 fun PhoneLookupScreen(
@@ -155,11 +241,55 @@ fun PhoneLookupScreen(
             val lineType = PhoneNumberUtils.getLineType(normalized)
             val localFormat = if (normalized.startsWith("+44")) "0" + normalized.removePrefix("+44") else normalized
             val formats = PhoneNumberUtils.getFormattedFormats(normalized, localFormat)
+            val telemetry = remember(normalized, localFormat) {
+                buildTelecomTelemetry(normalized, localFormat)
+            }
+            val carrierHint = PhoneNumberUtils.getUkCarrierHint(normalized)
 
             uiState.verdict?.let { verdict ->
                 VerdictCard(verdict)
                 Spacer(modifier = Modifier.height(16.dp))
             }
+
+            SectionCard(
+                title = "Ofcom Telecoms & Spoofing Telemetry",
+                subtitle = "Outbound call capability, DDI block structure and callback tariff risk",
+                tone = telemetry.capabilityTone,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Pill(telemetry.capabilityBadge, tone = telemetry.capabilityTone)
+                    Pill(telemetry.tariffBadge, tone = telemetry.tariffTone)
+                }
+                ResultRow("Estimated Line Class", lineType)
+                ResultRow("Prefix / DDI Block", telemetry.prefixBlockLabel)
+                carrierHint?.let { ResultRow("Ofcom Range Holder", it) }
+                if (isUk && areaInfo != null) {
+                    ResultRow("UK Numbering Area", areaInfo)
+                }
+                Text(
+                    text = telemetry.cliAssessment,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                Text(
+                    text = telemetry.callbackAdvice,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    color = if (telemetry.tariffTone == Tone.DANGER) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             val phoniaDorks = OsintTools.getPhoniaTools(normalized)
             val phoneInfogaDorks = OsintTools.getPhoneInfogaDorks(normalized, localFormat)
@@ -203,14 +333,19 @@ fun PhoneLookupScreen(
                         target = formats.e164,
                         sections = listOf(
                             PdfSection(
-                                "Number Metadata",
-                                listOf(
+                                "Number Metadata & Telecom Telemetry",
+                                listOfNotNull(
                                     "Original Input: $input",
                                     "E.164: ${formats.e164}",
                                     "National: ${formats.national}",
                                     "Country: $country",
                                     "Region: ${areaInfo ?: "N/A"}",
                                     "Line Type: $lineType",
+                                    "Prefix / DDI Block: ${telemetry.prefixBlockLabel}",
+                                    carrierHint?.let { "Ofcom Range Holder: $it" },
+                                    "Capability Verdict: ${telemetry.capabilityBadge}",
+                                    "Tariff Verdict: ${telemetry.tariffBadge}",
+                                    "CLI Assessment: ${telemetry.cliAssessment}",
                                     "Verdict: ${uiState.verdict?.headline ?: "N/A"} (${uiState.verdict?.summary ?: ""})"
                                 )
                             ),
@@ -218,10 +353,13 @@ fun PhoneLookupScreen(
                                 "Spam & Caller Reputation",
                                 buildList {
                                     uiState.spamReport?.let {
-                                        add("${it.source}: Score ${it.scoreLabel} (${it.riskLabel}), ${it.comments ?: 0} comments")
+                                        add("${it.source}: Score ${it.scoreLabel} (${it.riskLabel}), ${it.comments ?: 0} comments, ${it.searches ?: 0} searches")
+                                        it.callerName?.let { name -> add("Reported Caller Name: $name") }
+                                        it.callerType?.let { type -> add("Reported Caller Type: $type") }
                                     }
                                     uiState.reputationReports.forEach { rep ->
                                         add("${rep.source}: ${rep.reportCount} report(s) - ${rep.url}")
+                                        rep.samples.forEach { sample -> add("  • $sample") }
                                     }
                                 }
                             ),
@@ -241,26 +379,26 @@ fun PhoneLookupScreen(
                 subtitle = "Formats, region and line type from public numbering data",
                 tone = Tone.NEUTRAL,
             ) {
-                    ResultRow("Original", input)
-                    ResultRow("E.164 Normalized", formats.e164)
-                    ResultRow("International", formats.international)
-                    ResultRow("National Format", formats.national)
-                    ResultRow("RFC3966 Link", formats.rfc3966)
-                    ResultRow("Country", country)
-                    ResultRow("Estimated number type", lineType)
-                    ResultRow("Country time-zone group", timezone)
-                    if (isUk && areaInfo != null) {
-                        ResultRow("UK Region", areaInfo)
-                    }
-                    PhoneNumberUtils.getUkCarrierHint(normalized)?.let { carrierHint ->
-                        ResultRow("Ofcom Range Block", carrierHint)
-                    }
-                    Text(
-                        "Type, range block and time zone are estimates from public numbering data; they do not prove the current carrier or caller location.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
+                ResultRow("Original", input)
+                ResultRow("E.164 Normalized", formats.e164)
+                ResultRow("International", formats.international)
+                ResultRow("National Format", formats.national)
+                ResultRow("RFC3966 Link", formats.rfc3966)
+                ResultRow("Country", country)
+                ResultRow("Estimated number type", lineType)
+                ResultRow("Country time-zone group", timezone)
+                if (isUk && areaInfo != null) {
+                    ResultRow("UK Region", areaInfo)
+                }
+                carrierHint?.let {
+                    ResultRow("Ofcom Range Block", it)
+                }
+                Text(
+                    "Type, range block and time zone are estimates from public numbering data; they do not prove the current carrier or caller location.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
             }
 
             Spacer(Modifier.height(Space.lg))
@@ -359,9 +497,9 @@ fun PhoneLookupScreen(
                 )
 
                 val piReport = uiState.phoneInfogaReport
-                piReport?.note?.let { note ->
+                piReport?.note?.let { noteText ->
                     Text(
-                        note,
+                        noteText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp)
@@ -482,11 +620,18 @@ fun PhoneLookupScreen(
                             ResultRow("Spam Score", report.scoreLabel)
                             ResultRow("Verdict", report.riskLabel)
                             ResultRow("Evidence confidence", report.confidenceLabel)
+                            report.callerName?.let { ResultRow("Reported Caller Name", it) }
+                            report.callerType?.let { ResultRow("Caller Type", it) }
                             report.comments?.let { ResultRow("Community Reports", it.toString()) }
                             report.searches?.let { ResultRow("Times Searched", it.toString()) }
+                            report.operatorHint?.let { ResultRow("Reported Operator", it) }
+                            report.latestActivity?.let { ResultRow("Latest Activity", it) }
                             report.location?.let { ResultRow("Reported Location", it) }
                             report.country?.let { ResultRow("Country", it) }
-                            report.callerType?.let { ResultRow("Caller Type", it) }
+                            report.searchVelocityNote?.let { velocityWarning ->
+                                Spacer(Modifier.height(6.dp))
+                                Notice(velocityWarning, tone = Tone.WARNING)
+                            }
                         }
                     }
                 }
@@ -499,7 +644,7 @@ fun PhoneLookupScreen(
                 toolTitle = "Community Report Databases",
                 subtitle = if (supportedRepSources.isEmpty())
                     "Additional community sources cover UK (+44) and North American (+1) numbers"
-                else "Live user reports from ${supportedRepSources.joinToString(" and ")}",
+                else "Live user reports from ${supportedRepSources.joinToString(", ")}",
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer
             ) {
                 when {
@@ -565,8 +710,15 @@ fun PhoneLookupScreen(
             } else if (uiState.searchError != null) {
                 Notice(uiState.searchError!!, tone = Tone.DANGER)
             } else if (uiState.hasSearched && uiState.searchResults.isEmpty()) {
-                Notice("No indexed web matches found for this number in this search.", tone = Tone.NEUTRAL)
+                Notice("No indexed web matches found for this number or its prefix block.", tone = Tone.NEUTRAL)
             } else {
+                if (uiState.isPrefixWebFallback && uiState.prefixSearched != null) {
+                    Notice(
+                        "No exact web matches for $localFormat. Showing prefix-block matches for \"${uiState.prefixSearched}\" (identifies hospital/corporate PBX switchboards and active prefix spoofing waves).",
+                        tone = Tone.WARNING
+                    )
+                    Spacer(Modifier.height(Space.sm))
+                }
                 uiState.searchResults.forEach { result ->
                     Surface(
                         onClick = { openUrl(context, result.url) },

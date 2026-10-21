@@ -8,7 +8,7 @@ package com.example.phone_number_lookup
  *
  * Design rules:
  *  - Offline numbering-rule hints alone can never reach HIGH. They only say "be careful".
- *    HIGH needs community evidence (tellows / WhoCallsMe / 800notes) or the user's own flag.
+ *    HIGH needs community evidence (tellows / Who Called UK / WhoCallsMe / 800notes) or the user's own flag.
  *  - "No reports" never becomes "safe". The best a clean number gets is NO_WARNING_SIGNS.
  *  - While sources are still loading, a clean result shows CHECKING instead of an early all-clear.
  */
@@ -80,7 +80,7 @@ object RiskAssessor {
     )
 
     private val SCAM_CALL_TYPE = Regex(
-        "scam|fraud|phish|robo|telemarket|spam|harass|nuisance|silent|prank|wangiri|one.?ring|lottery|prize|impersonat",
+        "scam|fraud|phish|robo|telemarket|spam|harass|nuisance|silent|prank|wangiri|one.?ring|lottery|prize|impersonat|dangerous|spoof|callback|trap|debt|cold.?call|unsolicited",
         RegexOption.IGNORE_CASE,
     )
 
@@ -90,6 +90,7 @@ object RiskAssessor {
     fun offlineReasons(facts: NumberFacts, homeCallingCode: Int = 44): List<RiskReason> {
         val out = mutableListOf<RiskReason>()
         val uk = facts.countryCallingCode == 44
+        val ukLocal = if (facts.e164.startsWith("+44")) "0" + facts.e164.removePrefix("+44") else ""
 
         if (!facts.parsed || !facts.possible || !facts.valid) {
             out += RiskReason(
@@ -100,31 +101,53 @@ object RiskAssessor {
             )
         }
 
-        when (facts.kind) {
-            NumberKind.PREMIUM_RATE -> out += RiskReason(
+        if (uk && (ukLocal.startsWith("01632") || ukLocal.startsWith("07700900") ||
+                ukLocal.startsWith("08081570") || ukLocal.startsWith("09098790") ||
+                ukLocal.startsWith("03069990") || ukLocal.startsWith("071") || ukLocal.startsWith("072"))
+        ) {
+            out += RiskReason(
+                50,
+                "reserved drama or unallocated UK range",
+                "This prefix is reserved by Ofcom for TV/drama or is unallocated. Real subscribers cannot have " +
+                    "this number — any call displaying it is guaranteed to be using a spoofed Caller ID.",
+            )
+        }
+
+        val isUkPagerPrefix = uk && ukLocal.startsWith("076") && !ukLocal.startsWith("07624")
+        val isUkPersonalPrefix = uk && ukLocal.startsWith("070")
+
+        when {
+            facts.kind == NumberKind.PAGER || isUkPagerPrefix -> out += RiskReason(
+                45,
+                "radiopaging (pager) range — cannot dial out",
+                (if (uk) "UK 076 radiopaging range (${ukLocal.take(5).ifEmpty { "076" }}). " else "Radiopaging number. ") +
+                    "Pagers are receive-only devices and cannot place outbound voice calls or texts. " +
+                    "If this number called you, the Caller ID is spoofed or it is an Ofcom-warned 076 missed-call " +
+                    "callback trap (often excluded from inclusive mobile minutes). Do not call back.",
+            )
+            facts.kind == NumberKind.PREMIUM_RATE -> out += RiskReason(
                 30,
                 "premium-rate number",
                 (if (uk) "Premium-rate range (UK 09…). " else "Premium-rate number. ") +
                     "Ringing it back can cost a lot, and callback traps use these ranges. Don't call back.",
             )
-            NumberKind.PERSONAL_NUMBER -> out += RiskReason(
+            facts.kind == NumberKind.PERSONAL_NUMBER || isUkPersonalPrefix -> out += RiskReason(
                 35,
                 "personal-number range",
                 (if (uk) "UK 070 personal-number range. " else "Personal-number range. ") +
                     "These forward to another phone, hide the real location, and are often used by scammers. " +
                     "Calling them can also be expensive.",
             )
-            NumberKind.VOIP -> out += RiskReason(
+            facts.kind == NumberKind.VOIP -> out += RiskReason(
                 10,
                 "internet (VoIP) number",
                 "Internet-based number. These are cheap to get and easy to spoof, though real businesses use them too.",
             )
-            NumberKind.SHARED_COST -> out += RiskReason(
+            facts.kind == NumberKind.SHARED_COST -> out += RiskReason(
                 10,
                 "special-rate number",
                 "Special-rate range. Calling back costs more than a normal call.",
             )
-            else -> Unit
         }
 
         val cc = facts.countryCallingCode
@@ -152,7 +175,32 @@ object RiskAssessor {
 
     private fun tellowsReason(spam: SpamReport): RiskReason? {
         val score = spam.score ?: return null
-        if (!spam.hasCommunityReports) return null // tellows' default 5 with no comments = unrated, not suspicious
+        val type = spam.callerType?.takeIf { it.isNotBlank() && !it.equals("Unknown", true) }
+        val callerName = spam.callerName?.takeIf { it.isNotBlank() && !it.equals("Unknown", true) }
+        val searches = spam.searches ?: 0
+
+        if (!spam.hasCommunityReports) {
+            // Even without written comments, HTML enrichment may reveal a scam category or a huge search spike.
+            if (type != null && SCAM_CALL_TYPE.containsMatchIn(type)) {
+                return RiskReason(
+                    25,
+                    "tellows classifies it as $type",
+                    "tellows lists this number as '$type'" +
+                        (callerName?.let { " (caller: $it)" } ?: "") +
+                        (if (searches > 0) " with $searches lookups" else "") + ".",
+                )
+            }
+            if (searches >= 50) {
+                return RiskReason(
+                    15,
+                    "tellows: high lookup spike ($searches searches)",
+                    "This number has been searched $searches times on tellows with no written comments yet — " +
+                        "often seen during a live spoofing wave or outbound switchboard campaign.",
+                )
+            }
+            return null // tellows' default 5 with no comments = unrated, not suspicious
+        }
+
         val comments = spam.comments ?: 0
         // One or two reports are weak evidence, so they count for less.
         val weight = if (comments >= 3) 1.0 else 0.6
@@ -168,20 +216,22 @@ object RiskAssessor {
         }
         val points = Math.round(base * weight).toInt()
         if (points == 0) return null
-        val type = spam.callerType?.takeIf { it.isNotBlank() && !it.equals("Unknown", true) }
         val reports = "$comments report" + if (comments == 1) "" else "s"
+        val callerDetails = buildString {
+            if (type != null) append(", describing it as: $type")
+            if (callerName != null) append(" (reported caller: $callerName)")
+        }
         return if (points > 0) {
             RiskReason(
                 points,
                 "tellows rates it $score/9 ($reports)",
-                "tellows users rate this number $score out of 9 from $reports" +
-                    (type?.let { ", describing it as: $it" } ?: "") + ".",
+                "tellows users rate this number $score out of 9 from $reports$callerDetails.",
             )
         } else {
             RiskReason(
                 points,
                 "tellows rates it $score/9 ($reports)",
-                "tellows users rate this number $score out of 9 from $reports, which looks legitimate.",
+                "tellows users rate this number $score out of 9 from $reports$callerDetails, which looks legitimate.",
             )
         }
     }
@@ -190,6 +240,18 @@ object RiskAssessor {
         val out = mutableListOf<RiskReason>()
         for (rep in reports) {
             if (rep.error != null || !rep.hasReports) continue
+            val isPrefixWave = rep.callTypes.any { it.contains("prefix spoofing wave", ignoreCase = true) }
+            if (isPrefixWave && rep.callTypes.size == 1) {
+                val waveLabel = rep.callTypes.first()
+                out += RiskReason(
+                    40,
+                    "${rep.source}: ${waveLabel.lowercase()}",
+                    "${rep.source} shows multiple recent nuisance reports on neighbouring numbers in the same prefix block — " +
+                        "a strong indicator that an autodialer is rotating the last digits to evade blocking.",
+                )
+                continue
+            }
+
             var pts = 25
             val scamType = rep.callTypes.firstOrNull { SCAM_CALL_TYPE.containsMatchIn(it) }
             if (scamType != null) pts += 15
@@ -321,8 +383,8 @@ object RiskAssessor {
             "Block the number in your phone's call settings.",
         )
         RiskLevel.ELEVATED -> listOf(
-            "Don't ring back a number you don't recognise, especially a premium-rate one.",
-            "If they named a company or the bank, contact it using the number on its official website or your card.",
+            "Don't ring back a number you don't recognise, especially a premium-rate or 076/070 one.",
+            "If they named a company, clinic or bank, contact it using the number on its official website or your letter/card.",
             "Don't give personal or payment details on an unexpected call.",
             "If it turns out to be a scam, report it at reportfraud.police.uk.",
         )

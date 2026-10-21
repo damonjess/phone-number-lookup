@@ -63,10 +63,10 @@ class PhoneInfogaBuiltInTest {
     fun theDorkScanListsEveryDorkAsALabelledLink() {
         val scan = PhoneInfogaBuiltIn.dorkScan(uk)
         assertEquals("googlesearch", scan.scanner)
-        assertEquals(15, scan.labeledLinks.size)
+        assertEquals(17, scan.labeledLinks.size)
         assertTrue(scan.labeledLinks.all { it.second.startsWith("https://www.google.com/search?q=") })
         assertTrue(scan.labeledLinks.any { it.first == "Scam and spam reports: WhoCallsMe" })
-        assertEquals(5, scan.rows.size)
+        assertEquals(6, scan.rows.size)
         assertTrue(scan.rows.contains("Social media" to "1 search"))
         assertTrue(scan.rows.contains("Documents and pages" to "5 searches"))
     }

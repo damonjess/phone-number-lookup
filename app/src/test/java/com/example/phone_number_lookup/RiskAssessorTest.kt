@@ -84,6 +84,29 @@ class RiskAssessorTest {
     }
 
     @Test
+    fun ukPagerPrefix_isElevatedWith45Points() {
+        val v = assess(f = facts(kind = NumberKind.PAGER, e164 = "+447666516899"))
+        assertEquals(RiskLevel.ELEVATED, v.level)
+        assertEquals(45, v.score)
+        assertTrue(v.reasons.any { it.detail.contains("cannot place outbound voice calls") })
+    }
+
+    @Test
+    fun isleOfManMobile07624_isNotFlaggedAsPager() {
+        val v = assess(f = facts(kind = NumberKind.MOBILE, e164 = "+447624123456"))
+        assertEquals(RiskLevel.NO_WARNING_SIGNS, v.level)
+        assertEquals(0, v.score)
+    }
+
+    @Test
+    fun reservedDramaRange_isFlaggedWith50Points() {
+        val v = assess(f = facts(kind = NumberKind.MOBILE, e164 = "+447700900123"))
+        assertEquals(RiskLevel.ELEVATED, v.level)
+        assertEquals(50, v.score)
+        assertTrue(v.reasons.any { it.short.contains("reserved drama") })
+    }
+
+    @Test
     fun premiumRate_isElevated() {
         val v = assess(f = facts(kind = NumberKind.PREMIUM_RATE, e164 = "+449098790123"))
         assertEquals(RiskLevel.ELEVATED, v.level)

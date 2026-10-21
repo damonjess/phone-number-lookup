@@ -24,13 +24,23 @@ class PhoneDorksTest {
     }
 
     @Test
-    fun fiveGroupsInAFixedOrder() {
+    fun sixGroupsInAFixedOrder() {
         val groups = PhoneDorks.generate(uk)
+        assertEquals(
+            listOf("Social media", "Scam and spam reports", "Temporary SMS numbers", "Documents and pages", "General", "Prefix & spoofing wave (02079…)"),
+            groups.map { it.title }
+        )
+        assertEquals(listOf(1, 6, 1, 5, 2, 2), groups.map { it.dorks.size })
+    }
+
+    @Test
+    fun shortNumberDoesNotIncludePrefixWaveGroup() {
+        val shortNum = DorkNumber("+44123", "+44 123", "0123", "0123")
+        val groups = PhoneDorks.generate(shortNum)
         assertEquals(
             listOf("Social media", "Scam and spam reports", "Temporary SMS numbers", "Documents and pages", "General"),
             groups.map { it.title }
         )
-        assertEquals(listOf(1, 6, 1, 5, 2), groups.map { it.dorks.size })
     }
 
     @Test
@@ -47,9 +57,15 @@ class PhoneDorksTest {
     }
 
     @Test
-    fun everyDorkContainsTheNumber() {
-        PhoneDorks.generate(uk).flatMap { it.dorks }.forEach {
-            assertTrue(it.label, it.query.contains("\"02079460958\""))
+    fun everyDorkContainsTheNumberOrPrefix() {
+        PhoneDorks.generate(uk).forEach { group ->
+            group.dorks.forEach { dork ->
+                if (group.title.startsWith("Prefix")) {
+                    assertTrue(dork.label, dork.query.contains("02079"))
+                } else {
+                    assertTrue(dork.label, dork.query.contains("\"02079460958\""))
+                }
+            }
         }
     }
 

@@ -578,7 +578,7 @@ class OsintParsingTest {
     @Test
     fun reputationSourcesAreAdvertisedForSupportedNumbers() {
         assertEquals(listOf("WhoCallsMe", "800notes"), PhoneReputation.supportedSources("+18554208313"))
-        assertEquals(listOf("Should I Answer UK", "WhoCallsMe"), PhoneReputation.supportedSources("+447700900123"))
+        assertEquals(listOf("Who Called UK", "Should I Answer UK", "WhoCallsMe"), PhoneReputation.supportedSources("+447700900123"))
         assertTrue(PhoneReputation.supportedSources("+3312345678").isEmpty())
     }
 

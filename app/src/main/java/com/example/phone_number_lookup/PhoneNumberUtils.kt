@@ -226,6 +226,7 @@ object PhoneNumberUtils {
     )
 
     private val ukMobileBlockCarriers = mapOf(
+        "070" to "Ofcom Personal Numbering (Call-Forwarding / High Tariff Risk)",
         "073" to "Hutchison 3G (Three UK) / MVNO range",
         "07400" to "Hutchison 3G (Three UK)",
         "07401" to "Telefonica UK (O2)",
@@ -251,6 +252,23 @@ object PhoneNumberUtils {
         "0757" to "EE (T-Mobile) / Vodafone range",
         "0758" to "Vodafone UK / Telefonica (O2) range",
         "0759" to "Telefonica UK (O2) / EE range",
+        // 07624 is Isle of Man mobile, NOT a pager
+        "07624" to "Manx Telecom / Sure (Isle of Man Mobile)",
+        // Ofcom 076 Radiopaging allocations
+        "07600" to "PageOne Communications (Radiopaging)",
+        "07623" to "PageOne Communications (Radiopaging)",
+        "07640" to "Vodafone Paging (Radiopaging)",
+        "07659" to "PageOne Communications (Radiopaging)",
+        "07660" to "PageOne Communications (Radiopaging)",
+        "07663" to "Vodafone Paging (Radiopaging)",
+        "07666" to "Vodafone Limited / 24 Seven Communications / FIO Telecom (Radiopaging)",
+        "07669" to "Vodafone Paging (Radiopaging)",
+        "07677" to "PageOne Communications (Radiopaging)",
+        "07681" to "PageOne Communications (Radiopaging)",
+        "07693" to "Vodafone Paging (Radiopaging)",
+        "07699" to "Vodafone Paging (Radiopaging)",
+        "076" to "Ofcom Radiopaging Allocation (Receive-only pager range)",
+        "077009" to "Ofcom TV & Drama Reserved Range (Fake / Spoofed CLI)",
         "07701" to "Telefonica UK (O2)",
         "07702" to "Vodafone UK",
         "07703" to "Vodafone UK",
@@ -262,7 +280,6 @@ object PhoneNumberUtils {
         "0776" to "Telefonica UK (O2)",
         "0777" to "Vodafone UK / EE (Orange)",
         "0778" to "Vodafone UK / EE (Orange)",
-        // 0779 is split between operators; the full five-digit block is the real allocation.
         "07790" to "EE (Orange)",
         "07791" to "EE (Orange)",
         "07792" to "EE (Orange)",
@@ -295,6 +312,18 @@ object PhoneNumberUtils {
         "0799" to "Vodafone UK",
         "056" to "Ofcom Location-Independent Electronic Communications (VoIP)"
     )
+
+    fun isUkDramaOrUnallocated(normalized: String): Boolean {
+        if (!normalized.startsWith("+44")) return false
+        val localPart = "0" + normalized.removePrefix("+44")
+        return localPart.startsWith("01632") ||
+            localPart.startsWith("07700900") ||
+            localPart.startsWith("08081570") ||
+            localPart.startsWith("09098790") ||
+            localPart.startsWith("03069990") ||
+            localPart.startsWith("071") ||
+            localPart.startsWith("072")
+    }
 
     fun normalize(input: String): String {
         val cleaned = input.trim().replace(cleanRegex, "")
@@ -376,16 +405,30 @@ object PhoneNumberUtils {
     fun getLineType(normalized: String): String {
         val localPart = if (normalized.startsWith("+44")) "0" + normalized.removePrefix("+44") else normalized
         when {
-            localPart.startsWith("070") -> return "Estimated personal-forwarding number (high scam risk)"
-            localPart.startsWith("076") -> return "Estimated radiopaging number"
-            localPart.startsWith("07") -> return "Estimated mobile number"
-            localPart.startsWith("0800") || localPart.startsWith("0808") -> return "Estimated freephone number"
-            localPart.startsWith("084") || localPart.startsWith("087") -> return "Estimated special-rate number"
-            localPart.startsWith("09") -> return "Estimated premium-rate number"
-            localPart.startsWith("056") -> return "Estimated VoIP (internet) number"
-            localPart.startsWith("030") -> return "Estimated non-geographic number (public sector / charity)"
-            localPart.startsWith("03") -> return "Estimated non-geographic number"
-            localPart.startsWith("01") || localPart.startsWith("02") -> return "Estimated geographic landline"
+            isUkDramaOrUnallocated(normalized) ->
+                return "Reserved drama or unallocated UK range (guaranteed spoofed CLI)"
+            localPart.startsWith("070") ->
+                return "Estimated personal-forwarding number (high scam & tariff risk)"
+            localPart.startsWith("07624") ->
+                return "Estimated mobile number (Isle of Man)"
+            localPart.startsWith("076") ->
+                return "Estimated radiopaging (pager) number — receive-only (cannot make outbound calls; spoofed CLI or callback trap)"
+            localPart.startsWith("07") ->
+                return "Estimated mobile number"
+            localPart.startsWith("0800") || localPart.startsWith("0808") ->
+                return "Estimated freephone number"
+            localPart.startsWith("084") || localPart.startsWith("087") ->
+                return "Estimated special-rate number"
+            localPart.startsWith("09") ->
+                return "Estimated premium-rate number"
+            localPart.startsWith("056") ->
+                return "Estimated VoIP (internet) number"
+            localPart.startsWith("030") ->
+                return "Estimated non-geographic number (public sector / charity)"
+            localPart.startsWith("03") ->
+                return "Estimated non-geographic number"
+            localPart.startsWith("01") || localPart.startsWith("02") ->
+                return "Estimated geographic landline"
         }
 
         val parsed = try {
@@ -412,14 +455,18 @@ object PhoneNumberUtils {
     fun getAreaInfo(normalized: String): String? {
         if (!normalized.startsWith("+44")) return null
         val localPart = "0" + normalized.removePrefix("+44")
+        if (isUkDramaOrUnallocated(normalized)) {
+            return "Ofcom TV/drama or unallocated range (never assigned to real subscribers)"
+        }
         for (length in 6 downTo 3) {
             if (localPart.length >= length) {
                 ukAreaCodes[localPart.take(length)]?.let { return it }
             }
         }
         return when {
-            localPart.startsWith("070") -> "UK 070 personal-number forwarding range"
-            localPart.startsWith("076") -> "UK pager range"
+            localPart.startsWith("070") -> "UK 070 personal-number forwarding range (high scam/cost risk)"
+            localPart.startsWith("07624") -> "Isle of Man mobile range"
+            localPart.startsWith("076") -> "UK 076 pager range (receive-only; outbound calls from 076 are spoofed)"
             localPart.startsWith("07") -> "UK mobile range"
             localPart.startsWith("0800") || localPart.startsWith("0808") -> "UK freephone range"
             localPart.startsWith("030") -> "UK public sector & charity non-geographic range"
@@ -435,7 +482,7 @@ object PhoneNumberUtils {
     fun getUkCarrierHint(normalized: String): String? {
         if (!normalized.startsWith("+44")) return null
         val localPart = "0" + normalized.removePrefix("+44")
-        for (len in 5 downTo 3) {
+        for (len in 6 downTo 3) {
             if (localPart.length >= len) {
                 ukMobileBlockCarriers[localPart.take(len)]?.let { return "$it (original Ofcom block)" }
             }
