@@ -363,9 +363,24 @@ fun copyToClipboard(context: Context, label: String, text: String) {
     Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
 }
 
+fun sanitizeUrlForOpening(url: String): String {
+    val trimmed = url.trim()
+    val lower = trimmed.lowercase()
+    if (lower.contains("twitter.com/i/users/email_available") ||
+        lower.contains("api.twitter.com") ||
+        lower.contains("email_available.json") ||
+        (lower.contains("twitter.com") && (lower.contains("/i/users/") || lower.endsWith(".json") || lower.contains(".json?"))) ||
+        (lower.contains("x.com") && (lower.contains("/i/users/") || lower.endsWith(".json") || lower.contains(".json?")))
+    ) {
+        return "https://x.com/"
+    }
+    return trimmed
+}
+
 fun openUrl(context: Context, url: String) {
     try {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        val sanitized = sanitizeUrlForOpening(url)
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(sanitized))
         context.startActivity(intent)
     } catch (e: ActivityNotFoundException) {
         Toast.makeText(context, "No app available to handle this link", Toast.LENGTH_SHORT).show()

@@ -162,6 +162,13 @@ def _blackbird_config(is_email, target, max_sites):
 def _clean_profile_url(site_name, raw_url):
     name_lower = str(site_name).lower()
     url_lower = str(raw_url).lower()
+    if "twitter" in name_lower or name_lower == "x" or "twitter.com" in url_lower or "x.com" in url_lower:
+        if any(k in url_lower for k in ["email_available", "/i/users/", "api.twitter.com", "api.x.com", ".json"]):
+            return "https://x.com/"
+        cleaned = str(raw_url).replace("{account}", "").rstrip('/')
+        if cleaned in ("https://twitter.com", "https://x.com", "https://twitter.com/i", "https://x.com/i") or "/i/users" in cleaned:
+            return "https://x.com/"
+        return str(raw_url).replace("twitter.com", "x.com")
     if "spotify" in name_lower or "spotify.com" in url_lower:
         return "https://open.spotify.com/"
     if "firefox" in name_lower or "firefox.com" in url_lower:

@@ -24,7 +24,27 @@ object CuratedEmailChecks {
         imgur(),
         tumblr(),
         pornhub(),
-        atlassian()
+        atlassian(),
+        twitter(),
+        adobe(),
+        pinterest(),
+        patreon(),
+        lastFm(),
+        codecademy(),
+        eventbrite(),
+        evernote(),
+        quora(),
+        samsung(),
+        wattpad(),
+        xing(),
+        anyDo(),
+        notion(),
+        strava(),
+        deliveroo(),
+        codepen(),
+        garmin(),
+        myspace(),
+        bitmoji()
     )
 
     private fun mozillaFirefox() = SiteProbe(
@@ -364,6 +384,346 @@ object CuratedEmailChecks {
         foundStrings = listOf("\"accountExists\":true", "\"account_exists\":true"),
         missingCodes = setOf(404),
         missingStrings = listOf("\"accountExists\":false", "\"account_exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun twitter() = SiteProbe(
+        name = "Twitter / X",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://api.twitter.com/i/users/email_available.json?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://x.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"taken\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"taken\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun adobe() = SiteProbe(
+        name = "Adobe",
+        category = "software",
+        source = SRC_CURATED,
+        method = "POST",
+        urlTemplate = "https://auth.services.adobe.com/signin/v2/users/accounts",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://adobe.com/",
+        headers = mapOf("Content-Type" to "application/json"),
+        bodyTemplate = "{\"username\":\"{account}\"}",
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"accountState\":"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("account_not_found"),
+        missingUrls = emptyList()
+    )
+
+    private fun pinterest() = SiteProbe(
+        name = "Pinterest",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.pinterest.com/_ngapi/v3/check_email/?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.pinterest.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true", "\"is_taken\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"exists\":false", "\"is_taken\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun patreon() = SiteProbe(
+        name = "Patreon",
+        category = "social",
+        source = SRC_CURATED,
+        method = "POST",
+        urlTemplate = "https://www.patreon.com/api/user/email",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.patreon.com/",
+        headers = mapOf("Content-Type" to "application/json"),
+        bodyTemplate = "{\"email\":\"{account}\"}",
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun lastFm() = SiteProbe(
+        name = "Last.fm",
+        category = "music",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.last.fm/join/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.last.fm/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true", "\"taken\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"exists\":false", "\"taken\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun codecademy() = SiteProbe(
+        name = "Codecademy",
+        category = "learning",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.codecademy.com/api/v1/users/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.codecademy.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun eventbrite() = SiteProbe(
+        name = "Eventbrite",
+        category = "events",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.eventbrite.com/api/v3/users/check_email/?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.eventbrite.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"is_registered\":true", "\"exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"is_registered\":false", "\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun evernote() = SiteProbe(
+        name = "Evernote",
+        category = "productivity",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.evernote.com/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://evernote.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun quora() = SiteProbe(
+        name = "Quora",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.quora.com/api/logged_out_check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.quora.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"email_exists\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"email_exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun samsung() = SiteProbe(
+        name = "Samsung",
+        category = "tech",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://account.samsung.com/membership/checkEmailAuth?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://account.samsung.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"result\":\"DUPLICATE\"", "\"exists\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"result\":\"SUCCESS\"", "\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun wattpad() = SiteProbe(
+        name = "Wattpad",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.wattpad.com/api/v3/users/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.wattpad.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun xing() = SiteProbe(
+        name = "Xing",
+        category = "professional",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.xing.com/api/signup/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.xing.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun anyDo() = SiteProbe(
+        name = "Any.do",
+        category = "productivity",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://sm-api.any.do/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.any.do/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"userExists\":true", "\"exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"userExists\":false", "\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun notion() = SiteProbe(
+        name = "Notion",
+        category = "productivity",
+        source = SRC_CURATED,
+        method = "POST",
+        urlTemplate = "https://www.notion.so/api/v3/getsignupauthparams",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.notion.so/",
+        headers = mapOf("Content-Type" to "application/json"),
+        bodyTemplate = "{\"email\":\"{account}\"}",
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"hasPassword\":true", "\"isDomainAllowed\":"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"hasPassword\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun strava() = SiteProbe(
+        name = "Strava",
+        category = "fitness",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.strava.com/athletes/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.strava.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun deliveroo() = SiteProbe(
+        name = "Deliveroo",
+        category = "shopping",
+        source = SRC_CURATED,
+        method = "POST",
+        urlTemplate = "https://deliveroo.co.uk/api/v2/check-email",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://deliveroo.co.uk/",
+        headers = mapOf("Content-Type" to "application/json"),
+        bodyTemplate = "{\"email_address\":\"{account}\"}",
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"registered\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"registered\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun codepen() = SiteProbe(
+        name = "CodePen",
+        category = "coding",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://codepen.io/api/v1/users/check_email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://codepen.io/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"taken\":true", "\"exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"taken\":false", "\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun garmin() = SiteProbe(
+        name = "Garmin",
+        category = "fitness",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://sso.garmin.com/sso/verify-email?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.garmin.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"exists\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun myspace() = SiteProbe(
+        name = "Myspace",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://myspace.com/ajax/account/emailavailable?email={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://myspace.com/",
+        headers = mapOf("Accept" to "application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"available\":false", "\"exists\":true"),
+        missingCodes = setOf(200),
+        missingStrings = listOf("\"available\":true", "\"exists\":false"),
+        missingUrls = emptyList()
+    )
+
+    private fun bitmoji() = SiteProbe(
+        name = "Bitmoji",
+        category = "social",
+        source = SRC_CURATED,
+        method = "POST",
+        urlTemplate = "https://api.bitmoji.com/user/check_email",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.bitmoji.com/",
+        headers = mapOf("Content-Type" to "application/json"),
+        bodyTemplate = "{\"email\":\"{account}\"}",
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"user_exists\":true"),
+        missingCodes = setOf(200, 404),
+        missingStrings = listOf("\"user_exists\":false"),
         missingUrls = emptyList()
     )
 }

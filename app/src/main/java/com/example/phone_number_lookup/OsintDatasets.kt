@@ -528,6 +528,30 @@ object OsintDatasets {
         val siteLower = siteName.trim().lowercase()
         val rawLower = rawUrl.trim().lowercase()
 
+        if (siteLower == "twitter" || siteLower == "x" || siteLower == "x / twitter" ||
+            siteLower.contains("twitter") || rawLower.contains("twitter.com") || 
+            rawLower.contains("//x.com") || rawLower.contains(".x.com")
+        ) {
+            if (rawLower.contains("email_available") || rawLower.contains("/i/users/") ||
+                rawLower.contains("api.twitter.com") || rawLower.contains("api.x.com") ||
+                rawLower.endsWith(".json") || rawLower.contains(".json?")
+            ) {
+                return "https://x.com/"
+            }
+            val cleaned = rawUrl.replace("{account}", "").trimEnd('/')
+            if (cleaned == "https://twitter.com" || cleaned == "https://x.com" ||
+                cleaned == "https://twitter.com/i" || cleaned == "https://x.com/i" ||
+                cleaned.contains("/i/users")
+            ) {
+                return "https://x.com/"
+            }
+            return if (rawUrl.contains("{account}")) {
+                rawUrl.replace("{account}", "")
+            } else {
+                rawUrl
+            }.replace("twitter.com", "x.com")
+        }
+
         if (siteLower == "spotify" || rawLower.contains("spotify.com")) {
             return "https://open.spotify.com/"
         }

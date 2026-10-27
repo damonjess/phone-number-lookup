@@ -431,16 +431,21 @@ fun StatTile(
     modifier: Modifier = Modifier,
 ) {
     val color = tone.color()
+    val valueStyle = when {
+        value.length > 10 -> MaterialTheme.typography.titleSmall
+        value.length > 6 -> MaterialTheme.typography.titleMedium
+        else -> MaterialTheme.typography.titleLarge
+    }
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
         color = color.copy(alpha = 0.05f),
         border = BorderStroke(1.dp, color.copy(alpha = 0.22f)),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
             Text(
                 text = value,
-                style = MaterialTheme.typography.titleLarge,
+                style = valueStyle,
                 color = color,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
