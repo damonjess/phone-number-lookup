@@ -178,12 +178,13 @@ fun EmailIdentitySummarySection(
 ) {
     val names = attribution?.namesFound.orEmpty().distinctBy { it.value.lowercase() }
     val usernames = attribution?.usernamesFound.orEmpty().distinctBy { it.value.lowercase() }
+    val phones = attribution?.phonesFound.orEmpty().distinctBy { it.value.lowercase() }
     val locations = attribution?.locationsFound.orEmpty().distinctBy { it.value.lowercase() }
     val photos = attribution?.avatarUrls.orEmpty()
         .filter { it.startsWith("http://") || it.startsWith("https://") }
         .distinct()
     val links = attribution?.profileLinks.orEmpty().distinctBy { it.url.lowercase() }
-    val isEmpty = names.isEmpty() && usernames.isEmpty() && locations.isEmpty() &&
+    val isEmpty = names.isEmpty() && usernames.isEmpty() && phones.isEmpty() && locations.isEmpty() &&
         photos.isEmpty() && links.isEmpty()
 
     SectionCard(
@@ -192,15 +193,16 @@ fun EmailIdentitySummarySection(
         tone = if (isEmpty) Tone.NEUTRAL else Tone.INFO,
     ) {
         when {
-            isEmpty && isLoading -> LoadingRow("Collecting names, handles, photos and locations…")
+            isEmpty && isLoading -> LoadingRow("Collecting names, handles, phone numbers, photos and locations…")
             isEmpty -> Notice(
-                "None of the checked public sources returned a name, handle, photo, link or location " +
+                "None of the checked public sources returned a name, handle, phone number, photo, link or location " +
                     "for this address. Registration checks below can still confirm the services it is used on.",
                 tone = Tone.NEUTRAL,
             )
             else -> {
                 SummaryValues("Names Found", names, Tone.ACCENT)
                 SummaryValues("Usernames", usernames, Tone.INFO)
+                SummaryValues("Phone Numbers", phones, Tone.WARNING)
                 if (photos.isNotEmpty()) {
                     SummaryBlockTitle("Profile Pictures")
                     FlowRow(

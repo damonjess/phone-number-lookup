@@ -20,6 +20,7 @@ class EmailProfileSummaryTest {
         names: List<String> = emptyList(),
         usernames: List<String> = emptyList(),
         locations: List<String> = emptyList(),
+        phones: List<String> = emptyList(),
         timeline: List<TimelineEvent> = emptyList(),
         stealer: StealerSubjectProfile? = null
     ) = EmailAttributionReport(
@@ -27,6 +28,7 @@ class EmailProfileSummaryTest {
         namesFound = names.map { AttributedValue(it, "Google") },
         usernamesFound = usernames.map { AttributedValue(it, "MyFitnessPal") },
         locationsFound = locations.map { AttributedValue(it, "Google") },
+        phonesFound = phones.map { AttributedValue(it, "Instagram") },
         timeline = timeline,
         stealerProfile = stealer
     )
@@ -130,5 +132,20 @@ class EmailProfileSummaryTest {
     fun handleDefaultsToTheLocalPartOfTheAddress() {
         assertEquals("hillspropertymaintenance258", EmailProfileSummaryBuilder.handleOf("hillspropertymaintenance258@gmail.com"))
         assertEquals("plain", EmailProfileSummaryBuilder.handleOf("plain"))
+    }
+
+    @Test
+    fun summarisesPhoneNumbersWhenReturned() {
+        val summary = EmailProfileSummaryBuilder.email(
+            email = "hillspropertymaintenance258@gmail.com",
+            attribution = attribution(
+                phones = listOf("+61 *** *** *17", "+44 **** ****08")
+            ),
+            registrations = emptyList(),
+            handleHits = emptyList(),
+            breachReport = null
+        )!!
+
+        assertTrue(summary.bullets.any { it.contains("Phone numbers returned") && it.contains("+61 *** *** *17") })
     }
 }

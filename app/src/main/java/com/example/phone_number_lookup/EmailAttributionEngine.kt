@@ -36,6 +36,7 @@ data class EmailAttributionReport(
     val usernamesFound: List<AttributedValue> = emptyList(),
     val profileLinks: List<AttributedProfileLink> = emptyList(),
     val locationsFound: List<AttributedValue> = emptyList(),
+    val phonesFound: List<AttributedValue> = emptyList(),
     val avatarUrls: List<String> = emptyList(),
     val timeline: List<TimelineEvent> = emptyList(),
     val stealerProfile: StealerSubjectProfile? = null
@@ -53,6 +54,7 @@ data class EmailAttributionReport(
             usernamesFound.isNotEmpty() ||
             profileLinks.isNotEmpty() ||
             locationsFound.isNotEmpty() ||
+            phonesFound.isNotEmpty() ||
             timeline.isNotEmpty() ||
             stealerProfile != null
 }
@@ -76,6 +78,9 @@ object EmailAttributionEngine {
         val keybaseDef = async { lookupKeybase("email=${ScanHttp.encode(clean)}") }
         val gitlabDef = async { lookupGitLabByEmail(clean) }
         val openPgpDef = async { lookupOpenPgpKeysByEmail(clean) }
+        val pgpKeysDef = async { IdentityEnricher.fetchPgpKeys(clean) }
+        val webSearchDef = async { SearchRepository.searchWeb(listOf(clean)) }
+        val instaPhoneDef = async { lookupInstagramRecoveryPhone(clean) }
 
         // The local part of the address is the handle most services expose publicly. When it is
         // distinctive enough to be a real handle, ask the free profile APIs for that handle so the
@@ -87,8 +92,11 @@ object EmailAttributionEngine {
         val usernames = mutableListOf<AttributedValue>()
         val links = mutableListOf<AttributedProfileLink>()
         val locations = mutableListOf<AttributedValue>()
+        val phones = mutableListOf<AttributedValue>()
         val avatars = mutableListOf<String>()
         val timeline = mutableListOf<TimelineEvent>()
+
+        instaPhoneDef.await()?.let { phones += it }
 
         // 1. Google & Play Games Attribution
         val google = googleDef.await()
@@ -112,6 +120,8 @@ object EmailAttributionEngine {
             gh.fullName?.let { names += AttributedValue(it, "GitHub") }
             usernames += AttributedValue(gh.login, "GitHub")
             links += AttributedProfileLink(gh.login, "GitHub", gh.profileUrl)
+            gh.location?.let { locations += AttributedValue(it, "GitHub") }
+            gh.bio?.let { bio -> phones += extractPhoneNumbersFromText(bio, "GitHub Bio") }
             gh.avatarUrl?.let { avatars += it }
             gh.createdAt?.let { timeline += TimelineEvent(it, "Creation Date", "GitHub") }
             gh.updatedAt?.let { timeline += TimelineEvent(it, "Updated At", "GitHub") }
@@ -121,6 +131,8 @@ object EmailAttributionEngine {
         keybaseDef.await()?.let { kb ->
             kb.fullName?.let { names += AttributedValue(it, "Keybase") }
             usernames += AttributedValue(kb.username, "Keybase")
+            kb.location?.let { locations += AttributedValue(it, "Keybase") }
+            kb.bio?.let { bio -> phones += extractPhoneNumbersFromText(bio, "Keybase Bio") }
             kb.avatarUrl?.let { avatars += it }
             links += kb.proofs
         }
@@ -138,6 +150,13 @@ object EmailAttributionEngine {
         openPgpDef.await()?.let { pgp ->
             links += AttributedProfileLink(pgp.email, "OpenPGP Key", pgp.profileUrl)
             timeline += TimelineEvent("Public Key Verified", "OpenPGP Key Found", "OpenPGP Keyserver")
+        }
+        runCatching { pgpKeysDef.await() }.getOrNull()?.forEach { record ->
+            record.uids.forEach { uid ->
+                extractNameFromPgpUid(uid)?.let { name ->
+                    names += AttributedValue(name, "OpenPGP Key")
+                }
+            }
         }
 
         // 6. MyFitnessPal Handle Check
@@ -164,11 +183,18 @@ object EmailAttributionEngine {
                 usernames += AttributedValue(u, "Gravatar")
                 links += AttributedProfileLink(u, "Gravatar", grav.profileUrl ?: "https://gravatar.com/$u")
             }
+            grav.location?.let { locations += AttributedValue(it, "Gravatar") }
+            grav.aboutMe?.let { bio -> phones += extractPhoneNumbersFromText(bio, "Gravatar Bio") }
             grav.avatarUrl?.let { avatars += it }
             links += grav.verifiedAccounts
         }
 
-        // 9. Public profiles for the email's handle
+        // 9. Public Web Search Results for Email
+        runCatching { webSearchDef.await() }.getOrNull()?.results.orEmpty().forEach { result ->
+            phones += extractPhoneNumbersFromText("${result.title} ${result.snippet}", "Web Search")
+        }
+
+        // 10. Public profiles for the email's handle
         handleDef?.await().orEmpty().forEach { profile ->
             profile.name?.let { names += AttributedValue(it, profile.platform) }
             usernames += AttributedValue(profile.username, profile.platform)
@@ -179,7 +205,7 @@ object EmailAttributionEngine {
             profile.lastActive?.let { timeline += TimelineEvent(it, "Last Active", profile.platform) }
         }
 
-        // 10. HudsonRock Infostealer Profile
+        // 11. HudsonRock Infostealer Profile
         val stealer = hudsonDef.await()
         stealer?.computerUsername?.let { names += AttributedValue(it, "Stealer Log") }
         stealer?.dateCompromised?.let {
@@ -191,16 +217,46 @@ object EmailAttributionEngine {
             .filterNot { it.value.startsWith("DESKTOP-", ignoreCase = true) }
             .distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
 
+        val filteredPhones = phones
+            .distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
+
         EmailAttributionReport(
             email = clean,
             namesFound = filteredNames,
             usernamesFound = usernames.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" },
             profileLinks = links.distinctBy { it.url.lowercase() },
             locationsFound = locations.distinctBy { it.value.lowercase() },
+            phonesFound = filteredPhones,
             avatarUrls = avatars.distinct(),
             timeline = timeline.sortedByDescending { it.date },
             stealerProfile = stealer
         )
+    }
+
+    private fun lookupInstagramRecoveryPhone(email: String): AttributedValue? {
+        val encoded = ScanHttp.encode(email)
+        val resp = ScanHttp.post(
+            "https://www.instagram.com/api/v1/users/lookup/",
+            "q=$encoded",
+            contentType = "application/x-www-form-urlencoded",
+            timeoutMs = 8_000,
+            headers = mapOf(
+                "X-CSRFToken" to "missing",
+                "X-IG-App-ID" to "936619743392459",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            )
+        )
+        if (resp.isOk && resp.body.isNotBlank()) {
+            runCatching {
+                val json = JSONObject(resp.body)
+                val phone = json.optString("obfuscated_phone").takeIf { it.isNotBlank() }
+                    ?: json.optJSONObject("user")?.optString("obfuscated_phone")?.takeIf { it.isNotBlank() }
+                if (phone != null) {
+                    return AttributedValue(phone, "Instagram")
+                }
+            }
+        }
+        return null
     }
 
     private fun lookupMyFitnessPalHandle(handle: String): String? {
@@ -221,7 +277,9 @@ object EmailAttributionEngine {
         val profileUrl: String,
         val avatarUrl: String?,
         val createdAt: String?,
-        val updatedAt: String?
+        val updatedAt: String?,
+        val location: String? = null,
+        val bio: String? = null
     )
 
     private fun lookupGitHubByEmail(email: String): GitHubEmailMatch? {
@@ -287,7 +345,9 @@ object EmailAttributionEngine {
                 profileUrl = "https://github.com/$resolvedLogin",
                 avatarUrl = null,
                 createdAt = null,
-                updatedAt = null
+                updatedAt = null,
+                location = null,
+                bio = null
             )
         }
 
@@ -306,7 +366,9 @@ object EmailAttributionEngine {
                 profileUrl = root.optString("html_url", "https://github.com/$resolvedLogin"),
                 avatarUrl = root.optString("avatar_url").takeIf { it.isNotBlank() },
                 createdAt = root.optString("created_at").substringBefore('T').takeIf { it.isNotBlank() },
-                updatedAt = root.optString("updated_at").substringBefore('T').takeIf { it.isNotBlank() }
+                updatedAt = root.optString("updated_at").substringBefore('T').takeIf { it.isNotBlank() },
+                location = root.optString("location").takeIf { it.isNotBlank() && it != "null" },
+                bio = root.optString("bio").takeIf { it.isNotBlank() && it != "null" }
             )
         }.getOrNull()
     }
@@ -346,7 +408,9 @@ object EmailAttributionEngine {
         val username: String?,
         val profileUrl: String?,
         val avatarUrl: String?,
-        val verifiedAccounts: List<AttributedProfileLink>
+        val verifiedAccounts: List<AttributedProfileLink>,
+        val location: String? = null,
+        val aboutMe: String? = null
     )
 
     private fun lookupGravatarByEmail(email: String): GravatarEmailMatch? {
@@ -359,6 +423,8 @@ object EmailAttributionEngine {
             val username = entry.optString("preferredUsername").takeIf { it.isNotBlank() }
             val profileUrl = entry.optString("profileUrl").takeIf { it.isNotBlank() }
             val thumbnail = entry.optString("thumbnailUrl").takeIf { it.isNotBlank() }
+            val location = entry.optString("currentLocation").takeIf { it.isNotBlank() }
+            val aboutMe = entry.optString("aboutMe").takeIf { it.isNotBlank() }
             val linked = mutableListOf<AttributedProfileLink>()
             val accounts = entry.optJSONArray("accounts")
             if (accounts != null) {
@@ -370,8 +436,38 @@ object EmailAttributionEngine {
                     linked += AttributedProfileLink(handle, domain, url)
                 }
             }
-            GravatarEmailMatch(displayName, username, profileUrl, thumbnail, linked)
+            GravatarEmailMatch(displayName, username, profileUrl, thumbnail, linked, location, aboutMe)
         }.getOrNull()
+    }
+
+    private val MASKED_PHONE_REGEX = Regex("""(?:\+\d{1,4}\s*)?(?:\*{2,5}[-\s.]*)+\d{2,4}""")
+    private val INT_PHONE_REGEX = Regex("""\+\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}""")
+    private val UK_MOBILE_REGEX = Regex("""\b07\d{9}\b""")
+
+    internal fun extractPhoneNumbersFromText(text: String, sourceName: String): List<AttributedValue> {
+        val out = mutableListOf<AttributedValue>()
+        MASKED_PHONE_REGEX.findAll(text).forEach { m ->
+            val num = m.value.trim()
+            if (num.length >= 6) out += AttributedValue(num, sourceName)
+        }
+        INT_PHONE_REGEX.findAll(text).forEach { m ->
+            val num = m.value.trim()
+            if (num.length >= 8 && !num.contains("-202") && !num.contains("-2023") && !num.contains("-2024") && !num.contains("-2025")) {
+                out += AttributedValue(num, sourceName)
+            }
+        }
+        UK_MOBILE_REGEX.findAll(text).forEach { m ->
+            out += AttributedValue(m.value.trim(), sourceName)
+        }
+        return out
+    }
+
+    internal fun extractNameFromPgpUid(uid: String): String? {
+        val beforeAngle = uid.substringBefore('<').trim()
+        if (beforeAngle.isNotBlank() && ' ' in beforeAngle && !beforeAngle.contains('@')) {
+            return beforeAngle
+        }
+        return null
     }
 
     /**

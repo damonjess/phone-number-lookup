@@ -59,6 +59,7 @@ fun EmailIntelDashboard(
     val reportedOnly = registrations.filter { it.verificationStatus != "Registered response" }
     val names = attribution?.namesFound.orEmpty().distinctBy { it.value.lowercase() }
     val usernames = attribution?.usernamesFound.orEmpty().distinctBy { it.value.lowercase() }
+    val phones = attribution?.phonesFound.orEmpty().distinctBy { it.value.lowercase() }
     val locations = attribution?.locationsFound.orEmpty().distinctBy { it.value.lowercase() }
     val photos = attribution?.avatarUrls.orEmpty().filter { it.startsWith("https://") || it.startsWith("http://") }.distinct()
     val links = buildList {
@@ -135,9 +136,13 @@ fun EmailIntelDashboard(
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            EmailDashboardCard("Phone numbers", phones.size.toString(), Modifier.weight(1f)) {
+                ValueList(phones.map { it.value to it.source }, isLoading)
+            }
             EmailDashboardCard("Locations", locations.size.toString(), Modifier.weight(1f)) {
                 ValueList(locations.map { it.value to it.source }, isLoading)
             }
+        }
             EmailDashboardCard("Links", links.size.toString(), Modifier.weight(1f)) {
                 if (links.isEmpty()) EmptyCardText(if (isLoading) "Collecting public links…" else "No public links returned")
                 else links.take(5).forEach { (name, url) ->
@@ -188,7 +193,6 @@ fun EmailIntelDashboard(
             if (matching.size > 30) EmptyCardText("Showing 30 of ${matching.size}; use the service search to filter")
         }
     }
-}
 
 @Composable
 private fun EmailDashboardCard(

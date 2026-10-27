@@ -29,11 +29,12 @@ object EmailProfileSummaryBuilder {
         val names = attribution?.namesFound.orEmpty().distinctBy { it.value.lowercase() }
         val usernames = attribution?.usernamesFound.orEmpty().distinctBy { it.value.lowercase() }
         val locations = attribution?.locationsFound.orEmpty().distinctBy { it.value.lowercase() }
+        val phones = attribution?.phonesFound.orEmpty().distinctBy { it.value.lowercase() }
         val breaches = breachReport?.breachNames.orEmpty().distinct()
         val stealer = attribution?.stealerProfile
 
         if (confirmed.isEmpty() && names.isEmpty() && usernames.isEmpty() &&
-            locations.isEmpty() && breaches.isEmpty() && stealer == null && handleHits.isEmpty()
+            locations.isEmpty() && phones.isEmpty() && breaches.isEmpty() && stealer == null && handleHits.isEmpty()
         ) {
             return null
         }
@@ -56,6 +57,9 @@ object EmailProfileSummaryBuilder {
             }
             if (usernames.isNotEmpty()) {
                 add("Usernames returned: ${list(usernames.map { it.value }, 4)}${sourceSuffix(usernames.map { it.source })}")
+            }
+            if (phones.isNotEmpty()) {
+                add("Phone numbers returned: ${list(phones.map { it.value }, 4)}${sourceSuffix(phones.map { it.source })}")
             }
             if (locations.isNotEmpty()) {
                 add("Locations published by public sources: ${list(locations.map { it.value }, 3)}.")
