@@ -16,6 +16,7 @@ import com.example.phone_number_lookup.GoogleMetadataExtractor
 import com.example.phone_number_lookup.GoogleMetadataReport
 import com.example.phone_number_lookup.IdentityEnricher
 import com.example.phone_number_lookup.IdentityEnrichmentReport
+import com.example.phone_number_lookup.PublicProfileApis
 import com.example.phone_number_lookup.PythonOsintBridge
 import com.example.phone_number_lookup.PythonToolMode
 import com.example.phone_number_lookup.RegistrationHit
@@ -173,10 +174,17 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 return@start
             }
 
+            // Official profile APIs run alongside the HTML site lists: a handle can exist on a
+            // platform those lists miss, and an API answer carries the display name, location
+            // and join date a status-code check cannot.
+            val apiHits = runCatching { PublicProfileApis.lookup(target) }.getOrDefault(emptyList())
+            val mergedHits = (outcome.confirmed + apiHits)
+                .distinctBy { it.profileUrl.lowercase().trimEnd('/') }
+
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(
-                        liveHits = outcome.confirmed,
+                        liveHits = mergedHits,
                         liveSitesChecked = outcome.sitesChecked,
                         datasetSizes = outcome.datasetSizes,
                         unreachableCount = outcome.unreachable,
@@ -332,12 +340,16 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 }
                 return@start
             }
+            val apiHits = runCatching { PublicProfileApis.lookup(target) }.getOrDefault(emptyList())
+            val mergedHits = (outcome.confirmed + apiHits)
+                .distinctBy { it.profileUrl.lowercase().trimEnd('/') }
+
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(
-                        liveHits = outcome.confirmed,
+                        liveHits = mergedHits,
                         liveSitesChecked = outcome.sitesChecked,
-                        publicSuggestions = outcome.confirmed.take(8).map { "${it.site}: ${it.profileUrl}" },
+                        publicSuggestions = mergedHits.take(8).map { "${it.site}: ${it.profileUrl}" },
                         correlationHints = buildList {
                             if (outcome.namesChecked.size > 1) add("Also tried likely spellings on popular sites: ${outcome.namesChecked.drop(1).joinToString(", ")}.")
                             val categories = outcome.confirmed.map { it.category }.distinct()

@@ -60,6 +60,7 @@ import com.example.phone_number_lookup.ui.components.Notice
 import com.example.phone_number_lookup.ui.components.NumberedLinksHubCard
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.Pill
+import com.example.phone_number_lookup.ui.components.PhoneProfileSummaryCard
 import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.ScreenHeader
 import com.example.phone_number_lookup.ui.components.SearchField
@@ -245,11 +246,25 @@ fun PhoneLookupScreen(
                 buildTelecomTelemetry(normalized, localFormat)
             }
             val carrierHint = PhoneNumberUtils.getUkCarrierHint(normalized)
+            val isValidNumber = PhoneNumberUtils.isValid(normalized)
 
             uiState.verdict?.let { verdict ->
                 VerdictCard(verdict)
                 Spacer(modifier = Modifier.height(16.dp))
             }
+
+            PhoneProfileSummaryCard(
+                e164 = formats.e164,
+                national = formats.national,
+                country = country,
+                area = areaInfo,
+                lineType = lineType,
+                timezone = timezone,
+                carrier = carrierHint ?: uiState.phoneInfogaResult?.carrier,
+                valid = isValidNumber,
+                riskLabel = uiState.spamReport?.riskLabel,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
 
             SectionCard(
                 title = "Ofcom Telecoms & Spoofing Telemetry",

@@ -12,7 +12,9 @@ data class BreachReport(
     val breached: Boolean,
     val breachNames: List<String>,
     val error: String? = null,
-    val checkedAt: Long = System.currentTimeMillis()
+    val checkedAt: Long = System.currentTimeMillis(),
+    /** Catalogue metadata (date, domain, size, description) for the named breaches. */
+    val details: List<BreachDetail> = emptyList()
 )
 
 object EmailScanner {
@@ -70,7 +72,8 @@ object EmailScanner {
             email = clean,
             breached = finalNames.isNotEmpty(),
             breachNames = finalNames,
-            error = if (finalNames.isEmpty()) baseReport.error else null
+            error = if (finalNames.isEmpty()) baseReport.error else null,
+            details = BreachCatalog.lookup(finalNames)
         )
     }
 

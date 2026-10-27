@@ -73,9 +73,15 @@ object EmailAttributionEngine {
         val gravatarDef = async { lookupGravatarByEmail(clean) }
         val hudsonDef = async { lookupHudsonRockProfile(clean) }
         val mfpDef = async { lookupMyFitnessPalHandle(clean.substringBefore('@')) }
-        val keybaseDef = async { lookupKeybaseByEmail(clean) }
+        val keybaseDef = async { lookupKeybase("email=${ScanHttp.encode(clean)}") }
         val gitlabDef = async { lookupGitLabByEmail(clean) }
         val openPgpDef = async { lookupOpenPgpKeysByEmail(clean) }
+
+        // The local part of the address is the handle most services expose publicly. When it is
+        // distinctive enough to be a real handle, ask the free profile APIs for that handle so the
+        // report can show a name, photo or location even when the email itself is not indexed.
+        val handle = clean.substringBefore('@')
+        val handleDef = if (isDistinctiveHandle(handle)) async { lookupProfilesByHandle(handle) } else null
 
         val names = mutableListOf<AttributedValue>()
         val usernames = mutableListOf<AttributedValue>()
@@ -162,7 +168,18 @@ object EmailAttributionEngine {
             links += grav.verifiedAccounts
         }
 
-        // 9. HudsonRock Infostealer Profile
+        // 9. Public profiles for the email's handle
+        handleDef?.await().orEmpty().forEach { profile ->
+            profile.name?.let { names += AttributedValue(it, profile.platform) }
+            usernames += AttributedValue(profile.username, profile.platform)
+            links += AttributedProfileLink(profile.username, profile.platform, profile.profileUrl)
+            profile.location?.let { locations += AttributedValue(it, profile.platform) }
+            profile.avatarUrl?.let { avatars += it }
+            profile.joined?.let { timeline += TimelineEvent(it, "Joined", profile.platform) }
+            profile.lastActive?.let { timeline += TimelineEvent(it, "Last Active", profile.platform) }
+        }
+
+        // 10. HudsonRock Infostealer Profile
         val stealer = hudsonDef.await()
         stealer?.computerUsername?.let { names += AttributedValue(it, "Stealer Log") }
         stealer?.dateCompromised?.let {
@@ -357,6 +374,75 @@ object EmailAttributionEngine {
         }.getOrNull()
     }
 
+    /**
+     * Handles that belong to a company or a role ("info", "support", "admin") identify nobody,
+     * so they are skipped rather than attaching a stranger's profile to the address.
+     */
+    private fun isDistinctiveHandle(handle: String): Boolean {
+        val value = handle.trim().lowercase()
+        if (value.length < 4) return false
+        if (value.all { it.isDigit() } || value.all { it in "._-+" }) return false
+        return value !in setOf(
+            "info", "admin", "support", "contact", "sales", "hello", "office", "mail",
+            "email", "team", "help", "billing", "accounts", "noreply", "no-reply", "postmaster"
+        )
+    }
+
+    private data class HandleProfile(
+        val platform: String,
+        val username: String,
+        val profileUrl: String,
+        val name: String?,
+        val location: String?,
+        val avatarUrl: String?,
+        val joined: String?,
+        val lastActive: String?
+    )
+
+    /** Free public profile APIs that accept a bare username and return identity fields. */
+    private fun lookupProfilesByHandle(handle: String): List<HandleProfile> {
+        val encoded = ScanHttp.encode(handle)
+        val profiles = mutableListOf<HandleProfile>()
+
+        val github = ScanHttp.get(
+            "https://api.github.com/users/$encoded",
+            timeoutMs = 8_000,
+            headers = GITHUB_HEADERS
+        )
+        if (github.isOk && github.body.isNotBlank()) {
+            runCatching {
+                val root = JSONObject(github.body)
+                val login = root.optString("login").takeIf { it.isNotBlank() } ?: return@runCatching
+                profiles += HandleProfile(
+                    platform = "GitHub",
+                    username = login,
+                    profileUrl = root.optString("html_url", "https://github.com/$login"),
+                    name = root.optString("name").takeIf { it.isNotBlank() && it != "null" },
+                    location = root.optString("location").takeIf { it.isNotBlank() && it != "null" },
+                    avatarUrl = root.optString("avatar_url").takeIf { it.isNotBlank() },
+                    joined = root.optString("created_at").substringBefore('T').takeIf { it.isNotBlank() },
+                    lastActive = root.optString("updated_at").substringBefore('T').takeIf { it.isNotBlank() }
+                )
+            }
+        }
+
+        val keybase = lookupKeybase("username=$encoded")
+        keybase?.let { kb ->
+            profiles += HandleProfile(
+                platform = "Keybase",
+                username = kb.username,
+                profileUrl = kb.profileUrl,
+                name = kb.fullName,
+                location = kb.location,
+                avatarUrl = kb.avatarUrl,
+                joined = null,
+                lastActive = null
+            )
+        }
+
+        return profiles
+    }
+
     private fun lookupHudsonRockProfile(email: String): StealerSubjectProfile? {
         val resp = ScanHttp.get(
             "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email=${ScanHttp.encode(email)}",
@@ -386,11 +472,13 @@ object EmailAttributionEngine {
         val profileUrl: String,
         val avatarUrl: String?,
         val bio: String?,
-        val proofs: List<AttributedProfileLink>
+        val proofs: List<AttributedProfileLink>,
+        val location: String? = null
     )
 
-    private fun lookupKeybaseByEmail(email: String): KeybaseEmailMatch? {
-        val url = "https://keybase.io/_/api/1.0/user/lookup.json?email=${ScanHttp.encode(email)}"
+    /** [query] is either `email=...` or `username=...`, already URL-encoded. */
+    private fun lookupKeybase(query: String): KeybaseEmailMatch? {
+        val url = "https://keybase.io/_/api/1.0/user/lookup.json?$query"
         val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
         if (!resp.isOk || resp.body.isBlank()) return null
         return runCatching {
@@ -403,6 +491,7 @@ object EmailAttributionEngine {
             val profile = user.optJSONObject("profile")
             val fullName = profile?.optString("full_name")?.takeIf { it.isNotBlank() }
             val bio = profile?.optString("bio")?.takeIf { it.isNotBlank() }
+            val location = profile?.optString("location")?.takeIf { it.isNotBlank() }
             val avatar = user.optJSONObject("pictures")?.optJSONObject("primary")?.optString("url")?.takeIf { it.isNotBlank() }
 
             val proofLinks = mutableListOf<AttributedProfileLink>()
@@ -420,7 +509,7 @@ object EmailAttributionEngine {
                     proofLinks += AttributedProfileLink(valName, "Keybase Proof ($type)", pUrl)
                 }
             }
-            KeybaseEmailMatch(username, fullName, "https://keybase.io/$username", avatar, bio, proofLinks)
+            KeybaseEmailMatch(username, fullName, "https://keybase.io/$username", avatar, bio, proofLinks, location)
         }.getOrNull()
     }
 

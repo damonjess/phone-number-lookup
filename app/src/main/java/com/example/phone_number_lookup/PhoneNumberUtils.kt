@@ -337,6 +337,14 @@ object PhoneNumberUtils {
         }
     }
 
+    /** libphonenumber validation for any region, not just the UK. */
+    fun isValid(normalized: String): Boolean = try {
+        val parsed = util.parse(normalized, if (normalized.startsWith("+")) null else "GB")
+        util.isValidNumber(parsed)
+    } catch (_: Exception) {
+        false
+    }
+
     fun isValidUk(normalized: String): Boolean = try {
         val parsed = util.parse(normalized, "GB")
         util.getRegionCodeForNumber(parsed) == "GB" && util.isValidNumber(parsed)

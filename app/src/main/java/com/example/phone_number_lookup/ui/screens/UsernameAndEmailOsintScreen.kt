@@ -47,6 +47,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.phone_number_lookup.EmailLinkedAccounts
+import com.example.phone_number_lookup.EmailProfileSummaryBuilder
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.IdentityEnrichmentReport
 import com.example.phone_number_lookup.OsintPdfExporter
@@ -57,7 +59,14 @@ import com.example.phone_number_lookup.UsernameScanner
 import com.example.phone_number_lookup.UnifiedEvidenceBuilder
 import com.example.phone_number_lookup.ui.components.AppButton
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
+import com.example.phone_number_lookup.ui.components.EmailActivityTimelineSection
+import com.example.phone_number_lookup.ui.components.EmailBreachDetailsSection
+import com.example.phone_number_lookup.ui.components.UsernameProfileSummaryCard
+import com.example.phone_number_lookup.ui.components.EmailIdentitySummarySection
 import com.example.phone_number_lookup.ui.components.EmailIntelDashboard
+import com.example.phone_number_lookup.ui.components.EmailLinkedAccountsSection
+import com.example.phone_number_lookup.ui.components.EmailProfileStatsRow
+import com.example.phone_number_lookup.ui.components.EmailProfileSummaryCard
 import com.example.phone_number_lookup.ui.components.IssuesSection
 import com.example.phone_number_lookup.ui.components.LoadingRow
 import com.example.phone_number_lookup.ui.components.Notice
@@ -192,7 +201,7 @@ fun UsernameAndEmailOsintScreen(
 
         if (uiState.subTabState == 1) {
             Spacer(Modifier.height(Space.md))
-            Notice("Email scans query public third-party services (XposedOrNot, Cloudflare DoH and public profile endpoints) directly from this device over HTTPS.", tone = Tone.NEUTRAL)
+            Notice("Email scans query public third-party services (XposedOrNot, Cloudflare DoH, Gravatar, GitHub, GitLab, Keybase and public profile endpoints) directly from this device over HTTPS.", tone = Tone.NEUTRAL)
         }
 
         Spacer(Modifier.height(Space.xl))
@@ -200,6 +209,13 @@ fun UsernameAndEmailOsintScreen(
         uiState.activeTarget?.let { target ->
             when (uiState.subTabState) {
                 0 -> {
+                    UsernameProfileSummaryCard(
+                        handle = target,
+                        hits = uiState.liveHits,
+                        sitesChecked = uiState.liveSitesChecked,
+                        isLoading = uiState.isLiveScanning,
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
                     UnifiedEvidenceCard(
                         report = UnifiedEvidenceBuilder.username(
                             target = target,
@@ -359,13 +375,79 @@ fun UsernameAndEmailOsintScreen(
                 }
 
                 1 -> {
+                    val emailLoading = uiState.isRegistrationScanning || uiState.isBreachScanning ||
+                        uiState.isEnrichingIdentity || uiState.isAttributionScanning
+                    val profileSummary = remember(
+                        target,
+                        uiState.attributionReport,
+                        uiState.registeredSites,
+                        uiState.liveHits,
+                        uiState.breachReport,
+                    ) {
+                        EmailProfileSummaryBuilder.email(
+                            email = target,
+                            attribution = uiState.attributionReport,
+                            registrations = uiState.registeredSites,
+                            handleHits = uiState.liveHits,
+                            breachReport = uiState.breachReport,
+                        )
+                    }
+                    EmailProfileSummaryCard(
+                        summary = profileSummary,
+                        registrationCount = uiState.registeredSites.count { it.verificationStatus == "Registered response" },
+                        breachCount = uiState.breachReport?.breachNames.orEmpty().distinct().size,
+                        isLoading = emailLoading,
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    EmailProfileStatsRow(
+                        registrations = uiState.registeredSites,
+                        handleHits = uiState.liveHits,
+                        breachReport = uiState.breachReport,
+                        attribution = uiState.attributionReport,
+                        isLoading = emailLoading,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    EmailIdentitySummarySection(
+                        attribution = uiState.attributionReport,
+                        isLoading = emailLoading,
+                        onOpenUrl = { openUrl(context, it) },
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    EmailActivityTimelineSection(
+                        attribution = uiState.attributionReport,
+                        breachDetails = uiState.breachReport?.details.orEmpty(),
+                        isLoading = emailLoading,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val linkedAccounts = remember(target, uiState.registeredSites, uiState.liveHits, uiState.attributionReport) {
+                        EmailLinkedAccounts.build(
+                            email = target,
+                            registrations = uiState.registeredSites,
+                            handleHits = uiState.liveHits,
+                            attribution = uiState.attributionReport,
+                        )
+                    }
+                    EmailLinkedAccountsSection(
+                        accounts = linkedAccounts,
+                        email = target,
+                        isLoading = emailLoading,
+                        onOpenUrl = { openUrl(context, it) },
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    EmailBreachDetailsSection(
+                        details = uiState.breachReport?.details.orEmpty(),
+                        onOpenUrl = { openUrl(context, it) },
+                    )
+                    if (uiState.breachReport?.details.orEmpty().isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                     EmailIntelDashboard(
                         target = target,
                         attribution = uiState.attributionReport,
                         registrations = uiState.registeredSites,
                         handleHits = uiState.liveHits,
                         breachReport = uiState.breachReport,
-                        isLoading = uiState.isRegistrationScanning || uiState.isBreachScanning || uiState.isEnrichingIdentity,
+                        isLoading = emailLoading,
                         onOpenUrl = { openUrl(context, it) },
                     )
                     Spacer(modifier = Modifier.height(12.dp))
