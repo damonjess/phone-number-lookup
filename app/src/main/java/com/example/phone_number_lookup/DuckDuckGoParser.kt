@@ -48,7 +48,7 @@ object DdgParser {
 
     private val NO_RESULTS_MARKERS = listOf("no-results", "no results.")
 
-    const val MAX_RESULTS = 8
+    const val MAX_RESULTS = 25
     private const val EXCERPT_CHARS = 160
 
     fun classify(code: Int, html: String): DdgOutcome {

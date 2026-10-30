@@ -5,9 +5,11 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.phone_number_lookup.DeepPhoneOsintReport
 import com.example.phone_number_lookup.HistoryEntry
 import com.example.phone_number_lookup.HistoryStore
 import com.example.phone_number_lookup.NumberFactsProvider
+import com.example.phone_number_lookup.PhoneDirectoryScraper
 import com.example.phone_number_lookup.PhoneInfogaBuiltIn
 import com.example.phone_number_lookup.PhoneInfogaClient
 import com.example.phone_number_lookup.PhoneInfogaNative
@@ -56,6 +58,7 @@ data class PhoneLookupUiState(
     val isPhoneInfogaServerRunning: Boolean = false,
     val sourceHealth: List<SourceHealthResult> = emptyList(),
     val isCheckingHealth: Boolean = false,
+    val deepFootprint: DeepPhoneOsintReport? = null,
 )
 
 class PhoneLookupViewModel(application: Application) : AndroidViewModel(application) {
@@ -107,6 +110,7 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                 isPhoneInfogaScanning = false,
                 phoneInfogaReport = null,
                 isPhoneInfogaServerRunning = false,
+                deepFootprint = null,
             )
         }
         phoneInfogaJob?.cancel()
@@ -137,13 +141,15 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                 if (prefixQueries.isNotEmpty()) {
                     val fallbackResponse = SearchRepository.searchWeb(prefixQueries)
                     if (scans.isCurrent(active) && fallbackResponse.results.isNotEmpty()) {
-                        _uiState.update {
-                            it.copy(
-                                searchResults = fallbackResponse.results,
+                        _uiState.update { state ->
+                            val merged = (fallbackResponse.results + state.searchResults)
+                                .distinctBy { it.url.lowercase().trimEnd('/') }
+                            state.copy(
+                                searchResults = merged,
                                 searchError = null,
                                 isSearching = false,
-                                isPrefixWebFallback = true,
-                                prefixSearched = prefixQueries.first()
+                                isPrefixWebFallback = state.searchResults.isEmpty(),
+                                prefixSearched = if (state.searchResults.isEmpty()) prefixQueries.first() else null
                             )
                         }
                         return@start
@@ -152,10 +158,12 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
             }
 
             if (scans.isCurrent(active)) {
-                _uiState.update {
-                    it.copy(
-                        searchResults = primaryResponse.results,
-                        searchError = primaryResponse.error,
+                _uiState.update { state ->
+                    val merged = (primaryResponse.results + state.searchResults)
+                        .distinctBy { it.url.lowercase().trimEnd('/') }
+                    state.copy(
+                        searchResults = merged,
+                        searchError = if (merged.isEmpty()) primaryResponse.error else null,
                         isSearching = false,
                         isPrefixWebFallback = false,
                         prefixSearched = null
@@ -176,6 +184,26 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
             val reports = PhoneReputation.lookup(normalized)
             if (scans.isCurrent(active)) {
                 _uiState.update { it.copy(reputationReports = reports, isReputationScanning = false) }
+                refreshVerdict()
+            }
+        }
+
+        scans.start(token) { active ->
+            val footprint = runCatching {
+                PhoneDirectoryScraper.scrapePhoneFootprint(normalized)
+            }.getOrNull() ?: return@start
+
+            if (scans.isCurrent(active)) {
+                _uiState.update { state ->
+                    val mergedSearch = (state.searchResults + footprint.extraWebResults)
+                        .distinctBy { it.url.lowercase().trimEnd('/') }
+                    state.copy(
+                        deepFootprint = footprint,
+                        searchResults = mergedSearch,
+                        searchError = if (mergedSearch.isNotEmpty()) null else state.searchError,
+                        isPrefixWebFallback = if (footprint.extraWebResults.isNotEmpty()) false else state.isPrefixWebFallback
+                    )
+                }
                 refreshVerdict()
             }
         }

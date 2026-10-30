@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.EmailLinkedAccounts
+import com.example.phone_number_lookup.EnrichedProfileCard
 import com.example.phone_number_lookup.EmailProfileSummaryBuilder
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.IdentityEnrichmentReport
@@ -61,6 +62,8 @@ import com.example.phone_number_lookup.ui.components.AppButton
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
 import com.example.phone_number_lookup.ui.components.EmailActivityTimelineSection
 import com.example.phone_number_lookup.ui.components.EmailBreachDetailsSection
+import com.example.phone_number_lookup.ui.components.EnrichedProfilesSection
+import com.example.phone_number_lookup.ui.components.OpenWebMentionsSection
 import com.example.phone_number_lookup.ui.components.UsernameProfileSummaryCard
 import com.example.phone_number_lookup.ui.components.EmailIdentitySummarySection
 import com.example.phone_number_lookup.ui.components.EmailIntelDashboard
@@ -232,6 +235,22 @@ fun UsernameAndEmailOsintScreen(
                         onOpenUrl = { openUrl(context, it) },
                     )
                     Spacer(Modifier.height(16.dp))
+
+                    if (uiState.enrichedProfiles.isNotEmpty()) {
+                        EnrichedProfilesSection(
+                            profiles = uiState.enrichedProfiles,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+
+                    if (uiState.openWebReport != null) {
+                        OpenWebMentionsSection(
+                            report = uiState.openWebReport,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
                     OsintToolSectionCard(
                         toolTitle = "Live Username Scan ($target)",
                         subtitle = if (uiState.liveSitesChecked > 0)
@@ -477,6 +496,22 @@ fun UsernameAndEmailOsintScreen(
                         onOpenUrl = { openUrl(context, it) },
                     )
                     Spacer(modifier = Modifier.height(16.dp))
+
+                    if (uiState.enrichedProfiles.isNotEmpty()) {
+                        EnrichedProfilesSection(
+                            profiles = uiState.enrichedProfiles,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+
+                    if (uiState.openWebReport != null) {
+                        OpenWebMentionsSection(
+                            report = uiState.openWebReport,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
 
                     // IntelBase-Style Profile Executive Summary
                     uiState.domainReport?.let { domain ->
@@ -1152,3 +1187,5 @@ private fun IdentityEnrichmentSection(
 /** "1 result" / "3 results" — avoids the "(s)" shorthand in result headers. */
 private fun countLabel(count: Int, singular: String, plural: String): String =
     if (count == 1) "1 $singular" else "$count $plural"
+
+

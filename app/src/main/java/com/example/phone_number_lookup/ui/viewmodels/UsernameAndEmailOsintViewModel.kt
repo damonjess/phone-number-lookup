@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.phone_number_lookup.BreachReport
+import com.example.phone_number_lookup.DeepProfileScraper
 import com.example.phone_number_lookup.DomainNetworkOsint
 import com.example.phone_number_lookup.DomainOsintReport
 import com.example.phone_number_lookup.EmailAttributionEngine
@@ -12,22 +13,26 @@ import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EmailDomainScanner
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.EmailScanner
+import com.example.phone_number_lookup.EnrichedProfileCard
 import com.example.phone_number_lookup.GoogleMetadataExtractor
 import com.example.phone_number_lookup.GoogleMetadataReport
 import com.example.phone_number_lookup.IdentityEnricher
 import com.example.phone_number_lookup.IdentityEnrichmentReport
+import com.example.phone_number_lookup.OpenWebOsintScraper
 import com.example.phone_number_lookup.PublicProfileApis
 import com.example.phone_number_lookup.PythonOsintBridge
 import com.example.phone_number_lookup.PythonToolMode
 import com.example.phone_number_lookup.RegistrationHit
+import com.example.phone_number_lookup.ScrapedWebReport
 import com.example.phone_number_lookup.SiteIssue
 import com.example.phone_number_lookup.UsernameHit
 import com.example.phone_number_lookup.UsernameScanner
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 data class UsernameAndEmailOsintUiState(
     val subTabState: Int = 0, // 0: Username, 1: Email, 2: Domain & Network
@@ -72,6 +77,8 @@ data class UsernameAndEmailOsintUiState(
     val isGoogleMetadataScanning: Boolean = false,
     val attributionReport: EmailAttributionReport? = null,
     val isAttributionScanning: Boolean = false,
+    val enrichedProfiles: List<EnrichedProfileCard> = emptyList(),
+    val openWebReport: ScrapedWebReport? = null,
 )
 
 class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewModel(application) {
@@ -148,6 +155,8 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isGoogleMetadataScanning = false,
                 attributionReport = null,
                 isAttributionScanning = false,
+                enrichedProfiles = emptyList(),
+                openWebReport = null,
             )
         }
 
@@ -168,15 +177,15 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             } catch (e: Exception) {
                 if (scans.isCurrent(active)) {
                     _uiState.update {
-                        it.copy(liveError = "Embedded Python scan failed: ${e.message ?: "unknown error"}", isLiveScanning = false)
+                        it.copy(
+                            liveError = "Embedded Python scan failed: ${e.message ?: "unknown error"}",
+                            isLiveScanning = false
+                        )
                     }
                 }
                 return@start
             }
 
-            // Official profile APIs run alongside the HTML site lists: a handle can exist on a
-            // platform those lists miss, and an API answer carries the display name, location
-            // and join date a status-code check cannot.
             val apiHits = runCatching { PublicProfileApis.lookup(target) }.getOrDefault(emptyList())
             val mergedHits = (outcome.confirmed + apiHits)
                 .distinctBy { it.profileUrl.lowercase().trimEnd('/') }
@@ -196,6 +205,31 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                             null
                         },
                         isLiveScanning = false,
+                    )
+                }
+            }
+
+            coroutineScope {
+                val dossiersDef = async {
+                    runCatching {
+                        DeepProfileScraper.scrapeUsernameDossier(target, mergedHits)
+                    }.getOrDefault(emptyList())
+                }
+                val webMentionsDef = async {
+                    runCatching {
+                        OpenWebOsintScraper.scrapeAll(listOf(target))
+                    }.getOrNull()
+                }
+
+                val dossiers = dossiersDef.await()
+                val webMentions = webMentionsDef.await()
+
+                if (!scans.isCurrent(active)) return@coroutineScope
+
+                _uiState.update { state ->
+                    state.copy(
+                        enrichedProfiles = dossiers,
+                        openWebReport = webMentions
                     )
                 }
             }
@@ -241,8 +275,6 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         }
 
         scans.start(token) { active ->
-            // Use the combined native scanner: current Blackbird data plus curated probes,
-            // with independent control checks before a result is called registered.
             val outcome = try {
                 val nativeOutcome = EmailRegistrationScanner.scan(target) { checked, total ->
                     if (scans.isCurrent(active)) {
@@ -324,10 +356,18 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             }
         }
 
+        scans.start(token) { active ->
+            val handle = EmailRegistrationScanner.localPart(target)
+            val queries = listOfNotNull(target, handle?.takeIf { it.length >= 4 })
+            val openWeb = runCatching { OpenWebOsintScraper.scrapeAll(queries) }.getOrNull()
+            if (scans.isCurrent(active)) {
+                _uiState.update { it.copy(openWebReport = openWeb) }
+            }
+        }
+
         val handle = EmailRegistrationScanner.localPart(target) ?: return
         scans.start(token) { active ->
             _uiState.update { it.copy(isLiveScanning = true) }
-            // Correlate the email local-part with public usernames using the selected Python toolset.
             val outcome = try {
                 PythonOsintBridge.scanUsername(
                     getApplication(), handle, mode, UsernameScanner.STANDARD_LIMIT
@@ -335,12 +375,15 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             } catch (e: Exception) {
                 if (scans.isCurrent(active)) {
                     _uiState.update {
-                        it.copy(liveError = "Embedded Python username correlation failed: ${e.message ?: "unknown error"}", isLiveScanning = false)
+                        it.copy(
+                            liveError = "Embedded Python username correlation failed: ${e.message ?: "unknown error"}",
+                            isLiveScanning = false
+                        )
                     }
                 }
                 return@start
             }
-            val apiHits = runCatching { PublicProfileApis.lookup(target) }.getOrDefault(emptyList())
+            val apiHits = runCatching { PublicProfileApis.lookup(handle) }.getOrDefault(emptyList())
             val mergedHits = (outcome.confirmed + apiHits)
                 .distinctBy { it.profileUrl.lowercase().trimEnd('/') }
 
@@ -358,6 +401,15 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                         },
                         isLiveScanning = false,
                     )
+                }
+            }
+
+            if (handle.length >= 4) {
+                val handleDossiers = runCatching {
+                    DeepProfileScraper.scrapeUsernameDossier(handle, mergedHits)
+                }.getOrDefault(emptyList())
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(enrichedProfiles = handleDossiers) }
                 }
             }
         }
@@ -419,10 +471,10 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         val target = _uiState.value.activeTarget ?: return
         val token = scans.currentGeneration
         _uiState.update { it.copy(recheckingSite = site) }
-        viewModelScope.launch {
+        scans.start(token) { active ->
             try {
                 val updated = UsernameScanner.recheck(target, site, profileUrl)
-                if (!scans.isCurrent(token) || _uiState.value.activeTarget != target) return@launch
+                if (!scans.isCurrent(active) || _uiState.value.activeTarget != target) return@start
                 _uiState.update { state ->
                     if (updated != null) {
                         val remaining = state.liveHits.filterNot { it.site.equals(site, true) }
@@ -433,7 +485,9 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                     } else state
                 }
             } finally {
-                _uiState.update { it.copy(recheckingSite = null) }
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(recheckingSite = null) }
+                }
             }
         }
     }
@@ -442,10 +496,10 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         val target = _uiState.value.activeTarget ?: return
         val token = scans.currentGeneration
         _uiState.update { it.copy(recheckingSite = site) }
-        viewModelScope.launch {
+        scans.start(token) { active ->
             try {
                 val updated = EmailRegistrationScanner.recheck(target, site)
-                if (!scans.isCurrent(token) || _uiState.value.activeTarget != target) return@launch
+                if (!scans.isCurrent(active) || _uiState.value.activeTarget != target) return@start
                 _uiState.update { state ->
                     if (updated != null) {
                         val remaining = state.registeredSites.filterNot { it.site.equals(site, true) }
@@ -457,7 +511,9 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                     } else state
                 }
             } finally {
-                _uiState.update { it.copy(recheckingSite = null) }
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(recheckingSite = null) }
+                }
             }
         }
     }
@@ -468,10 +524,11 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         val before = state.registrationIssues
         if (state.isRetryingRegistrationIssues || before.none { it.retryable }) return
         _uiState.update { it.copy(isRetryingRegistrationIssues = true) }
-        viewModelScope.launch {
+        val token = scans.currentGeneration
+        scans.start(token) { active ->
             try {
                 val outcome = EmailRegistrationScanner.retry(target, before)
-                if (_uiState.value.activeTarget != target) return@launch
+                if (!scans.isCurrent(active) || _uiState.value.activeTarget != target) return@start
                 _uiState.update { current ->
                     val retriedNames = before.filter { it.retryable }.map { it.site.lowercase() }.toSet()
                     val remaining = current.registrationIssues
@@ -488,7 +545,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                     )
                 }
             } finally {
-                if (_uiState.value.activeTarget == target) {
+                if (scans.isCurrent(active) && _uiState.value.activeTarget == target) {
                     _uiState.update { it.copy(isRetryingRegistrationIssues = false) }
                 }
             }

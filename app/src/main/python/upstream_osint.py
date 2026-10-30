@@ -290,18 +290,40 @@ def run_holehe_email(target, max_concurrent=8):
         hits = []
         issues = []
         for item in findings:
-            name = str(item.get("name") or "Unknown")
+            if not isinstance(item, dict) or not item.get("exists"):
+                if isinstance(item, dict) and (item.get("rateLimit") or item.get("error")):
+                    name = str(item.get("name") or "Unknown")
+                    issues.append({"site": name, "code": 429 if item.get("rateLimit") else 0})
+                continue
+            name = str(item.get("name") or item.get("domain") or "Unknown")
             domain = str(item.get("domain") or "")
-            if item.get("exists") is True:
-                hits.append({
-                    "site": name,
-                    "domain": domain,
-                    "profileUrl": "https://" + domain if domain else "",
-                    "statusCode": 200,
-                    "evidence": "Holehe upstream reported a match; independent verification is unavailable",
-                })
-            elif item.get("rateLimit") or item.get("error"):
-                issues.append({"site": name, "code": 429 if item.get("rateLimit") else 0})
+
+            extras = []
+            recovery_email = item.get("emailrecovery")
+            if recovery_email and str(recovery_email).strip() not in ("None", "null", ""):
+                extras.append(f"Recovery email: {recovery_email}")
+            phone_num = item.get("phoneNumber")
+            if phone_num and str(phone_num).strip() not in ("None", "null", ""):
+                extras.append(f"Recovery phone: {phone_num}")
+            others = item.get("others")
+            if isinstance(others, dict):
+                for k, v in others.items():
+                    if v:
+                        extras.append(f"{k}: {v}")
+            elif others and str(others).strip() not in ("None", "null", ""):
+                extras.append(str(others))
+
+            evidence_text = "Holehe module reported exists=true"
+            if extras:
+                evidence_text += " • " + " | ".join(extras)
+
+            hits.append({
+                "site": name,
+                "domain": domain,
+                "profileUrl": "https://" + domain if domain else "",
+                "statusCode": 200,
+                "evidence": evidence_text,
+            })
         return json.dumps({"sitesChecked": len(websites), "hits": hits, "discarded": [], "issues": issues})
     except Exception as exc:
         return json.dumps(_json_result(error="Holehe email scan failed: " + str(exc)))

@@ -85,7 +85,7 @@ class DuckDuckGoParserTest {
 
     @Test
     fun resultsAreCapped() {
-        val html = (1..20).joinToString("\n") {
+        val html = (1..30).joinToString("\n") {
             """<a class="result__a" href="https://s$it.com">T$it</a><a class="result__snippet">S$it</a>"""
         }
         assertEquals(DdgParser.MAX_RESULTS, (DdgParser.classify(200, html) as DdgOutcome.Results).items.size)

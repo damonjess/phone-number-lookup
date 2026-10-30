@@ -87,6 +87,12 @@ object EmailAttributionEngine {
         // report can show a name, photo or location even when the email itself is not indexed.
         val handle = clean.substringBefore('@')
         val handleDef = if (isDistinctiveHandle(handle)) async { lookupProfilesByHandle(handle) } else null
+        val npmEmailDef = async { lookupNpmByEmail(clean) }
+        val webfingerDef = async { lookupWebFinger(clean) }
+        val multiWebDef = async { OpenWebOsintScraper.scrapeAll(listOf(clean, handle)) }
+        val deepHandleDef = if (isDistinctiveHandle(handle)) {
+            async { DeepProfileScraper.scrapeUsernameDossier(handle) }
+        } else null
 
         val names = mutableListOf<AttributedValue>()
         val usernames = mutableListOf<AttributedValue>()
@@ -211,6 +217,34 @@ object EmailAttributionEngine {
         stealer?.dateCompromised?.let {
             timeline += TimelineEvent(it, "Stealer Log", "HudsonRock")
         }
+
+        // 12. npm Maintainer Email Search
+        npmEmailDef.await().forEach { npm ->
+            usernames += AttributedValue(npm.username, "npm Registry")
+            links += AttributedProfileLink(npm.username, "npm (${npm.packageName})", "https://www.npmjs.com/~${npm.username}")
+            npm.authorName?.let { names += AttributedValue(it, "npm Registry") }
+        }
+
+        // 13. WebFinger / Fediverse
+        webfingerDef.await()?.let { wfUrl ->
+            links += AttributedProfileLink(clean, "WebFinger / Fediverse", wfUrl)
+        }
+
+        // 14. DeepProfileScraper for handle
+        deepHandleDef?.await().orEmpty().forEach { card ->
+            card.displayName?.let { names += AttributedValue(it, card.platform) }
+            usernames += AttributedValue(card.handle, card.platform)
+            links += AttributedProfileLink(card.handle, card.platform, card.profileUrl)
+            card.location?.let { locations += AttributedValue(it, card.platform) }
+            card.avatarUrl?.let { avatars += it }
+            card.discoveredPhones.forEach { p -> phones += AttributedValue(p, "${card.platform} Bio") }
+            card.createdDate?.let { timeline += TimelineEvent(it, "Account Created", card.platform) }
+        }
+
+        // 15. Multi-Engine Web & Entity Extraction
+        val webReport = multiWebDef.await()
+        phones += webReport.extractedPhones
+        usernames += webReport.extractedHandles
 
         // Exclude raw computer hostnames like DESKTOP-... from appearing as human names
         val filteredNames = names
@@ -647,5 +681,48 @@ object EmailAttributionEngine {
             return OpenPgpEmailMatch(email, true, "https://keys.openpgp.org/search?q=${ScanHttp.encode(email)}")
         }
         return null
+    }
+
+    private data class NpmEmailHit(val username: String, val authorName: String?, val packageName: String)
+
+    private fun lookupNpmByEmail(email: String): List<NpmEmailHit> {
+        val url = "https://registry.npmjs.org/-/v1/search?text=${ScanHttp.encode(email)}&size=5"
+        val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
+        if (!resp.isOk || resp.body.isBlank()) return emptyList()
+        return runCatching {
+            val objects = JSONObject(resp.body).optJSONArray("objects") ?: return emptyList()
+            val hits = mutableListOf<NpmEmailHit>()
+            for (i in 0 until objects.length()) {
+                val pkg = objects.optJSONObject(i)?.optJSONObject("package") ?: continue
+                val pkgName = pkg.optString("name")
+                val authorName = pkg.optJSONObject("author")?.optString("name")?.takeIf { it.isNotBlank() }
+                val maintainers = pkg.optJSONArray("maintainers") ?: continue
+                for (j in 0 until maintainers.length()) {
+                    val m = maintainers.optJSONObject(j) ?: continue
+                    if (m.optString("email").equals(email, ignoreCase = true)) {
+                        val user = m.optString("username").takeIf { it.isNotBlank() } ?: continue
+                        hits += NpmEmailHit(user, authorName, pkgName)
+                    }
+                }
+            }
+            hits.distinctBy { it.username.lowercase() }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun lookupWebFinger(email: String): String? {
+        val domain = email.substringAfter('@').trim()
+        if (domain in setOf("gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com")) return null
+        val url = "https://$domain/.well-known/webfinger?resource=acct:${ScanHttp.encode(email)}"
+        val resp = ScanHttp.get(url, timeoutMs = 6_000, headers = mapOf("Accept" to "application/jrd+json,application/json"))
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val links = JSONObject(resp.body).optJSONArray("links") ?: return null
+            for (i in 0 until links.length()) {
+                val l = links.optJSONObject(i) ?: continue
+                val href = l.optString("href").takeIf { it.startsWith("http") }
+                if (href != null) return href
+            }
+            null
+        }.getOrNull()
     }
 }

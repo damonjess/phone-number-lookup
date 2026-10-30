@@ -54,6 +54,7 @@ import com.example.phone_number_lookup.PhoneNumberUtils
 import com.example.phone_number_lookup.PhoneReputation
 import com.example.phone_number_lookup.UnifiedEvidenceBuilder
 import com.example.phone_number_lookup.ui.components.AppButton
+import com.example.phone_number_lookup.ui.components.DeepPhoneFootprintSection
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
 import com.example.phone_number_lookup.ui.components.LoadingRow
 import com.example.phone_number_lookup.ui.components.Notice
@@ -306,6 +307,11 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            DeepPhoneFootprintSection(
+                report = uiState.deepFootprint,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+
             val phoniaDorks = OsintTools.getPhoniaTools(normalized)
             val phoneInfogaDorks = OsintTools.getPhoneInfogaDorks(normalized, localFormat)
             val externalTools = OsintTools.getPhoneInfogaExternalTools(normalized, localFormat) +
@@ -342,11 +348,8 @@ fun PhoneLookupScreen(
                 title = "Quick Links Queue ($normalized)",
                 links = allDiscoveredPhoneLinks,
                 onExportPdf = {
-                    OsintPdfExporter.exportReport(
-                        context = context,
-                        title = "Phone OSINT Report",
-                        target = formats.e164,
-                        sections = listOf(
+                    val sections = buildList {
+                        add(
                             PdfSection(
                                 "Number Metadata & Telecom Telemetry",
                                 listOfNotNull(
@@ -363,7 +366,30 @@ fun PhoneLookupScreen(
                                     "CLI Assessment: ${telemetry.cliAssessment}",
                                     "Verdict: ${uiState.verdict?.headline ?: "N/A"} (${uiState.verdict?.summary ?: ""})"
                                 )
-                            ),
+                            )
+                        )
+                        uiState.deepFootprint?.let { deep ->
+                            if (deep.businessMatches.isNotEmpty()) {
+                                add(
+                                    PdfSection(
+                                        heading = "OpenStreetMap Registered Business Matches",
+                                        lines = deep.businessMatches.map { "${it.source}: ${it.value}" }
+                                    )
+                                )
+                            }
+                            if (deep.directoryReports.isNotEmpty()) {
+                                add(
+                                    PdfSection(
+                                        heading = "Caller Directory Reports",
+                                        lines = deep.directoryReports.flatMap { d ->
+                                            listOf("${d.source} (${d.verdictLabel ?: "Listed"}) - ${d.url}") +
+                                                d.userComments.map { "  • $it" }
+                                        }
+                                    )
+                                )
+                            }
+                        }
+                        add(
                             PdfSection(
                                 "Spam & Caller Reputation",
                                 buildList {
@@ -377,12 +403,20 @@ fun PhoneLookupScreen(
                                         rep.samples.forEach { sample -> add("  • $sample") }
                                     }
                                 }
-                            ),
+                            )
+                        )
+                        add(
                             PdfSection(
                                 "Discovered Links (links.txt)",
                                 allDiscoveredPhoneLinks.mapIndexed { idx, (lbl, url) -> "${idx + 1}. $lbl -> $url" }
                             )
                         )
+                    }
+                    OsintPdfExporter.exportReport(
+                        context = context,
+                        title = "Phone OSINT Report",
+                        target = formats.e164,
+                        sections = sections
                     )
                 }
             )
