@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.phone_number_lookup.AttributedValue
@@ -39,10 +38,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * The email tab header: the same shape of report a commercial reverse-email lookup shows
- * (risk line, headline, findings, coverage dates), assembled from the app's own scan output.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EmailProfileSummaryCard(
@@ -112,7 +107,6 @@ fun EmailProfileSummaryCard(
     }
 }
 
-/** Accounts / breaches / profile hits / first seen / last seen, the coverage tiles a report leads with. */
 @Composable
 fun EmailProfileStatsRow(
     registrations: List<RegistrationHit>,
@@ -162,13 +156,6 @@ fun EmailProfileStatsRow(
     }
 }
 
-/**
- * The site's "Summary" block: names, handles, profile photos, profile links and locations.
- *
- * Every row is a value that one of the free public endpoints already returned for this address,
- * each labelled with the source that supplied it. A block with no value says so rather than
- * showing an inferred placeholder.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EmailIdentitySummarySection(
@@ -209,7 +196,7 @@ fun EmailIdentitySummarySection(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        photos.take(8).forEachIndexed { index, url ->
+                        photos.take(25).forEachIndexed { index, url ->
                             AsyncImage(
                                 model = url,
                                 contentDescription = "Public profile picture ${index + 1}",
@@ -224,8 +211,8 @@ fun EmailIdentitySummarySection(
                 }
                 if (links.isNotEmpty()) {
                     SummaryBlockTitle("Profile Links")
-                    links.take(10).forEach { link ->
-                        Row(
+                    links.take(25).forEach { link ->
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onOpenUrl(link.url) }
@@ -235,23 +222,19 @@ fun EmailIdentitySummarySection(
                                 text = link.handle,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Tone.ACCENT.color(),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
+                                softWrap = true,
                             )
-                            Spacer(Modifier.width(6.dp))
                             Text(
                                 text = "(${link.platform})",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                softWrap = true,
                             )
                         }
                     }
-                    if (links.size > 10) {
+                    if (links.size > 25) {
                         Text(
-                            text = "+ ${links.size - 10} more links",
+                            text = "+ ${links.size - 25} more links",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -259,24 +242,31 @@ fun EmailIdentitySummarySection(
                 }
                 if (locations.isNotEmpty()) {
                     SummaryBlockTitle("Locations")
-                    locations.take(6).forEach { location ->
+                    locations.take(25).forEach { loc ->
                         Surface(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                            shape = MaterialTheme.shapes.extraSmall,
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                         ) {
-                            Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.Top) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
                                 Text(
-                                    text = location.value,
-                                    style = MaterialTheme.typography.bodySmall,
+                                    text = loc.value,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f),
+                                    softWrap = true
                                 )
-                                Spacer(Modifier.width(8.dp))
                                 Text(
-                                    text = location.source,
+                                    text = loc.source,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    softWrap = true
                                 )
                             }
                         }
@@ -296,10 +286,10 @@ private fun SummaryValues(title: String, values: List<AttributedValue>, tone: To
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        values.take(12).forEach { value ->
+        values.take(25).forEach { value ->
             Pill("${value.value} · ${value.source}", tone)
         }
-        if (values.size > 12) Pill("+${values.size - 12} more", Tone.NEUTRAL)
+        if (values.size > 25) Pill("+${values.size - 25} more", Tone.NEUTRAL)
     }
 }
 
@@ -313,10 +303,6 @@ private fun SummaryBlockTitle(title: String) {
     )
 }
 
-/**
- * Breach cards: the catalogue metadata (date, domain, size, description, exposed data classes)
- * for every breach the free breach checks reported for the address.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EmailBreachDetailsSection(
@@ -363,8 +349,7 @@ private fun BreachDetailCard(detail: BreachDetail, onOpenUrl: (String) -> Unit) 
                         text = detail.name,
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        softWrap = true,
                     )
                     detail.domain?.let { domain ->
                         Text(
@@ -396,7 +381,7 @@ private fun BreachDetailCard(detail: BreachDetail, onOpenUrl: (String) -> Unit) 
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    detail.dataClasses.take(8).forEach { dataClass ->
+                    detail.dataClasses.take(25).forEach { dataClass ->
                         Pill(dataClass, Tone.NEUTRAL)
                     }
                 }
@@ -407,8 +392,7 @@ private fun BreachDetailCard(detail: BreachDetail, onOpenUrl: (String) -> Unit) 
                     text = detail.description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 6,
-                    overflow = TextOverflow.Ellipsis,
+                    softWrap = true,
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }
@@ -423,7 +407,6 @@ private fun formatCount(count: Long): String = when {
     else -> count.toString()
 }
 
-/** The site's "Activity timeline": the dated signals the sources returned, newest first. */
 @Composable
 fun EmailActivityTimelineSection(
     attribution: EmailAttributionReport?,
@@ -450,7 +433,7 @@ fun EmailActivityTimelineSection(
                 "No dated signal was returned for this address, so there is no timeline to plot yet.",
                 tone = Tone.NEUTRAL,
             )
-            else -> events.take(12).forEach { event -> TimelineRow(event) }
+            else -> events.take(25).forEach { event -> TimelineRow(event) }
         }
     }
 }
@@ -484,10 +467,6 @@ private fun TimelineRow(event: TimelineEvent) {
     }
 }
 
-/**
- * The site's "Linked accounts" block: one card per service, with the fields that were returned
- * for it. Everything comes from the on-device scans, so it works without any paid API.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EmailLinkedAccountsSection(
@@ -526,8 +505,8 @@ fun EmailLinkedAccountsSection(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                confirmed.take(24).forEach { Pill(it.name, Tone.ACCENT) }
-                if (confirmed.size > 24) Pill("+${confirmed.size - 24} more", Tone.NEUTRAL)
+                confirmed.take(30).forEach { Pill(it.name, Tone.ACCENT) }
+                if (confirmed.size > 30) Pill("+${confirmed.size - 30} more", Tone.NEUTRAL)
             }
             Spacer(Modifier.height(6.dp))
         }
@@ -562,8 +541,7 @@ private fun LinkedAccountBlock(account: EmailLinkedAccount, onOpenUrl: (String) 
                     text = account.name,
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    softWrap = true,
                     modifier = Modifier.weight(1f),
                 )
                 if (account.confirmed) Pill("Registered", Tone.ACCENT)
@@ -587,6 +565,7 @@ private fun LinkedAccountBlock(account: EmailLinkedAccount, onOpenUrl: (String) 
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface,
+                        softWrap = true,
                     )
                 }
             }

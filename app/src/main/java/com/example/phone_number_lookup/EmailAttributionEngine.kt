@@ -2,7 +2,10 @@ package com.example.phone_number_lookup
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class AttributedValue(
@@ -69,30 +72,22 @@ object EmailAttributionEngine {
             return@withContext EmailAttributionReport(clean)
         }
 
+        val handle = clean.substringBefore('@')
+
         val googleDef = async { GoogleMetadataExtractor.extract(clean) }
         val githubDef = async { lookupGitHubByEmail(clean) }
         val duolingoDef = async { lookupDuolingoByEmail(clean) }
         val gravatarDef = async { lookupGravatarByEmail(clean) }
         val hudsonDef = async { lookupHudsonRockProfile(clean) }
-        val mfpDef = async { lookupMyFitnessPalHandle(clean.substringBefore('@')) }
+        val mfpDef = async { lookupMyFitnessPalHandle(handle) }
         val keybaseDef = async { lookupKeybase("email=${ScanHttp.encode(clean)}") }
-        val gitlabDef = async { lookupGitLabByEmail(clean) }
         val openPgpDef = async { lookupOpenPgpKeysByEmail(clean) }
         val pgpKeysDef = async { IdentityEnricher.fetchPgpKeys(clean) }
-        val webSearchDef = async { SearchRepository.searchWeb(listOf(clean)) }
+        val webSearchDef = async {
+            OpenWebOsintScraper.scrapeAll(listOf(clean, handle))
+        }
         val instaPhoneDef = async { lookupInstagramRecoveryPhone(clean) }
-
-        // The local part of the address is the handle most services expose publicly. When it is
-        // distinctive enough to be a real handle, ask the free profile APIs for that handle so the
-        // report can show a name, photo or location even when the email itself is not indexed.
-        val handle = clean.substringBefore('@')
         val handleDef = if (isDistinctiveHandle(handle)) async { lookupProfilesByHandle(handle) } else null
-        val npmEmailDef = async { lookupNpmByEmail(clean) }
-        val webfingerDef = async { lookupWebFinger(clean) }
-        val multiWebDef = async { OpenWebOsintScraper.scrapeAll(listOf(clean, handle)) }
-        val deepHandleDef = if (isDistinctiveHandle(handle)) {
-            async { DeepProfileScraper.scrapeUsernameDossier(handle) }
-        } else null
 
         val names = mutableListOf<AttributedValue>()
         val usernames = mutableListOf<AttributedValue>()
@@ -127,7 +122,11 @@ object EmailAttributionEngine {
             usernames += AttributedValue(gh.login, "GitHub")
             links += AttributedProfileLink(gh.login, "GitHub", gh.profileUrl)
             gh.location?.let { locations += AttributedValue(it, "GitHub") }
-            gh.bio?.let { bio -> phones += extractPhoneNumbersFromText(bio, "GitHub Bio") }
+            gh.inferredTimezoneLocation?.let { locations += AttributedValue(it, "GitHub Commit Timezone") }
+            gh.bio?.let { bio ->
+                phones += extractPhoneNumbersFromText(bio, "GitHub Bio")
+                locations += extractLocationsFromText(bio, "GitHub Bio")
+            }
             gh.avatarUrl?.let { avatars += it }
             gh.createdAt?.let { timeline += TimelineEvent(it, "Creation Date", "GitHub") }
             gh.updatedAt?.let { timeline += TimelineEvent(it, "Updated At", "GitHub") }
@@ -138,21 +137,15 @@ object EmailAttributionEngine {
             kb.fullName?.let { names += AttributedValue(it, "Keybase") }
             usernames += AttributedValue(kb.username, "Keybase")
             kb.location?.let { locations += AttributedValue(it, "Keybase") }
-            kb.bio?.let { bio -> phones += extractPhoneNumbersFromText(bio, "Keybase Bio") }
+            kb.bio?.let { bio ->
+                phones += extractPhoneNumbersFromText(bio, "Keybase Bio")
+                locations += extractLocationsFromText(bio, "Keybase Bio")
+            }
             kb.avatarUrl?.let { avatars += it }
             links += kb.proofs
         }
 
-        // 4. GitLab Attribution
-        gitlabDef.await()?.let { gl ->
-            gl.fullName?.let { names += AttributedValue(it, "GitLab") }
-            usernames += AttributedValue(gl.username, "GitLab")
-            links += AttributedProfileLink(gl.username, "GitLab", gl.profileUrl)
-            gl.avatarUrl?.let { avatars += it }
-            gl.createdAt?.let { timeline += TimelineEvent(it, "Account Created", "GitLab") }
-        }
-
-        // 5. OpenPGP Keyserver Attribution
+        // 4. OpenPGP Keyserver Attribution
         openPgpDef.await()?.let { pgp ->
             links += AttributedProfileLink(pgp.email, "OpenPGP Key", pgp.profileUrl)
             timeline += TimelineEvent("Public Key Verified", "OpenPGP Key Found", "OpenPGP Keyserver")
@@ -165,24 +158,25 @@ object EmailAttributionEngine {
             }
         }
 
-        // 6. MyFitnessPal Handle Check
+        // 5. MyFitnessPal Handle Check
         mfpDef.await()?.let { mfpHandle ->
             usernames += AttributedValue(mfpHandle, "MyFitnessPal")
             links += AttributedProfileLink(mfpHandle, "MyFitnessPal", "https://www.myfitnesspal.com/profile/$mfpHandle")
         }
 
-        // 7. Duolingo Attribution
+        // 6. Duolingo Attribution
         duolingoDef.await()?.let { duo ->
             duo.fullName?.let { names += AttributedValue(it, "Duolingo") }
             duo.username?.let { u ->
                 usernames += AttributedValue(u, "Duolingo")
                 links += AttributedProfileLink(u, "Duolingo", "https://www.duolingo.com/profile/$u")
             }
+            duo.country?.let { locations += AttributedValue(it, "Duolingo") }
             duo.avatarUrl?.let { avatars += it }
             duo.createdDate?.let { timeline += TimelineEvent(it, "Joined", "Duolingo") }
         }
 
-        // 8. Gravatar Attribution
+        // 7. Gravatar Attribution
         gravatarDef.await()?.let { grav ->
             grav.displayName?.let { names += AttributedValue(it, "Gravatar") }
             grav.username?.let { u ->
@@ -190,17 +184,27 @@ object EmailAttributionEngine {
                 links += AttributedProfileLink(u, "Gravatar", grav.profileUrl ?: "https://gravatar.com/$u")
             }
             grav.location?.let { locations += AttributedValue(it, "Gravatar") }
-            grav.aboutMe?.let { bio -> phones += extractPhoneNumbersFromText(bio, "Gravatar Bio") }
+            grav.aboutMe?.let { bio ->
+                phones += extractPhoneNumbersFromText(bio, "Gravatar Bio")
+                locations += extractLocationsFromText(bio, "Gravatar Bio")
+            }
             grav.avatarUrl?.let { avatars += it }
             links += grav.verifiedAccounts
         }
 
-        // 9. Public Web Search Results for Email
-        runCatching { webSearchDef.await() }.getOrNull()?.results.orEmpty().forEach { result ->
-            phones += extractPhoneNumbersFromText("${result.title} ${result.snippet}", "Web Search")
+        // 8. Multi-Engine Public Web Search Results for Email & Handle
+        val webReport = runCatching { webSearchDef.await() }.getOrNull()
+        if (webReport != null) {
+            phones += webReport.extractedPhones
+            usernames += webReport.extractedHandles
+            webReport.results.forEach { result ->
+                val blob = "${result.title} ${result.snippet}"
+                phones += extractPhoneNumbersFromText(blob, result.source)
+                locations += extractLocationsFromText(blob, result.source)
+            }
         }
 
-        // 10. Public profiles for the email's handle
+        // 9. Public profiles for the email's handle
         handleDef?.await().orEmpty().forEach { profile ->
             profile.name?.let { names += AttributedValue(it, profile.platform) }
             usernames += AttributedValue(profile.username, profile.platform)
@@ -211,60 +215,157 @@ object EmailAttributionEngine {
             profile.lastActive?.let { timeline += TimelineEvent(it, "Last Active", profile.platform) }
         }
 
-        // 11. HudsonRock Infostealer Profile
+        // 10. HudsonRock Infostealer Profile + Masked IP Geolocation
         val stealer = hudsonDef.await()
         stealer?.computerUsername?.let { names += AttributedValue(it, "Stealer Log") }
         stealer?.dateCompromised?.let {
             timeline += TimelineEvent(it, "Stealer Log", "HudsonRock")
         }
-
-        // 12. npm Maintainer Email Search
-        npmEmailDef.await().forEach { npm ->
-            usernames += AttributedValue(npm.username, "npm Registry")
-            links += AttributedProfileLink(npm.username, "npm (${npm.packageName})", "https://www.npmjs.com/~${npm.username}")
-            npm.authorName?.let { names += AttributedValue(it, "npm Registry") }
+        stealer?.maskedIp?.let { ip ->
+            resolveMaskedIpLocation(ip)?.let { geo ->
+                locations += AttributedValue(geo, "HudsonRock IP ($ip)")
+            }
         }
 
-        // 13. WebFinger / Fediverse
-        webfingerDef.await()?.let { wfUrl ->
-            links += AttributedProfileLink(clean, "WebFinger / Fediverse", wfUrl)
+        // 11. SECOND-HOP PIVOT: Scrape discovered usernames (e.g., damonjess, @damonkirby89)
+        // for profiles, bios, GitHub repo locations, and web mentions!
+        val pivotHandles = usernames
+            .map { it.value.removePrefix("@").trim() }
+            .filter { isDistinctiveHandle(it) }
+            .distinctBy { it.lowercase() }
+            .take(5)
+
+        if (pivotHandles.isNotEmpty()) {
+            coroutineScope {
+                val dossierJobs = pivotHandles.map { h ->
+                    async { runCatching { DeepProfileScraper.scrapeUsernameDossier(h) }.getOrDefault(emptyList()) }
+                }
+                val pivotWebJob = async {
+                    val q = pivotHandles.map { "\"$it\"" }
+                    runCatching { OpenWebOsintScraper.scrapeAll(q) }.getOrNull()
+                }
+                val ghDeepJobs = pivotHandles.map { h ->
+                    async { runCatching { scrapeGitHubUserReposForLocationAndPhone(h) }.getOrNull() }
+                }
+
+                dossierJobs.awaitAll().flatten().forEach { card ->
+                    card.displayName?.let { names += AttributedValue(it, card.platform) }
+                    card.location?.let { locations += AttributedValue(it, "${card.platform} (@${card.handle})") }
+                    card.avatarUrl?.let { avatars += it }
+                    card.discoveredPhones.forEach { p ->
+                        phones += AttributedValue(p, "${card.platform} (@${card.handle})")
+                    }
+                    card.bio?.let { bio ->
+                        phones += extractPhoneNumbersFromText(bio, "${card.platform} (@${card.handle})")
+                        locations += extractLocationsFromText(bio, "${card.platform} (@${card.handle})")
+                    }
+                    links += AttributedProfileLink(card.handle, card.platform, card.profileUrl)
+                }
+
+                pivotWebJob.await()?.let { pw ->
+                    phones += pw.extractedPhones
+                    pw.results.forEach { item ->
+                        val blob = "${item.title} ${item.snippet}"
+                        phones += extractPhoneNumbersFromText(blob, item.source)
+                        locations += extractLocationsFromText(blob, item.source)
+                    }
+                }
+
+                ghDeepJobs.awaitAll().filterNotNull().forEach { (ghLocs, ghPhones) ->
+                    locations += ghLocs
+                    phones += ghPhones
+                }
+            }
         }
 
-        // 14. DeepProfileScraper for handle
-        deepHandleDef?.await().orEmpty().forEach { card ->
-            card.displayName?.let { names += AttributedValue(it, card.platform) }
-            usernames += AttributedValue(card.handle, card.platform)
-            links += AttributedProfileLink(card.handle, card.platform, card.profileUrl)
-            card.location?.let { locations += AttributedValue(it, card.platform) }
-            card.avatarUrl?.let { avatars += it }
-            card.discoveredPhones.forEach { p -> phones += AttributedValue(p, "${card.platform} Bio") }
-            card.createdDate?.let { timeline += TimelineEvent(it, "Account Created", card.platform) }
+        // 12. Infer UK Area Locations from any discovered UK landline numbers
+        phones.forEach { pv ->
+            val norm = PhoneNumberUtils.normalize(pv.value)
+            val area = PhoneNumberUtils.getAreaInfo(norm)
+            if (!area.isNullOrBlank()) {
+                locations += AttributedValue("$area, UK (from ${pv.value})", pv.source)
+            }
         }
 
-        // 15. Multi-Engine Web & Entity Extraction
-        val webReport = multiWebDef.await()
-        phones += webReport.extractedPhones
-        usernames += webReport.extractedHandles
-
-        // Exclude raw computer hostnames like DESKTOP-... from appearing as human names
         val filteredNames = names
             .filterNot { it.value.startsWith("DESKTOP-", ignoreCase = true) }
             .distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
 
         val filteredPhones = phones
-            .distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
+            .distinctBy { it.value.filter { c -> c.isDigit() || c == '*' }.ifEmpty { it.value.lowercase() } }
+
+        val filteredLocations = locations
+            .filter { it.value.length >= 2 }
+            .distinctBy { it.value.lowercase().trim() }
 
         EmailAttributionReport(
             email = clean,
             namesFound = filteredNames,
-            usernamesFound = usernames.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" },
+            usernamesFound = usernames.distinctBy { it.value.removePrefix("@").lowercase() },
             profileLinks = links.distinctBy { it.url.lowercase() },
-            locationsFound = locations.distinctBy { it.value.lowercase() },
+            locationsFound = filteredLocations,
             phonesFound = filteredPhones,
             avatarUrls = avatars.distinct(),
             timeline = timeline.sortedByDescending { it.date },
             stealerProfile = stealer
         )
+    }
+
+    /**
+     * Resolves a HudsonRock masked IP (e.g. "81.104.***.***") by substituting ".1.1" for masked
+     * octets in the /16 ISP block and querying ipwho.is for the ISP/country/region.
+     */
+    internal fun resolveMaskedIpLocation(maskedIp: String): String? {
+        val parts = maskedIp.trim().split('.')
+        if (parts.size != 4) return null
+        val p0 = parts[0].toIntOrNull() ?: return null
+        val p1 = parts[1].toIntOrNull() ?: return null
+        val candidateIp = "$p0.$p1.${parts[2].toIntOrNull() ?: 1}.${parts[3].toIntOrNull() ?: 1}"
+
+        val resp = ScanHttp.get("https://ipwho.is/$candidateIp", timeoutMs = 6_000, headers = mapOf("Accept" to "application/json"))
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val json = JSONObject(resp.body)
+            if (!json.optBoolean("success", false)) return null
+            val country = json.optString("country").takeIf { it.isNotBlank() } ?: return null
+            val region = json.optString("region").takeIf { it.isNotBlank() }
+            val isp = json.optJSONObject("connection")?.optString("isp")?.takeIf { it.isNotBlank() }
+            buildString {
+                if (region != null && !maskedIp.contains("*")) append("$region, ")
+                append(country)
+                if (isp != null) append(" (ISP block: $isp)")
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * Scans a discovered GitHub user's public repositories and recent events for location/region
+     * names and phone numbers (e.g. regional UK data projects or contact info in repo descriptions).
+     */
+    private fun scrapeGitHubUserReposForLocationAndPhone(login: String): Pair<List<AttributedValue>, List<AttributedValue>> {
+        val locs = mutableListOf<AttributedValue>()
+        val phones = mutableListOf<AttributedValue>()
+        val encoded = ScanHttp.encode(login)
+
+        val reposResp = ScanHttp.get(
+            "https://api.github.com/users/$encoded/repos?per_page=30&sort=updated",
+            timeoutMs = 8_000,
+            headers = GITHUB_HEADERS
+        )
+        if (reposResp.isOk && reposResp.body.isNotBlank()) {
+            runCatching {
+                val arr = JSONArray(reposResp.body)
+                for (i in 0 until arr.length()) {
+                    val repo = arr.optJSONObject(i) ?: continue
+                    val name = repo.optString("name")
+                    val desc = repo.optString("description").takeIf { it != "null" }.orEmpty()
+                    val blob = "$name $desc"
+                    locs += extractLocationsFromText(blob, "GitHub Repo ($login/$name)")
+                    phones += extractPhoneNumbersFromText(blob, "GitHub Repo ($login/$name)")
+                }
+            }
+        }
+        return locs to phones
     }
 
     private fun lookupInstagramRecoveryPhone(email: String): AttributedValue? {
@@ -286,7 +387,7 @@ object EmailAttributionEngine {
                 val phone = json.optString("obfuscated_phone").takeIf { it.isNotBlank() }
                     ?: json.optJSONObject("user")?.optString("obfuscated_phone")?.takeIf { it.isNotBlank() }
                 if (phone != null) {
-                    return AttributedValue(phone, "Instagram")
+                    return AttributedValue(phone, "Instagram Recovery")
                 }
             }
         }
@@ -313,13 +414,15 @@ object EmailAttributionEngine {
         val createdAt: String?,
         val updatedAt: String?,
         val location: String? = null,
-        val bio: String? = null
+        val bio: String? = null,
+        val inferredTimezoneLocation: String? = null
     )
 
     private fun lookupGitHubByEmail(email: String): GitHubEmailMatch? {
         val encoded = ScanHttp.encode(email)
         var login: String? = null
         var commitAuthorName: String? = null
+        var commitTzLocation: String? = null
 
         val commitResp = ScanHttp.get(
             "https://api.github.com/search/commits?per_page=5&q=author-email:$encoded",
@@ -335,10 +438,13 @@ object EmailAttributionEngine {
                         if (login == null) {
                             login = item.optJSONObject("author")?.optString("login")?.takeIf { it.isNotBlank() }
                         }
-                        val nameCandidate = item.optJSONObject("commit")
-                            ?.optJSONObject("author")
-                            ?.optString("name")
-                            ?.trim()
+                        val authorObj = item.optJSONObject("commit")?.optJSONObject("author")
+                        val dateStr = authorObj?.optString("date").orEmpty()
+                        if (commitTzLocation == null && dateStr.length >= 6) {
+                            val tzOffset = dateStr.takeLast(6)
+                            commitTzLocation = mapIsoOffsetToRegionHint(tzOffset)
+                        }
+                        val nameCandidate = authorObj?.optString("name")?.trim()
                         if (!nameCandidate.isNullOrBlank() && !nameCandidate.equals(login, ignoreCase = true)) {
                             commitAuthorName = nameCandidate
                             break
@@ -380,15 +486,13 @@ object EmailAttributionEngine {
                 avatarUrl = null,
                 createdAt = null,
                 updatedAt = null,
-                location = null,
-                bio = null
+                inferredTimezoneLocation = commitTzLocation
             )
         }
 
         return runCatching {
             val root = JSONObject(profileResp.body)
             val rawProfileName = root.optString("name").takeIf { it.isNotBlank() && it != "null" }
-            // Prefer a human full name with a space over a repeated username
             val bestName = when {
                 rawProfileName != null && ' ' in rawProfileName -> rawProfileName
                 commitAuthorName != null && ' ' in commitAuthorName -> commitAuthorName
@@ -402,16 +506,27 @@ object EmailAttributionEngine {
                 createdAt = root.optString("created_at").substringBefore('T').takeIf { it.isNotBlank() },
                 updatedAt = root.optString("updated_at").substringBefore('T').takeIf { it.isNotBlank() },
                 location = root.optString("location").takeIf { it.isNotBlank() && it != "null" },
-                bio = root.optString("bio").takeIf { it.isNotBlank() && it != "null" }
+                bio = root.optString("bio").takeIf { it.isNotBlank() && it != "null" },
+                inferredTimezoneLocation = commitTzLocation
             )
         }.getOrNull()
+    }
+
+    private fun mapIsoOffsetToRegionHint(offset: String): String? = when (offset) {
+        "+00:00", "-00:00" -> "UTC+00:00 (UK / Ireland / Portugal GMT)"
+        "+01:00" -> "UTC+01:00 (UK BST / Western & Central Europe)"
+        "+02:00" -> "UTC+02:00 (Eastern Europe / CEST)"
+        "-04:00", "-05:00" -> "UTC$offset (US / Canada Eastern)"
+        "-07:00", "-08:00" -> "UTC$offset (US / Canada Pacific)"
+        else -> if (offset.startsWith("+") || offset.startsWith("-")) "Timezone UTC$offset" else null
     }
 
     private data class DuolingoEmailMatch(
         val username: String?,
         val fullName: String?,
         val avatarUrl: String?,
-        val createdDate: String?
+        val createdDate: String?,
+        val country: String? = null
     )
 
     private fun lookupDuolingoByEmail(email: String): DuolingoEmailMatch? {
@@ -427,13 +542,14 @@ object EmailAttributionEngine {
             val username = u.optString("username").takeIf { it.isNotBlank() && it != "null" }
             val name = u.optString("name").takeIf { it.isNotBlank() && it != "null" }
             val picture = u.optString("picture").takeIf { it.isNotBlank() && it != "null" }
+            val country = u.optString("learningLanguage").takeIf { it.isNotBlank() && it != "null" }?.let { "Duolingo lang: $it" }
             val creationTs = u.optLong("creationDate", 0L)
             val created = if (creationTs > 0L) {
                 java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
                     .format(java.util.Date(creationTs * 1000L))
             } else null
             if (username == null && name == null) return null
-            DuolingoEmailMatch(username, name, picture, created)
+            DuolingoEmailMatch(username, name, picture, created, country)
         }.getOrNull()
     }
 
@@ -474,9 +590,18 @@ object EmailAttributionEngine {
         }.getOrNull()
     }
 
-    private val MASKED_PHONE_REGEX = Regex("""(?:\+\d{1,4}\s*)?(?:\*{2,5}[-\s.]*)+\d{2,4}""")
-    private val INT_PHONE_REGEX = Regex("""\+\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}""")
-    private val UK_MOBILE_REGEX = Regex("""\b07\d{9}\b""")
+    // Matches masked numbers ("+44 *******89", "07*** ****89"), international numbers,
+    // spaced/unspaced UK mobiles ("07123 456789"), and UK landlines ("01724 123456", "020 7946 0958")
+    private val MASKED_PHONE_REGEX = Regex("""(?:\+\d{1,4}[\s.-]*)?(?:[\*•xX]{2,6}[-\s.]*)+\d{2,4}""")
+    private val INT_PHONE_REGEX = Regex("""\+\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{2,4}[-.\s]?\d{3,6}""")
+    private val UK_MOBILE_REGEX = Regex("""\b07\d{3}[\s.-]?\d{3}[\s.-]?\d{3}\b|\b07\d{9}\b""")
+    private val UK_LANDLINE_REGEX = Regex("""\b0(?:1\d{2,4}|2[03489]|3\d{2}|800)[\s.-]?\d{3,4}[\s.-]?\d{3,4}\b""")
+
+    private val UK_LOCATION_KEYWORDS = Regex(
+        """\b(Scunthorpe|North Lincolnshire|Lincolnshire|Humberside|Barton-upon-Humber|Grimsby|Hull|Doncaster|Sheffield|Leeds|Yorkshire|Manchester|London|Birmingham|Liverpool|Nottingham|Bristol|Newcastle|Glasgow|Edinburgh|Cardiff|Belfast|United Kingdom|England|Scotland|Wales)\b""",
+        RegexOption.IGNORE_CASE
+    )
+    private val UK_POSTCODE_REGEX = Regex("""\b([A-Z]{1,2}\d[A-Z\d]?\s+\d[A-Z]{2})\b""")
 
     internal fun extractPhoneNumbersFromText(text: String, sourceName: String): List<AttributedValue> {
         val out = mutableListOf<AttributedValue>()
@@ -486,12 +611,32 @@ object EmailAttributionEngine {
         }
         INT_PHONE_REGEX.findAll(text).forEach { m ->
             val num = m.value.trim()
-            if (num.length >= 8 && !num.contains("-202") && !num.contains("-2023") && !num.contains("-2024") && !num.contains("-2025")) {
+            val digits = num.filter { it.isDigit() }
+            if (digits.length in 10..15 && !num.contains("-202")) {
                 out += AttributedValue(num, sourceName)
             }
         }
         UK_MOBILE_REGEX.findAll(text).forEach { m ->
             out += AttributedValue(m.value.trim(), sourceName)
+        }
+        UK_LANDLINE_REGEX.findAll(text).forEach { m ->
+            val digits = m.value.filter { it.isDigit() }
+            if (digits.length in 10..11) {
+                out += AttributedValue(m.value.trim(), sourceName)
+            }
+        }
+        return out
+    }
+
+    internal fun extractLocationsFromText(text: String, sourceName: String): List<AttributedValue> {
+        if (text.isBlank()) return emptyList()
+        val out = mutableListOf<AttributedValue>()
+        UK_LOCATION_KEYWORDS.findAll(text).forEach { m ->
+            val loc = m.value.trim().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            out += AttributedValue(loc, sourceName)
+        }
+        UK_POSTCODE_REGEX.findAll(text).forEach { m ->
+            out += AttributedValue("UK Postcode: ${m.value.trim()}", sourceName)
         }
         return out
     }
@@ -504,10 +649,6 @@ object EmailAttributionEngine {
         return null
     }
 
-    /**
-     * Handles that belong to a company or a role ("info", "support", "admin") identify nobody,
-     * so they are skipped rather than attaching a stranger's profile to the address.
-     */
     private fun isDistinctiveHandle(handle: String): Boolean {
         val value = handle.trim().lowercase()
         if (value.length < 4) return false
@@ -529,7 +670,6 @@ object EmailAttributionEngine {
         val lastActive: String?
     )
 
-    /** Free public profile APIs that accept a bare username and return identity fields. */
     private fun lookupProfilesByHandle(handle: String): List<HandleProfile> {
         val encoded = ScanHttp.encode(handle)
         val profiles = mutableListOf<HandleProfile>()
@@ -606,7 +746,6 @@ object EmailAttributionEngine {
         val location: String? = null
     )
 
-    /** [query] is either `email=...` or `username=...`, already URL-encoded. */
     private fun lookupKeybase(query: String): KeybaseEmailMatch? {
         val url = "https://keybase.io/_/api/1.0/user/lookup.json?$query"
         val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
@@ -643,31 +782,6 @@ object EmailAttributionEngine {
         }.getOrNull()
     }
 
-    private data class GitLabEmailMatch(
-        val username: String,
-        val fullName: String?,
-        val profileUrl: String,
-        val avatarUrl: String?,
-        val createdAt: String?
-    )
-
-    private fun lookupGitLabByEmail(email: String): GitLabEmailMatch? {
-        val url = "https://gitlab.com/api/v4/users?search=${ScanHttp.encode(email)}"
-        val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
-        if (!resp.isOk || resp.body.isBlank()) return null
-        return runCatching {
-            val arr = org.json.JSONArray(resp.body)
-            if (arr.length() == 0) return null
-            val u = arr.optJSONObject(0) ?: return null
-            val username = u.optString("username").takeIf { it.isNotBlank() } ?: return null
-            val name = u.optString("name").takeIf { it.isNotBlank() }
-            val webUrl = u.optString("web_url").takeIf { it.isNotBlank() } ?: "https://gitlab.com/$username"
-            val avatar = u.optString("avatar_url").takeIf { it.isNotBlank() }
-            val created = u.optString("created_at").substringBefore('T').takeIf { it.isNotBlank() }
-            GitLabEmailMatch(username, name, webUrl, avatar, created)
-        }.getOrNull()
-    }
-
     private data class OpenPgpEmailMatch(
         val email: String,
         val keyFound: Boolean,
@@ -681,48 +795,5 @@ object EmailAttributionEngine {
             return OpenPgpEmailMatch(email, true, "https://keys.openpgp.org/search?q=${ScanHttp.encode(email)}")
         }
         return null
-    }
-
-    private data class NpmEmailHit(val username: String, val authorName: String?, val packageName: String)
-
-    private fun lookupNpmByEmail(email: String): List<NpmEmailHit> {
-        val url = "https://registry.npmjs.org/-/v1/search?text=${ScanHttp.encode(email)}&size=5"
-        val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
-        if (!resp.isOk || resp.body.isBlank()) return emptyList()
-        return runCatching {
-            val objects = JSONObject(resp.body).optJSONArray("objects") ?: return emptyList()
-            val hits = mutableListOf<NpmEmailHit>()
-            for (i in 0 until objects.length()) {
-                val pkg = objects.optJSONObject(i)?.optJSONObject("package") ?: continue
-                val pkgName = pkg.optString("name")
-                val authorName = pkg.optJSONObject("author")?.optString("name")?.takeIf { it.isNotBlank() }
-                val maintainers = pkg.optJSONArray("maintainers") ?: continue
-                for (j in 0 until maintainers.length()) {
-                    val m = maintainers.optJSONObject(j) ?: continue
-                    if (m.optString("email").equals(email, ignoreCase = true)) {
-                        val user = m.optString("username").takeIf { it.isNotBlank() } ?: continue
-                        hits += NpmEmailHit(user, authorName, pkgName)
-                    }
-                }
-            }
-            hits.distinctBy { it.username.lowercase() }
-        }.getOrDefault(emptyList())
-    }
-
-    private fun lookupWebFinger(email: String): String? {
-        val domain = email.substringAfter('@').trim()
-        if (domain in setOf("gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com")) return null
-        val url = "https://$domain/.well-known/webfinger?resource=acct:${ScanHttp.encode(email)}"
-        val resp = ScanHttp.get(url, timeoutMs = 6_000, headers = mapOf("Accept" to "application/jrd+json,application/json"))
-        if (!resp.isOk || resp.body.isBlank()) return null
-        return runCatching {
-            val links = JSONObject(resp.body).optJSONArray("links") ?: return null
-            for (i in 0 until links.length()) {
-                val l = links.optJSONObject(i) ?: continue
-                val href = l.optString("href").takeIf { it.startsWith("http") }
-                if (href != null) return href
-            }
-            null
-        }.getOrNull()
     }
 }

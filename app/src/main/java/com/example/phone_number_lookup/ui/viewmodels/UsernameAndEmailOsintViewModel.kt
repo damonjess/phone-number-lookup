@@ -167,6 +167,39 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         }
     }
 
+    /**
+     * Merges any phones, locations, names, or handles discovered by Holehe, DeepProfileScraper,
+     * or OpenWebOsintScraper directly into `attributionReport` so the top dashboard cards
+     * ("Phone numbers" and "Locations") always display every discovered value.
+     */
+    private fun mergeIntoAttribution(
+        extraPhones: List<com.example.phone_number_lookup.AttributedValue> = emptyList(),
+        extraLocations: List<com.example.phone_number_lookup.AttributedValue> = emptyList(),
+        extraNames: List<com.example.phone_number_lookup.AttributedValue> = emptyList(),
+        extraUsernames: List<com.example.phone_number_lookup.AttributedValue> = emptyList()
+    ) {
+        if (extraPhones.isEmpty() && extraLocations.isEmpty() && extraNames.isEmpty() && extraUsernames.isEmpty()) return
+        _uiState.update { state ->
+            val base = state.attributionReport ?: EmailAttributionReport(email = state.activeTarget.orEmpty())
+            val mergedPhones = (base.phonesFound + extraPhones)
+                .distinctBy { it.value.lowercase().trim() }
+            val mergedLocations = (base.locationsFound + extraLocations)
+                .distinctBy { it.value.lowercase().trim() }
+            val mergedNames = (base.namesFound + extraNames)
+                .distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
+            val mergedUsernames = (base.usernamesFound + extraUsernames)
+                .distinctBy { it.value.removePrefix("@").lowercase() }
+            state.copy(
+                attributionReport = base.copy(
+                    phonesFound = mergedPhones,
+                    locationsFound = mergedLocations,
+                    namesFound = mergedNames,
+                    usernamesFound = mergedUsernames
+                )
+            )
+        }
+    }
+
     private fun runUsernameScan(target: String, depth: Int, mode: PythonToolMode, token: Int) {
         _uiState.update { it.copy(isLiveScanning = true, isEnrichingIdentity = true) }
 
@@ -282,6 +315,16 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                     }
                 }
                 val holeheOutcome = PythonOsintBridge.scanEmailHolehePython(getApplication(), target)
+                val holehePhones = holeheOutcome.registered.mapNotNull { hit ->
+                    val marker = "Recovery phone: "
+                    if (marker in hit.evidence) {
+                        val phone = hit.evidence.substringAfter(marker).substringBefore(" |").substringBefore(" •").trim()
+                        if (phone.isNotBlank()) com.example.phone_number_lookup.AttributedValue(phone, "Holehe (${hit.site})") else null
+                    } else null
+                }
+                if (scans.isCurrent(active)) {
+                    mergeIntoAttribution(extraPhones = holehePhones)
+                }
                 val nativeConfirmedNames = nativeOutcome.registered
                     .filter { it.verificationStatus == "Registered response" }
                     .map { it.site.lowercase() }
@@ -344,6 +387,13 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             val attribution = EmailAttributionEngine.analyze(target)
             if (scans.isCurrent(active)) {
                 _uiState.update { it.copy(attributionReport = attribution, isAttributionScanning = false) }
+                // Re-merge any already-finished web or dossier hits
+                val cur = _uiState.value
+                mergeIntoAttribution(
+                    extraPhones = cur.openWebReport?.extractedPhones.orEmpty() +
+                        cur.enrichedProfiles.flatMap { c -> c.discoveredPhones.map { com.example.phone_number_lookup.AttributedValue(it, c.platform) } },
+                    extraLocations = cur.enrichedProfiles.mapNotNull { c -> c.location?.let { com.example.phone_number_lookup.AttributedValue(it, c.platform) } }
+                )
             }
         }
 
@@ -362,6 +412,12 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             val openWeb = runCatching { OpenWebOsintScraper.scrapeAll(queries) }.getOrNull()
             if (scans.isCurrent(active)) {
                 _uiState.update { it.copy(openWebReport = openWeb) }
+                if (openWeb != null) {
+                    mergeIntoAttribution(
+                        extraPhones = openWeb.extractedPhones,
+                        extraUsernames = openWeb.extractedHandles
+                    )
+                }
             }
         }
 
@@ -410,6 +466,17 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 }.getOrDefault(emptyList())
                 if (scans.isCurrent(active)) {
                     _uiState.update { it.copy(enrichedProfiles = handleDossiers) }
+                    mergeIntoAttribution(
+                        extraPhones = handleDossiers.flatMap { c ->
+                            c.discoveredPhones.map { com.example.phone_number_lookup.AttributedValue(it, c.platform) }
+                        },
+                        extraLocations = handleDossiers.mapNotNull { c ->
+                            c.location?.let { com.example.phone_number_lookup.AttributedValue(it, c.platform) }
+                        },
+                        extraNames = handleDossiers.mapNotNull { c ->
+                            c.displayName?.let { com.example.phone_number_lookup.AttributedValue(it, c.platform) }
+                        }
+                    )
                 }
             }
         }

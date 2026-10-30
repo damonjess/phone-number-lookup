@@ -465,7 +465,12 @@ object OsintDatasets {
         return out
     }
 
-    private val UNRELIABLE_EMAIL_SITES = setOf("olx", "imageshack")
+    private val UNRELIABLE_EMAIL_SITES = setOf(
+        "olx", "imageshack", "picsart", "substack", "tumblr",
+        "codepen", "gitlab", "replit", "figma", "imgur", "pornhub",
+        "notion", "any.do", "anydo", "milanuncios", "netshoes",
+        "myspace", "wattpad", "quora", "patreon", "pinterest"
+    )
 
     suspend fun loadEmailDatabase(): List<SiteProbe> = withContext(Dispatchers.IO) {
         cachedEmail ?: run {

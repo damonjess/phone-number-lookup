@@ -21,7 +21,17 @@ object OpenWebOsintScraper {
 
     private val EMAIL_REGEX = Regex("""[a-zA-Z0-9._%+-]{2,64}@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,12}""")
     private val PHONE_REGEX = Regex("""(?:\+\d{1,3}[-.\s]?)?(?:\(?\d{2,5}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}""")
-    private val HANDLE_REGEX = Regex("""(?:@|https?://(?:www\.)?(?:x\.com|twitter\.com|instagram\.com|t\.me|github\.com|tiktok\.com/@|reddit\.com/user/))([a-zA-Z0-9_.-]{3,30})""", RegexOption.IGNORE_CASE)
+    // Require that '@' is NOT preceded by an email local-part character, and don't match dots in bare @handles
+    private val HANDLE_REGEX = Regex(
+        """(?:(?<![a-zA-Z0-9._%+-])@([a-zA-Z0-9_]{3,30})|https?://(?:www\.)?(?:x\.com|twitter\.com|instagram\.com|t\.me|github\.com|tiktok\.com/@|reddit\.com/user/)([a-zA-Z0-9_.-]{3,30}))""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val IGNORED_HANDLES = setOf(
+        "gmail", "googlemail", "yahoo", "hotmail", "outlook", "icloud",
+        "protonmail", "proton", "aol", "msn", "live", "mail", "support",
+        "share", "intent", "search", "explore", "home", "login", "signup"
+    )
 
     /**
      * Runs parallel public scrapes across DuckDuckGo, Brave Search, Reddit JSON,
@@ -73,8 +83,15 @@ object OpenWebOsintScraper {
                     phones += it
                 }
                 HANDLE_REGEX.findAll(blob).forEach { m ->
-                    val h = m.groupValues[1].trim('.', '_', '-')
-                    if (h.length >= 3) handles += AttributedValue("@$h", item.source)
+                    val rawHandle = (m.groupValues[1].ifEmpty { m.groupValues[2] })
+                        .trim('.', '_', '-')
+                    val lower = rawHandle.lowercase()
+                    if (rawHandle.length >= 3 &&
+                        !lower.contains('.') &&
+                        lower !in IGNORED_HANDLES
+                    ) {
+                        handles += AttributedValue("@$rawHandle", item.source)
+                    }
                 }
             }
 

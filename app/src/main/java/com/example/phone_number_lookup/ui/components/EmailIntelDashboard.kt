@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.phone_number_lookup.BreachReport
@@ -94,7 +92,7 @@ fun EmailIntelDashboard(
                     EmptyCardText(if (isLoading) "Looking for public profile photos…" else "No public profile photos returned")
                 } else {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        photos.take(6).forEachIndexed { index, url ->
+                        photos.take(25).forEachIndexed { index, url ->
                             AsyncImage(
                                 model = url,
                                 contentDescription = "Public profile image ${index + 1}",
@@ -114,14 +112,14 @@ fun EmailIntelDashboard(
                 } else if (registrations.isEmpty()) {
                     EmptyCardText("No account reports yet")
                 } else {
-                    registrations.take(6).forEach { hit ->
+                    registrations.take(25).forEach { hit ->
                         DashboardValue(
                             text = hit.site,
                             detail = if (hit.verificationStatus == "Registered response") "Confirmed" else "Unverified report",
                             onClick = hit.profileUrl.takeIf { it.startsWith("http") }?.let { { onOpenUrl(it) } },
                         )
                     }
-                    if (registrations.size > 6) EmptyCardText("+ ${registrations.size - 6} more in service results")
+                    if (registrations.size > 25) EmptyCardText("+ ${registrations.size - 25} more in service results")
                 }
             }
         }
@@ -143,9 +141,11 @@ fun EmailIntelDashboard(
                 ValueList(locations.map { it.value to it.source }, isLoading)
             }
         }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             EmailDashboardCard("Links", links.size.toString(), Modifier.weight(1f)) {
                 if (links.isEmpty()) EmptyCardText(if (isLoading) "Collecting public links…" else "No public links returned")
-                else links.take(5).forEach { (name, url) ->
+                else links.take(25).forEach { (name, url) ->
                     DashboardValue(name, url.removePrefix("https://").removePrefix("http://"), onClick = { onOpenUrl(url) })
                 }
             }
@@ -157,14 +157,14 @@ fun EmailIntelDashboard(
                     breachReport == null && isLoading -> LoadingCardText("Checking breach sources…")
                     breachReport == null -> EmptyCardText("Not checked")
                     breachReport.error != null -> EmptyCardText("Could not check: ${breachReport.error}")
-                    breachReport.breached -> breachReport.breachNames.take(4).forEach { DashboardValue(it, "Reported breach") }
+                    breachReport.breached -> breachReport.breachNames.take(25).forEach { DashboardValue(it, "Reported breach") }
                     else -> EmptyCardText("No records returned by checked breach sources")
                 }
             }
             EmailDashboardCard("Dates", dates.size.toString(), Modifier.weight(1f)) {
                 if (dates.isEmpty() && isLoading) LoadingCardText("Collecting dated public signals…")
                 else if (dates.isEmpty()) EmptyCardText("No dated public signals returned")
-                else dates.take(5).forEach { event ->
+                else dates.take(25).forEach { event ->
                     DashboardValue(event.date, "${event.label} · ${event.source}")
                 }
                 breachReport?.let {
@@ -182,7 +182,7 @@ fun EmailIntelDashboard(
                 matching.isEmpty() && sourceFilter.isNotBlank() -> EmptyCardText("No service matches ‘$sourceFilter’")
                 matching.isEmpty() && isLoading -> LoadingCardText("Waiting for service results…")
                 matching.isEmpty() -> EmptyCardText("Run an email scan to see service results")
-                else -> matching.take(30).forEach { hit ->
+                else -> matching.take(40).forEach { hit ->
                     DashboardValue(
                         text = hit.site,
                         detail = "${hit.verificationStatus} · ${hit.source}",
@@ -190,9 +190,10 @@ fun EmailIntelDashboard(
                     )
                 }
             }
-            if (matching.size > 30) EmptyCardText("Showing 30 of ${matching.size}; use the service search to filter")
+            if (matching.size > 40) EmptyCardText("Showing 40 of ${matching.size}; use the service search to filter")
         }
     }
+}
 
 @Composable
 private fun EmailDashboardCard(
@@ -202,14 +203,14 @@ private fun EmailDashboardCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Card(
-        modifier = modifier.fillMaxWidth().heightIn(min = 126.dp),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, softWrap = true)
                 Spacer(Modifier.width(6.dp))
                 Text(count, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
@@ -222,8 +223,8 @@ private fun EmailDashboardCard(
 @Composable
 private fun ValueList(values: List<Pair<String, String>>, isLoading: Boolean) {
     if (values.isEmpty()) EmptyCardText(if (isLoading) "Collecting public signals…" else "No public values returned")
-    else values.take(5).forEach { (value, source) -> DashboardValue(value, source) }
-    if (values.size > 5) EmptyCardText("+ ${values.size - 5} more")
+    else values.take(25).forEach { (value, source) -> DashboardValue(value, source) }
+    if (values.size > 25) EmptyCardText("+ ${values.size - 25} more")
 }
 
 @Composable
@@ -234,14 +235,27 @@ private fun DashboardValue(text: String, detail: String? = null, onClick: (() ->
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(vertical = 3.dp)
     ) {
-        Text(text, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (!detail.isNullOrBlank()) Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+            softWrap = true
+        )
+        if (!detail.isNullOrBlank()) {
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                softWrap = true
+            )
+        }
     }
 }
 
 @Composable
 private fun EmptyCardText(text: String) {
-    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, softWrap = true)
 }
 
 @Composable
@@ -249,6 +263,6 @@ private fun LoadingCardText(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
         Spacer(Modifier.width(8.dp))
-        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, softWrap = true)
     }
 }
