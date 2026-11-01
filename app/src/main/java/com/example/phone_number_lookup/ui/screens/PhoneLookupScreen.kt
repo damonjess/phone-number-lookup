@@ -3,6 +3,8 @@ package com.example.phone_number_lookup.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,7 +42,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -60,8 +61,8 @@ import com.example.phone_number_lookup.ui.components.LoadingRow
 import com.example.phone_number_lookup.ui.components.Notice
 import com.example.phone_number_lookup.ui.components.NumberedLinksHubCard
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
-import com.example.phone_number_lookup.ui.components.Pill
 import com.example.phone_number_lookup.ui.components.PhoneProfileSummaryCard
+import com.example.phone_number_lookup.ui.components.Pill
 import com.example.phone_number_lookup.ui.components.ResultRow
 import com.example.phone_number_lookup.ui.components.ScreenHeader
 import com.example.phone_number_lookup.ui.components.SearchField
@@ -165,6 +166,7 @@ private fun buildTelecomTelemetry(normalized: String, localFormat: String): Tele
 private fun formatsPrefixFallback(normalized: String): String =
     if (normalized.length > 6) "${normalized.take(6)}…" else normalized
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PhoneLookupScreen(
     viewModel: PhoneLookupViewModel = viewModel(),
@@ -186,7 +188,7 @@ fun PhoneLookupScreen(
         ScreenHeader(
             eyebrow = "Phone",
             title = "Who's calling?",
-            subtitle = "Numbering data, public caller reports and web matches."
+            subtitle = "Numbering data, public caller reports and deep web scraping."
         )
 
         SearchField(
@@ -237,7 +239,7 @@ fun PhoneLookupScreen(
         uiState.resultNumber?.let { input ->
             val normalized = PhoneNumberUtils.normalize(input)
             val isUk = PhoneNumberUtils.isValidUk(normalized)
-            val areaInfo = PhoneNumberUtils.getAreaInfo(normalized)
+            val areaInfo = PhoneNumberUtils.getAreaInfo(normalized) ?: uiState.deepFootprint?.areaLocationHint
             val country = PhoneNumberUtils.getCountry(normalized)
             val timezone = PhoneNumberUtils.getTimezone(normalized)
             val lineType = PhoneNumberUtils.getLineType(normalized)
@@ -247,6 +249,7 @@ fun PhoneLookupScreen(
                 buildTelecomTelemetry(normalized, localFormat)
             }
             val carrierHint = PhoneNumberUtils.getUkCarrierHint(normalized)
+                ?: uiState.deepFootprint?.carrierAllocationHint
             val isValidNumber = PhoneNumberUtils.isValid(normalized)
 
             uiState.verdict?.let { verdict ->
@@ -272,10 +275,10 @@ fun PhoneLookupScreen(
                 subtitle = "Outbound call capability, DDI block structure and callback tariff risk",
                 tone = telemetry.capabilityTone,
             ) {
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Pill(telemetry.capabilityBadge, tone = telemetry.capabilityTone)
                     Pill(telemetry.tariffBadge, tone = telemetry.tariffTone)
@@ -290,12 +293,14 @@ fun PhoneLookupScreen(
                     text = telemetry.cliAssessment,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,
+                    softWrap = true,
                     modifier = Modifier.padding(top = 8.dp)
                 )
                 Text(
                     text = telemetry.callbackAdvice,
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
+                    softWrap = true,
                     color = if (telemetry.tariffTone == Tone.DANGER) {
                         MaterialTheme.colorScheme.error
                     } else {
@@ -307,10 +312,16 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            DeepPhoneFootprintSection(
-                report = uiState.deepFootprint,
-                modifier = Modifier.padding(vertical = 4.dp)
-            )
+            if (uiState.deepFootprint == null && uiState.isSearching) {
+                LoadingRow("Scraping caller directories, OpenStreetMap businesses & web pages…")
+                Spacer(modifier = Modifier.height(12.dp))
+            } else {
+                DeepPhoneFootprintSection(
+                    report = uiState.deepFootprint,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             val phoniaDorks = OsintTools.getPhoniaTools(normalized)
             val phoneInfogaDorks = OsintTools.getPhoneInfogaDorks(normalized, localFormat)
@@ -318,11 +329,13 @@ fun PhoneLookupScreen(
                 OsintTools.getIntelBaseDork(normalized)
 
             val allDiscoveredPhoneLinks = buildList {
+                uiState.deepFootprint?.directoryReports?.forEach { add("Directory: ${it.source}" to it.url) }
+                uiState.deepFootprint?.crawledPages?.forEach { add("Crawled Page: ${it.pageTitle}" to it.url) }
                 uiState.searchResults.forEach { add("Web Match: ${it.title}" to it.url) }
                 uiState.reputationReports.filter { it.hasReports }.forEach { add("Caller Report: ${it.source}" to it.url) }
                 phoniaDorks.forEach { add(it.title to it.url) }
                 phoneInfogaDorks.forEach { add(it.title to it.url) }
-            }
+            }.distinctBy { it.second }
 
             UnifiedEvidenceCard(
                 report = UnifiedEvidenceBuilder.phone(
@@ -380,10 +393,39 @@ fun PhoneLookupScreen(
                             if (deep.directoryReports.isNotEmpty()) {
                                 add(
                                     PdfSection(
-                                        heading = "Caller Directory Reports",
+                                        heading = "Scraped Caller Directory Reports",
                                         lines = deep.directoryReports.flatMap { d ->
                                             listOf("${d.source} (${d.verdictLabel ?: "Listed"}) - ${d.url}") +
+                                                listOfNotNull(d.callerName?.let { "  Caller Name: $it" }) +
                                                 d.userComments.map { "  • $it" }
+                                        }
+                                    )
+                                )
+                            }
+                            if (deep.discoveredNames.isNotEmpty() ||
+                                deep.discoveredLocations.isNotEmpty() ||
+                                deep.discoveredEmails.isNotEmpty() ||
+                                deep.discoveredHandles.isNotEmpty()
+                            ) {
+                                add(
+                                    PdfSection(
+                                        heading = "Entities Mined from Web Pages",
+                                        lines = deep.discoveredNames.map { "Name (${it.source}): ${it.value}" } +
+                                            deep.discoveredLocations.map { "Location (${it.source}): ${it.value}" } +
+                                            deep.discoveredEmails.map { "Email (${it.source}): ${it.value}" } +
+                                            deep.discoveredHandles.map { "Social/Handle (${it.source}): ${it.value}" }
+                                    )
+                                )
+                            }
+                            if (deep.crawledPages.isNotEmpty()) {
+                                add(
+                                    PdfSection(
+                                        heading = "Deep Crawled Web Pages",
+                                        lines = deep.crawledPages.flatMap { p ->
+                                            listOf(
+                                                "${p.pageTitle} (${p.url})",
+                                                "  Context: ${p.contextSnippet}"
+                                            )
                                         }
                                     )
                                 )
@@ -446,6 +488,7 @@ fun PhoneLookupScreen(
                     "Type, range block and time zone are estimates from public numbering data; they do not prove the current carrier or caller location.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    softWrap = true,
                     modifier = Modifier.padding(top = 8.dp)
                 )
             }
@@ -482,6 +525,7 @@ fun PhoneLookupScreen(
                     "PhoneInfoga's public Google scanner generates links rather than fetching results. This app uses its native public web-search request below instead, so returned matches are displayed here.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    softWrap = true,
                     modifier = Modifier.padding(top = 6.dp)
                 )
                 OutlinedTextField(
@@ -508,6 +552,7 @@ fun PhoneLookupScreen(
                         uiState.phoneInfogaResult!!.error!!,
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
+                        softWrap = true,
                         modifier = Modifier.padding(top = 8.dp)
                     )
                     uiState.phoneInfogaResult != null -> {
@@ -551,6 +596,7 @@ fun PhoneLookupScreen(
                         noteText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true,
                         modifier = Modifier.padding(top = 8.dp)
                     )
                 }
@@ -562,6 +608,7 @@ fun PhoneLookupScreen(
                         piReport.error,
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
+                        softWrap = true,
                         modifier = Modifier.padding(top = 8.dp)
                     )
                     piReport != null -> piReport.scans.forEach { scan ->
@@ -579,13 +626,15 @@ fun PhoneLookupScreen(
                                 Text(
                                     scan.description,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    softWrap = true
                                 )
                             }
                             scan.message?.let {
                                 Text(
                                     it,
                                     style = MaterialTheme.typography.bodySmall,
+                                    softWrap = true,
                                     color = if (scan.status == PhoneInfogaStatus.ERROR) MaterialTheme.colorScheme.error
                                     else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -594,19 +643,19 @@ fun PhoneLookupScreen(
                             if (scan.labeledLinks.isNotEmpty()) {
                                 scan.labeledLinks.take(30).forEach { (label, link) ->
                                     TextButton(onClick = { openUrl(context, link) }) {
-                                        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(label, softWrap = true)
                                     }
                                 }
                             } else {
-                                scan.links.take(12).forEach { link ->
+                                scan.links.take(25).forEach { link ->
                                     TextButton(onClick = { openUrl(context, link) }) {
-                                        Text(link, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(link, softWrap = true)
                                     }
                                 }
                             }
-                            if (scan.labeledLinks.isEmpty() && scan.links.size > 12) {
+                            if (scan.labeledLinks.isEmpty() && scan.links.size > 25) {
                                 Text(
-                                    "+${scan.links.size - 12} more links",
+                                    "+${scan.links.size - 25} more links",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -663,7 +712,7 @@ fun PhoneLookupScreen(
                     uiState.spamReport != null -> {
                         val report = uiState.spamReport!!
                         if (report.score == null && report.error != null) {
-                            Text(report.error, style = MaterialTheme.typography.bodyMedium)
+                            Text(report.error, style = MaterialTheme.typography.bodyMedium, softWrap = true)
                         } else {
                             ResultRow("Source", report.source)
                             ResultRow("Spam Score", report.scoreLabel)
@@ -707,7 +756,8 @@ fun PhoneLookupScreen(
                     }
                     uiState.reputationReports.isEmpty() -> Text(
                         "No additional no-key source applies to this number. tellows remains the primary lookup above.",
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyMedium,
+                        softWrap = true
                     )
                     else -> uiState.reputationReports.forEach { rep ->
                         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -729,10 +779,10 @@ fun PhoneLookupScreen(
                                 }
                             }
                             rep.error?.let {
-                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, softWrap = true)
                             }
                             rep.samples.forEach { sample ->
-                                Text("• $sample", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
+                                Text("• $sample", style = MaterialTheme.typography.bodySmall, softWrap = true, modifier = Modifier.padding(vertical = 1.dp))
                             }
                             if (rep.hasReports) {
                                 TextButton(onClick = { openUrl(context, rep.url) }) {
@@ -747,16 +797,16 @@ fun PhoneLookupScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "WEB SEARCH",
+                text = "WEB SEARCH (${uiState.searchResults.size})",
                 style = MaterialTheme.typography.labelSmall,
                 letterSpacing = 1.4.sp,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(bottom = Space.sm)
             )
 
-            if (uiState.isSearching) {
+            if (uiState.isSearching && uiState.searchResults.isEmpty()) {
                 LoadingRow("Searching public databases…")
-            } else if (uiState.searchError != null) {
+            } else if (uiState.searchError != null && uiState.searchResults.isEmpty()) {
                 Notice(uiState.searchError!!, tone = Tone.DANGER)
             } else if (uiState.hasSearched && uiState.searchResults.isEmpty()) {
                 Notice("No indexed web matches found for this number or its prefix block.", tone = Tone.NEUTRAL)
@@ -778,23 +828,30 @@ fun PhoneLookupScreen(
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalAlignment = Alignment.Top,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = result.title,
                                     style = MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
+                                    softWrap = true,
                                 )
+                                if (result.snippet.isNotBlank()) {
+                                    Text(
+                                        text = result.snippet,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        softWrap = true,
+                                        modifier = Modifier.padding(top = 4.dp),
+                                    )
+                                }
                                 Text(
-                                    text = result.snippet,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 2.dp),
+                                    text = "${result.source} · ${result.url}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    softWrap = true,
+                                    modifier = Modifier.padding(top = 4.dp),
                                 )
                             }
                             Spacer(Modifier.width(10.dp))
@@ -851,6 +908,7 @@ fun PhoneLookupScreen(
                             Text(
                                 text = result.source,
                                 style = MaterialTheme.typography.titleSmall,
+                                softWrap = true,
                                 modifier = Modifier.weight(1f),
                             )
                             Text(
@@ -863,6 +921,7 @@ fun PhoneLookupScreen(
                             text = result.detail,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            softWrap = true,
                             modifier = Modifier.padding(top = 2.dp),
                         )
                     }
@@ -930,6 +989,7 @@ private fun HistorySection(
                         text = entry.label,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true,
                         modifier = Modifier.padding(top = 2.dp),
                     )
                     Text(
@@ -941,6 +1001,7 @@ private fun HistorySection(
                         Text(
                             text = entry.note,
                             style = MaterialTheme.typography.bodySmall,
+                            softWrap = true,
                             modifier = Modifier.padding(top = 4.dp),
                         )
                     }

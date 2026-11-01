@@ -42,7 +42,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -230,8 +229,7 @@ fun Pill(
             text = "[ $text ]",
             style = MaterialTheme.typography.labelSmall,
             fontFamily = if (mono) FontFamily.Monospace else null,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            softWrap = true,
             modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
         )
     }
@@ -263,6 +261,7 @@ fun Notice(
                 text = text,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface,
+                softWrap = true,
             )
         }
     }
@@ -296,6 +295,7 @@ fun LoadingRow(text: String, modifier: Modifier = Modifier) {
             text = text,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            softWrap = true,
         )
     }
 }
@@ -412,8 +412,7 @@ fun SegmentedTabs(
                         text = label.uppercase(),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        softWrap = true,
                         textAlign = TextAlign.Center,
                     )
                 }
@@ -447,15 +446,13 @@ fun StatTile(
                 text = value,
                 style = valueStyle,
                 color = color,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                softWrap = true,
             )
             Text(
                 text = label.uppercase(),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                softWrap = true,
             )
         }
     }

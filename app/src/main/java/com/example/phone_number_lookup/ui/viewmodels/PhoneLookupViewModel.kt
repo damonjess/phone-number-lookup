@@ -207,6 +207,8 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                 refreshVerdict()
             }
         }
+
+        runPhoneInfogaServer()
     }
 
     /**

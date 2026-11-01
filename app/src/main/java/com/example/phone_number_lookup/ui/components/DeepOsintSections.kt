@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,6 +33,7 @@ import com.example.phone_number_lookup.AttributedValue
 import com.example.phone_number_lookup.DeepPhoneOsintReport
 import com.example.phone_number_lookup.DirectoryReportSummary
 import com.example.phone_number_lookup.EnrichedProfileCard
+import com.example.phone_number_lookup.PhoneAccountHit
 import com.example.phone_number_lookup.ScrapedWebReport
 import com.example.phone_number_lookup.SearchResultItem
 
@@ -43,20 +43,90 @@ fun DeepPhoneFootprintSection(
     modifier: Modifier = Modifier
 ) {
     if (report == null) return
-    val hasContent = report.directoryReports.isNotEmpty() ||
-        report.businessMatches.isNotEmpty() ||
-        report.discoveredEmails.isNotEmpty() ||
-        report.discoveredHandles.isNotEmpty()
-
-    if (!hasContent) return
+    val context = LocalContext.current
 
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Space.md)
     ) {
+        if (report.accountRegistrations.isNotEmpty()) {
+            OsintCardContainer(
+                title = "LINKED ACCOUNTS & SOCIAL REGISTRATIONS",
+                badge = "${report.accountRegistrations.size}",
+                tone = Tone.ACCENT
+            ) {
+                report.accountRegistrations.forEachIndexed { idx, hit ->
+                    if (idx > 0) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 6.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                        )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (hit.url != null) {
+                                    Modifier.clickable {
+                                        runCatching {
+                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(hit.url)))
+                                        }
+                                    }
+                                } else Modifier
+                            ),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = hit.platform,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                softWrap = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Pill(hit.status, tone = if (hit.confirmed) Tone.ACCENT else Tone.INFO)
+                        }
+                        Text(
+                            text = hit.detail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            softWrap = true
+                        )
+                    }
+                }
+            }
+        }
+
+        if (report.carrierAllocationHint != null || report.areaLocationHint != null || report.numberSpellings.isNotEmpty()) {
+            OsintCardContainer(
+                title = "NETWORK, AREA & FORMAT INTELLIGENCE",
+                badge = "${report.numberSpellings.size} FORMATS",
+                tone = Tone.ACCENT
+            ) {
+                report.carrierAllocationHint?.let {
+                    AttributedRow(label = "UK Network Block", value = it)
+                }
+                report.areaLocationHint?.let {
+                    AttributedRow(label = "Geographic Area", value = it)
+                }
+                if (report.numberSpellings.isNotEmpty()) {
+                    AttributedRow(
+                        label = "Searched Formats",
+                        value = report.numberSpellings.joinToString(" • ")
+                    )
+                }
+            }
+        }
+
         if (report.businessMatches.isNotEmpty()) {
             OsintCardContainer(
-                title = "REGISTERED BUSINESS / VENUE MATCHES",
+                title = "REGISTERED BUSINESS & DIRECTORY MATCHES",
                 badge = "${report.businessMatches.size}",
                 tone = Tone.ACCENT
             ) {
@@ -68,7 +138,7 @@ fun DeepPhoneFootprintSection(
 
         if (report.directoryReports.isNotEmpty()) {
             OsintCardContainer(
-                title = "SCRAPED CALLER DIRECTORY REPORTS",
+                title = "SCRAPED CALLER & REPUTATION DIRECTORIES",
                 badge = "${report.directoryReports.size} SOURCES",
                 tone = Tone.ACCENT
             ) {
@@ -84,31 +154,117 @@ fun DeepPhoneFootprintSection(
             }
         }
 
-        if (report.discoveredEmails.isNotEmpty() || report.discoveredHandles.isNotEmpty()) {
+        if (report.discoveredNames.isNotEmpty() ||
+            report.discoveredLocations.isNotEmpty() ||
+            report.discoveredEmails.isNotEmpty() ||
+            report.discoveredHandles.isNotEmpty()
+        ) {
+            val totalEntities = report.discoveredNames.size +
+                report.discoveredLocations.size +
+                report.discoveredEmails.size +
+                report.discoveredHandles.size
             OsintCardContainer(
-                title = "ENTITIES EXTRACTED FROM WEB MENTIONS",
-                badge = "${report.discoveredEmails.size + report.discoveredHandles.size}",
+                title = "NAMES, LOCATIONS, EMAILS & SOCIALS FOUND",
+                badge = "$totalEntities",
                 tone = Tone.ACCENT
             ) {
+                report.discoveredNames.forEach { n ->
+                    AttributedRow(label = "Name (${n.source})", value = n.value)
+                }
+                report.discoveredLocations.forEach { loc ->
+                    AttributedRow(label = "Location (${loc.source})", value = loc.value)
+                }
                 report.discoveredEmails.forEach { email ->
                     AttributedRow(label = "Email (${email.source})", value = email.value)
                 }
                 report.discoveredHandles.forEach { handle ->
-                    AttributedRow(label = "Handle (${handle.source})", value = handle.value)
+                    AttributedRow(label = "Social / Handle (${handle.source})", value = handle.value)
+                }
+            }
+        }
+
+        if (report.crawledPages.isNotEmpty()) {
+            OsintCardContainer(
+                title = "DEEP CRAWLED WEB PAGES MENTIONING NUMBER",
+                badge = "${report.crawledPages.size} PAGES",
+                tone = Tone.ACCENT
+            ) {
+                report.crawledPages.forEachIndexed { idx, page ->
+                    if (idx > 0) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                        )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(page.url)))
+                                }
+                            },
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = page.pageTitle,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            softWrap = true
+                        )
+                        Text(
+                            text = "\"…${page.contextSnippet}…\"",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            softWrap = true
+                        )
+                        if (page.emailsFound.isNotEmpty()) {
+                            Text(
+                                text = "Emails on page: ${page.emailsFound.joinToString(", ")}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                softWrap = true
+                            )
+                        }
+                        if (page.postcodesFound.isNotEmpty()) {
+                            Text(
+                                text = "Postcodes on page: ${page.postcodesFound.joinToString(", ")}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                softWrap = true
+                            )
+                        }
+                        if (page.socialLinksFound.isNotEmpty()) {
+                            Text(
+                                text = "Social links: ${page.socialLinksFound.joinToString(", ")}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                softWrap = true
+                            )
+                        }
+                        Text(
+                            text = page.url,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            softWrap = true
+                        )
+                    }
                 }
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DirectoryReportBlock(dir: DirectoryReportSummary) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
                 text = dir.source,
@@ -121,18 +277,29 @@ private fun DirectoryReportBlock(dir: DirectoryReportSummary) {
                     }
                 }
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 dir.verdictLabel?.let { Pill(it, tone = Tone.ACCENT) }
                 dir.callerCategory?.let { Pill(it, tone = Tone.ACCENT) }
                 dir.reportCount?.let { Pill(it, tone = Tone.ACCENT) }
             }
         }
 
+        dir.callerName?.let {
+            Text(
+                text = "Reported Caller Name: $it",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                softWrap = true
+            )
+        }
+
         dir.userComments.forEach { comment ->
             Text(
                 text = "• \"$comment\"",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                softWrap = true
             )
         }
     }
@@ -369,23 +536,24 @@ private fun WebMentionItemRow(item: SearchResultItem, onClick: () -> Unit) {
 
 @Composable
 private fun AttributedRow(label: String, value: String) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(vertical = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            softWrap = true
         )
-        Spacer(Modifier.width(12.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            softWrap = true
         )
     }
 }
@@ -417,8 +585,11 @@ private fun OsintCardContainer(
                     text = title,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    softWrap = true,
+                    modifier = Modifier.weight(1f)
                 )
+                Spacer(Modifier.width(8.dp))
                 Pill(badge, tone = tone)
             }
             content()

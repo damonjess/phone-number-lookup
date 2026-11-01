@@ -1,7 +1,6 @@
 package com.example.phone_number_lookup.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -19,10 +18,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.phone_number_lookup.UsernameHit
 
-/**
- * At-a-glance summary of a username scan: how many profiles matched, which categories they fall
- * into and which site databases produced them. Counts only — every number comes from the scan.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UsernameProfileSummaryCard(
@@ -86,7 +81,7 @@ fun UsernameProfileSummaryCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        categories.take(10).forEach { (category, list) ->
+                        categories.take(25).forEach { (category, list) ->
                             Pill("$category ${list.size}", Tone.INFO)
                         }
                     }
@@ -98,20 +93,23 @@ fun UsernameProfileSummaryCard(
                         text = "Found via " + sources.joinToString(", ") { "${it.first} (${it.second})" },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true,
                     )
                 }
 
                 val strongest = hits.firstOrNull { it.confidence.startsWith("High", ignoreCase = true) }
                 if (strongest != null) {
                     Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Text(
                             text = "Strongest match",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
                         )
-                        Spacer(Modifier.width(8.dp))
                         Pill(strongest.site, Tone.ACCENT)
                     }
                 }
@@ -120,11 +118,6 @@ fun UsernameProfileSummaryCard(
     }
 }
 
-/**
- * The number's own facts in one block: identity, numbering plan, line class and coverage zone.
- * These are computed locally from the number itself, so they are available even when no web
- * source answers.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PhoneProfileSummaryCard(
@@ -150,6 +143,7 @@ fun PhoneProfileSummaryCard(
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f),
+                softWrap = true,
             )
             Spacer(Modifier.width(8.dp))
             Pill(if (valid) "Valid format" else "Unverified format", if (valid) Tone.ACCENT else Tone.WARNING)

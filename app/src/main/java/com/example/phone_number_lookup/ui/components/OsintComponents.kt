@@ -11,6 +11,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,11 +37,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.phone_number_lookup.OsintDatasets
 import com.example.phone_number_lookup.OsintDork
-import com.example.phone_number_lookup.SiteIssue
 
 /** A label/value pair. Values stay right-aligned so long lists of metadata can be scanned. */
 @Composable
@@ -55,6 +56,7 @@ fun ResultRow(label: String, value: String, mono: Boolean = true) {
             style = MaterialTheme.typography.labelSmall,
             letterSpacing = 0.6.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            softWrap = true,
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(Space.md))
@@ -65,15 +67,12 @@ fun ResultRow(label: String, value: String, mono: Boolean = true) {
             color = MaterialTheme.colorScheme.onSurface,
             fontFamily = if (mono) FontFamily.Monospace else null,
             textAlign = TextAlign.End,
+            softWrap = true,
             modifier = Modifier.weight(1.35f),
         )
     }
 }
 
-/**
- * Compatibility wrapper kept for the existing call sites: the colour they pass is now a tone
- * hint for the section's accent bar instead of the whole card's background.
- */
 @Composable
 fun OsintToolSectionCard(
     toolTitle: String,
@@ -89,13 +88,7 @@ fun OsintToolSectionCard(
     )
 }
 
-/**
- * One OSINT finding, shared by the username and email result lists.
- *
- * The site name gets its own line so a long name can never squeeze the provenance chip, and the
- * verification facts sit on a short status row rather than a "status • confidence • HTTP"
- * sentence. Recheck is a quiet trailing action, not a footer button.
- */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OsintResultCard(
     site: String,
@@ -121,12 +114,10 @@ fun OsintResultCard(
                     text = site,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                    softWrap = true,
                     modifier = Modifier.weight(1f),
                 )
                 Spacer(Modifier.width(Space.sm))
-                // Display-only trim: the chip stays short so the site name keeps its full width.
                 Pill(
                     source.removePrefix("Python: ").removeSuffix(" upstream"),
                     tone = Tone.INFO,
@@ -134,18 +125,19 @@ fun OsintResultCard(
             }
 
             Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 if (verificationStatus.isNotBlank()) {
                     Pill(verificationStatus, tone = Tone.ACCENT)
                 }
                 if (confidence.isNotBlank()) {
-                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = confidence,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        softWrap = true,
                     )
                 }
             }
@@ -155,6 +147,7 @@ fun OsintResultCard(
                     text = evidence,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    softWrap = true,
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }
@@ -183,10 +176,6 @@ fun OsintResultCard(
     }
 }
 
-/**
- * Replaces the Termux `grep -oE 'https?://...' > ~/links.txt`, `cat -n ~/links.txt`,
- * and `termux-open-url "$(sed -n '3p' ~/links.txt)"` workflow with a numbered queue.
- */
 @Composable
 fun NumberedLinksHubCard(
     title: String,
@@ -228,7 +217,7 @@ fun NumberedLinksHubCard(
                     text = "Copy list",
                     onClick = {
                         val formatted = distinctLinks.mapIndexed { i, (label, url) ->
-                            "${i + 1}\t$label - $url"
+                            "${i + 1}\t$label\t$url"
                         }.joinToString("\n")
                         copyToClipboard(context, "OSINT Links", formatted)
                     },
@@ -263,7 +252,7 @@ fun NumberedLinksHubCard(
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Top
                     ) {
                         Pill("#${index + 1}", tone = if (isVisited) Tone.NEUTRAL else Tone.ACCENT)
                         Spacer(Modifier.width(10.dp))
@@ -273,16 +262,15 @@ fun NumberedLinksHubCard(
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                softWrap = true
                             )
                             Text(
                                 text = url,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                softWrap = true,
+                                modifier = Modifier.padding(top = 2.dp)
                             )
                         }
                         Spacer(Modifier.width(Space.sm))
@@ -300,6 +288,7 @@ fun NumberedLinksHubCard(
                     "+${distinctLinks.size - 40} more links in the PDF report",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    softWrap = true,
                     modifier = Modifier.padding(top = 6.dp)
                 )
             }
@@ -328,29 +317,33 @@ fun DorkLauncherCard(
                 shape = MaterialTheme.shapes.small,
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
                         Text(
                             text = dork.title,
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            softWrap = true,
+                            modifier = Modifier.weight(1f)
                         )
-                        Text(
-                            text = dork.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
+                        Spacer(Modifier.width(Space.sm))
+                        Pill(dork.toolSource, tone = Tone.NEUTRAL)
                     }
-                    Spacer(Modifier.width(Space.sm))
-                    Pill(dork.toolSource, tone = Tone.NEUTRAL)
+                    Text(
+                        text = dork.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true
+                    )
                 }
             }
         }
@@ -365,16 +358,8 @@ fun copyToClipboard(context: Context, label: String, text: String) {
 
 fun sanitizeUrlForOpening(url: String): String {
     val trimmed = url.trim()
-    val lower = trimmed.lowercase()
-    if (lower.contains("twitter.com/i/users/email_available") ||
-        lower.contains("api.twitter.com") ||
-        lower.contains("email_available.json") ||
-        (lower.contains("twitter.com") && (lower.contains("/i/users/") || lower.endsWith(".json") || lower.contains(".json?"))) ||
-        (lower.contains("x.com") && (lower.contains("/i/users/") || lower.endsWith(".json") || lower.contains(".json?")))
-    ) {
-        return "https://x.com/"
-    }
-    return trimmed
+    if (trimmed.startsWith("viber://") || trimmed.startsWith("tel:")) return trimmed
+    return OsintDatasets.cleanProfileUrl("", trimmed)
 }
 
 fun openUrl(context: Context, url: String) {

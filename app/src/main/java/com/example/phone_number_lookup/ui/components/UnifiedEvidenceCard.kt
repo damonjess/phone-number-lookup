@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -17,10 +16,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.phone_number_lookup.EvidenceKind
 import com.example.phone_number_lookup.EvidenceSourceState
+import com.example.phone_number_lookup.OsintDatasets
 import com.example.phone_number_lookup.UnifiedScanEvidence
 import com.example.phone_number_lookup.UnifiedSourceStatus
 import java.text.SimpleDateFormat
@@ -44,11 +43,15 @@ fun UnifiedEvidenceCard(
                 "${report.scanType} · ${report.target} · started ${SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(report.startedAt))}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+                softWrap = true,
             )
             Spacer(Modifier.height(10.dp))
-            Text("SOURCES CHECKED", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "SOURCES CHECKED",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             report.sources.forEach { SourceStatusLine(it) }
             Spacer(Modifier.height(8.dp))
             Text(
@@ -62,39 +65,53 @@ fun UnifiedEvidenceCard(
                     "No findings are currently available. A source marked unknown, skipped, blocked, or incomplete is not a verified negative.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    softWrap = true,
                     modifier = Modifier.padding(top = 5.dp),
                 )
             } else {
-                report.items.take(12).forEach { item ->
+                report.items.take(30).forEach { item ->
                     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Row(verticalAlignment = Alignment.Top) {
-                            Text(
-                                kindLabel(item.kind),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.width(78.dp),
-                            )
-                            Column(Modifier.weight(1f)) {
-                                Text(item.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(item.value, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    "${item.source} · ${confidenceLabel(item.confidence)}${if (item.detail.isNotBlank()) " · ${item.detail}" else ""}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        item.url?.takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let { url ->
-                            TextButton(onClick = { onOpenUrl(url) }, modifier = Modifier.align(Alignment.End)) {
+                        Text(
+                            text = kindLabel(item.kind),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = item.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            softWrap = true,
+                        )
+                        Text(
+                            text = item.value,
+                            style = MaterialTheme.typography.bodySmall,
+                            softWrap = true,
+                        )
+                        Text(
+                            text = "${item.source} · ${confidenceLabel(item.confidence)}${if (item.detail.isNotBlank()) " · ${item.detail}" else ""}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            softWrap = true,
+                        )
+                        item.url?.takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let { rawUrl ->
+                            val cleanUrl = OsintDatasets.cleanProfileUrl(item.title, rawUrl)
+                            TextButton(
+                                onClick = { onOpenUrl(cleanUrl) },
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
                                 Text("Open source ↗", style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
                 }
-                if (report.items.size > 12) {
-                    Text("+ ${report.items.size - 12} more findings are shown in the scanner-specific sections below.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                if (report.items.size > 30) {
+                    Text(
+                        "+ ${report.items.size - 30} more findings are shown in the scanner-specific sections below.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -102,6 +119,7 @@ fun UnifiedEvidenceCard(
                 "Confidence describes the strength of the source response, not proof that two records belong to the same person.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                softWrap = true,
             )
         }
     }
@@ -110,14 +128,24 @@ fun UnifiedEvidenceCard(
 @Composable
 private fun SourceStatusLine(source: UnifiedSourceStatus) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Pill(stateLabel(source.state), tone = stateTone(source.state))
         Column(Modifier.weight(1f)) {
-            Text(source.source, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(source.detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = source.source,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                softWrap = true
+            )
+            Text(
+                text = source.detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                softWrap = true
+            )
         }
     }
 }
