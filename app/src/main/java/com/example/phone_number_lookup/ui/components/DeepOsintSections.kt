@@ -31,9 +31,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.phone_number_lookup.AttributedValue
+import com.example.phone_number_lookup.CommentHit
 import com.example.phone_number_lookup.DeepPhoneOsintReport
 import com.example.phone_number_lookup.DirectoryReportSummary
 import com.example.phone_number_lookup.EnrichedProfileCard
+import com.example.phone_number_lookup.GoogleCommentReport
 import com.example.phone_number_lookup.PhoneAccountHit
 import com.example.phone_number_lookup.ScrapedWebReport
 import com.example.phone_number_lookup.SearchResultItem
@@ -597,6 +599,115 @@ private fun WebMentionItemRow(item: SearchResultItem, onClick: () -> Unit) {
             color = MaterialTheme.colorScheme.outline,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun GoogleCommentsSection(
+    report: GoogleCommentReport?,
+    isLoading: Boolean,
+    onOpenUrl: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (report == null && !isLoading) return
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(Space.md)
+    ) {
+        OsintCardContainer(
+            title = "GOOGLE & PUBLIC WEB COMMENTS SCRAPED",
+            badge = if (isLoading && report == null) "SCANNING…" else "${report?.comments?.size ?: 0} FOUND",
+            tone = Tone.ACCENT
+        ) {
+            if (isLoading && report == null) {
+                LoadingRow("Scraping Google Search, Google Maps Reviews, Reddit, GitHub, HackerNews & forums for comments…")
+            } else if (report != null) {
+                Notice(report.googleDirectStatus, tone = if (report.comments.isNotEmpty()) Tone.ACCENT else Tone.INFO)
+
+                if (report.comments.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    report.comments.take(35).forEachIndexed { idx, hit ->
+                        if (idx > 0) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                            )
+                        }
+                        CommentHitBlock(hit = hit, onClick = { onOpenUrl(hit.url) })
+                    }
+                    if (report.comments.size > 35) {
+                        Text(
+                            text = "+ ${report.comments.size - 35} more comments included in PDF export",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            softWrap = true,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        if (report != null && report.dorkLinks.isNotEmpty()) {
+            DorkLauncherCard(
+                title = "Live Google Comment & Review Dorks",
+                subtitle = "Open targeted Google comment searches directly in your browser",
+                dorks = report.dorkLinks
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CommentHitBlock(
+    hit: CommentHit,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Pill(hit.platform, tone = Tone.ACCENT)
+            Pill("Matched: ${hit.authorMatch}", tone = Tone.INFO)
+            hit.date?.takeIf { it.isNotBlank() }?.let {
+                Pill(it, tone = Tone.NEUTRAL)
+            }
+            Pill(hit.sourceEngine, tone = Tone.NEUTRAL)
+        }
+
+        Text(
+            text = hit.title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+            softWrap = true
+        )
+
+        if (hit.commentSnippet.isNotBlank()) {
+            Text(
+                text = hit.commentSnippet,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                softWrap = true
+            )
+        }
+
+        Text(
+            text = hit.url,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            softWrap = true
         )
     }
 }

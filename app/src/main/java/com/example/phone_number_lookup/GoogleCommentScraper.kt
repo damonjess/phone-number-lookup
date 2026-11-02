@@ -4,6 +4,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.URLDecoder
@@ -30,36 +32,21 @@ data class GoogleCommentReport(
     val dorkLinks: List<OsintDork> = emptyList()
 )
 
-/**
- * Dedicated Google & Open-Web Comment Scraper for Email OSINT.
- *
- * When a user searches an email address, this scraper:
- * 1. Queries Google Search HTML (using non-JS basic HTML parameters and resilient multi-layout
- *    parsing) for pages where the email or its handle has left comments, replies, forum posts,
- *    or reviews.
- * 2. Falls back to Startpage (Google Search syndication), DuckDuckGo, and Bing if Google serves
- *    a CAPTCHA / bot-check challenge to the device IP.
- * 3. Queries public comment APIs directly (Reddit user comment history & search, HackerNews
- *    Algolia comments, GitHub issue/PR comments) for both the email address and its handle.
- */
 object GoogleCommentScraper {
 
-    // Text-mode / basic-HTML user agents that prompt Google to return server-rendered HTML
-    // (`gbv=1`) instead of the client-side JS redirect shell (`httpservice/retry/enablejs`).
     private val GOOGLE_BASIC_USER_AGENTS = listOf(
-        "Mozilla/5.0 (Linux; U; Android 4.4.2; en-gb; Nexus 5 Build/KOT49H) AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.30",
-        "Opera/9.80 (Android; Opera Mini/36.2.2254/119.132; U; en) Presto/2.12.423 Version/12.16",
+        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
         "Lynx/2.8.9rel.1 libwww-FM/2.14 SSL-MM/1.4.1 OpenSSL/1.1.1k"
     )
 
     private val TAG_REGEX = Regex("<[^>]*>")
     private val SCRIPT_STYLE_REGEX = Regex(
-        """<(script|style|noscript)\b.*?</\1>""",
+        """<(script|style|noscript|nav|header|footer)\b.*?</\1>""",
         setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
     )
     private val WHITESPACE_REGEX = Regex("""\s+""")
 
-    // Matches leading date in Google snippets, e.g. "14 Mar 2025 — " or "Oct 3, 2024 - "
     private val SNIPPET_DATE_PREFIX = Regex(
         """^(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},\s*\d{4}|\d{1,2}\s+(?:hours?|days?|weeks?|months?|years?)\s+ago)\s*[—–\-·]\s*(.*)$"""
     )
@@ -72,29 +59,58 @@ object GoogleCommentScraper {
 
     private val GENERIC_HANDLES = setOf(
         "info", "admin", "support", "contact", "sales", "help", "office",
-        "mail", "user", "test", "hello", "team", "enquiries", "service"
+        "mail", "user", "test", "hello", "team", "enquiries", "service",
+        "gmail", "googlemail", "outlook", "hotmail", "yahoo", "icloud"
     )
 
     suspend fun scrapeForEmail(
         email: String,
-        knownDisplayNames: List<String> = emptyList()
+        knownDisplayNames: List<String> = emptyList(),
+        knownHandles: List<String> = emptyList(),
+        knownLocations: List<String> = emptyList()
     ): GoogleCommentReport = withContext(Dispatchers.IO) {
         val cleanEmail = email.trim().lowercase()
         val rawHandle = cleanEmail.substringBefore('@').trim()
-        val alnumHandle = rawHandle.replace(Regex("[^a-zA-Z0-9_-]"), "")
         if (cleanEmail.isBlank() || !cleanEmail.contains('@')) {
             return@withContext GoogleCommentReport(email = cleanEmail, handle = rawHandle)
         }
 
-        val includeHandle = rawHandle.length >= 4 && rawHandle !in GENERIC_HANDLES
-        val googleQueries = buildGoogleCommentQueries(cleanEmail, rawHandle, includeHandle, knownDisplayNames)
-        val dorks = buildCommentDorkLinks(cleanEmail, rawHandle)
+        val emailMd5 = OsintDatasets.transformAccount(cleanEmail, AccountMode.HASH_MD5)
+
+        // Combine the email's local part, stripped-digit variants, and any usernames found by EmailAttributionEngine
+        val allHandles = buildList {
+            if (rawHandle.length >= 4 && rawHandle !in GENERIC_HANDLES) {
+                add(rawHandle)
+                val alnum = rawHandle.replace(Regex("[^a-zA-Z0-9_-]"), "")
+                if (alnum.length >= 4) add(alnum)
+                val noTrailingDigits = rawHandle.replace(Regex("\\d+$"), "").trim('.', '_', '-')
+                if (noTrailingDigits.length >= 5) add(noTrailingDigits)
+            }
+            knownHandles.forEach { h ->
+                val cleanH = h.trim().removePrefix("@")
+                if (cleanH.length >= 4 && cleanH.lowercase() !in GENERIC_HANDLES && !cleanH.contains('.')) {
+                    add(cleanH)
+                }
+            }
+        }.distinctBy { it.lowercase() }.take(5)
+
+        val googleQueries = buildGoogleCommentQueries(
+            email = cleanEmail,
+            emailMd5 = emailMd5,
+            handles = allHandles,
+            knownDisplayNames = knownDisplayNames
+        )
+        val dorks = buildCommentDorkLinks(cleanEmail, allHandles.ifEmpty { listOf(rawHandle) }, knownDisplayNames)
 
         coroutineScope {
-            // 0. Direct Google Maps Contributor Reviews & Comments
+            // 0. Direct Google Maps Contributor Reviews & Comments (with hintNames and hintLocations)
             val googleMapsDef = async {
                 runCatching {
-                    val meta = GoogleMetadataExtractor.extract(cleanEmail, hintNames = knownDisplayNames)
+                    val meta = GoogleMetadataExtractor.extract(
+                        email = cleanEmail,
+                        hintNames = knownDisplayNames,
+                        hintLocations = knownLocations
+                    )
                     meta.reviews.map { rev ->
                         val fallbackUrl = meta.profileUrl
                             ?: meta.gaiaId?.let { "https://www.google.com/maps/contrib/$it/reviews" }
@@ -128,45 +144,52 @@ object GoogleCommentScraper {
                 async { q to scrapeGoogleSearchWithStatus(q) }
             }
 
-            // 2. Startpage (Google index syndication) & DuckDuckGo comment queries
-            val fallbackQueries = googleQueries.take(3)
+            // 2. Startpage (Google index syndication), DuckDuckGo, Bing & Yahoo comment queries
+            val fallbackQueries = googleQueries.take(6)
             val startpageDeferred = fallbackQueries.map { q ->
                 async { q to scrapeStartpageGoogleHtml(q) }
             }
             val ddgDeferred = fallbackQueries.map { q ->
                 async { q to scrapeDuckDuckGoComments(q) }
             }
-            val bingDeferred = fallbackQueries.take(2).map { q ->
+            val bingDeferred = fallbackQueries.take(4).map { q ->
                 async { q to OpenWebOsintScraper.scrapeBingHtml(q) }
             }
+            val yahooDeferred = fallbackQueries.take(4).map { q ->
+                async { q to scrapeYahooSearchHtml(q) }
+            }
 
-            // 3. Direct Comment APIs (Reddit comments, HackerNews comments, GitHub issue comments)
+            // 3. Direct Comment APIs across ALL discovered handles (Reddit, HackerNews, GitHub, StackOverflow)
             val redditEmailDef = async { scrapeRedditCommentsByQuery("\"$cleanEmail\"", cleanEmail) }
-            val redditUserDef = async {
-                if (includeHandle) {
-                    val userComments = scrapeRedditUserComments(rawHandle)
-                    val alnumComments = if (alnumHandle != rawHandle && alnumHandle.length >= 4) {
-                        scrapeRedditUserComments(alnumHandle)
-                    } else emptyList()
-                    val searchComments = scrapeRedditCommentsByQuery("\"$rawHandle\"", rawHandle)
-                    userComments + alnumComments + searchComments
-                } else emptyList()
+            val redditHandlesDef = async {
+                allHandles.map { h ->
+                    async {
+                        scrapeRedditUserComments(h) + scrapeRedditCommentsByQuery("\"$h\"", "@$h")
+                    }
+                }.awaitAll().flatten()
             }
 
             val hnEmailDef = async { scrapeHackerNewsComments("\"$cleanEmail\"", cleanEmail, byAuthor = false) }
-            val hnUserDef = async {
-                if (includeHandle) {
-                    val byAuthor = scrapeHackerNewsComments(rawHandle, rawHandle, byAuthor = true)
-                    val byMention = scrapeHackerNewsComments("\"$rawHandle\"", rawHandle, byAuthor = false)
-                    byAuthor + byMention
-                } else emptyList()
+            val hnHandlesDef = async {
+                allHandles.map { h ->
+                    async {
+                        scrapeHackerNewsComments(h, "@$h", byAuthor = true) +
+                            scrapeHackerNewsComments("\"$h\"", "@$h", byAuthor = false)
+                    }
+                }.awaitAll().flatten()
             }
 
             val ghEmailDef = async { scrapeGitHubCommentActivity("\"$cleanEmail\"", cleanEmail, isAuthorHandle = false) }
-            val ghUserDef = async {
-                if (includeHandle) {
-                    scrapeGitHubCommentActivity(rawHandle, rawHandle, isAuthorHandle = true)
-                } else emptyList()
+            val ghHandlesDef = async {
+                allHandles.map { h ->
+                    async { scrapeGitHubCommentActivity(h, "@$h", isAuthorHandle = true) }
+                }.awaitAll().flatten()
+            }
+
+            val stackOverflowDef = async {
+                allHandles.map { h ->
+                    async { scrapeStackOverflowUserActivity(h) }
+                }.awaitAll().flatten()
             }
 
             val googleOutcomes = googleDeferred.awaitAll()
@@ -175,53 +198,78 @@ object GoogleCommentScraper {
 
             val allHits = mutableListOf<CommentHit>()
 
-            // Collect Google Search HTML hits
+            fun matchLabelForQuery(query: String): String {
+                if (query.contains(cleanEmail)) return cleanEmail
+                if (query.contains(emailMd5)) return "Gravatar MD5 ($cleanEmail)"
+                for (h in allHandles) {
+                    if (query.contains(h, ignoreCase = true)) return "@$h"
+                }
+                for (n in knownDisplayNames) {
+                    if (query.contains(n, ignoreCase = true)) return n
+                }
+                return "@$rawHandle"
+            }
+
             for ((query, outcome) in googleOutcomes) {
-                val matchLabel = if (query.contains(cleanEmail)) cleanEmail else "@$rawHandle"
+                val label = matchLabelForQuery(query)
                 outcome.items.forEach { item ->
-                    allHits += toCommentHit(item, matchLabel, "Google Search")
+                    allHits += toCommentHit(item, label, "Google Search")
                 }
             }
 
-            // Collect Startpage (Google Syndicated) hits
             for ((query, items) in startpageDeferred.awaitAll()) {
-                val matchLabel = if (query.contains(cleanEmail)) cleanEmail else "@$rawHandle"
+                val label = matchLabelForQuery(query)
                 items.forEach { item ->
-                    allHits += toCommentHit(item, matchLabel, "Google (via Startpage)")
+                    allHits += toCommentHit(item, label, "Google (via Startpage)")
                 }
             }
 
-            // Collect DuckDuckGo & Bing comment dork hits
             for ((query, items) in ddgDeferred.awaitAll()) {
-                val matchLabel = if (query.contains(cleanEmail)) cleanEmail else "@$rawHandle"
+                val label = matchLabelForQuery(query)
                 items.forEach { item ->
-                    allHits += toCommentHit(item, matchLabel, "DuckDuckGo Search")
-                }
-            }
-            for ((query, items) in bingDeferred.awaitAll()) {
-                val matchLabel = if (query.contains(cleanEmail)) cleanEmail else "@$rawHandle"
-                items.forEach { item ->
-                    allHits += toCommentHit(item, matchLabel, "Bing Search")
+                    allHits += toCommentHit(item, label, "DuckDuckGo Search")
                 }
             }
 
-            // Collect direct Google Maps contributor reviews & comments first
+            for ((query, items) in bingDeferred.awaitAll()) {
+                val label = matchLabelForQuery(query)
+                items.forEach { item ->
+                    allHits += toCommentHit(item, label, "Bing Search")
+                }
+            }
+
+            for ((query, items) in yahooDeferred.awaitAll()) {
+                val label = matchLabelForQuery(query)
+                items.forEach { item ->
+                    allHits += toCommentHit(item, label, "Yahoo Search")
+                }
+            }
+
             val mapsHits = googleMapsDef.await()
             allHits += mapsHits
-
-            // Collect direct platform comment hits
             allHits += redditEmailDef.await()
-            allHits += redditUserDef.await()
+            allHits += redditHandlesDef.await()
             allHits += hnEmailDef.await()
-            allHits += hnUserDef.await()
+            allHits += hnHandlesDef.await()
             allHits += ghEmailDef.await()
-            allHits += ghUserDef.await()
+            allHits += ghHandlesDef.await()
+            allHits += stackOverflowDef.await()
 
             val deduplicated = allHits
                 .filter { it.url.startsWith("http") && it.title.isNotBlank() }
                 .distinctBy { "${normalizeUrlForDedup(it.url)}|${it.title.lowercase()}" }
+
+            // Crawl up to 6 web/blog/forum comment pages to extract the actual surrounding comment text
+            val searchTerms = (listOf(cleanEmail, rawHandle) + allHandles + knownDisplayNames)
+                .filter { it.length >= 3 }
+                .distinct()
+            val enriched = enrichCommentsWithPageCrawl(deduplicated, searchTerms)
                 .sortedWith(
-                    compareByDescending<CommentHit> { it.sourceEngine == "Google Maps Reviews" && !it.commentSnippet.startsWith("Rated ") && !it.commentSnippet.startsWith("Uploaded ") }
+                    compareByDescending<CommentHit> {
+                        it.sourceEngine == "Google Maps Reviews" &&
+                            !it.commentSnippet.startsWith("Rated ") &&
+                            !it.commentSnippet.startsWith("Uploaded ")
+                    }
                         .thenByDescending { it.sourceEngine == "Google Maps Reviews" }
                         .thenByDescending { it.authorMatch == cleanEmail }
                         .thenByDescending { it.sourceEngine.startsWith("Google") }
@@ -230,23 +278,23 @@ object GoogleCommentScraper {
 
             val statusText = when {
                 mapsHits.isNotEmpty() ->
-                    "Google Maps Reviews & public comment indexes queried (${deduplicated.size} found, including ${mapsHits.size} Google Maps contribution(s))"
-                anyGoogleOk && deduplicated.isNotEmpty() ->
-                    "Google Search & public comment indexes queried (${deduplicated.size} found)"
-                anyGoogleBlocked && deduplicated.isNotEmpty() ->
-                    "Google rate-limited direct HTML; recovered ${deduplicated.size} comment(s) via Google syndication & platform APIs"
+                    "Google Maps Reviews & comment indexes queried across ${allHandles.size} handle(s) (${enriched.size} found)"
+                anyGoogleOk && enriched.isNotEmpty() ->
+                    "Google Search & comment APIs queried across ${allHandles.size} handle(s) (${enriched.size} found)"
+                anyGoogleBlocked && enriched.isNotEmpty() ->
+                    "Google rate-limited direct HTML; recovered ${enriched.size} comment(s) via syndication & platform APIs"
                 anyGoogleBlocked ->
-                    "Google challenged automated requests from this IP — use the 1-tap Google Dork launchers below to view live in browser"
-                deduplicated.isNotEmpty() ->
-                    "Found ${deduplicated.size} public comment(s) and discussion mentions"
+                    "Google challenged automated requests from this IP — tap the Google Comment Dorks below to view live in browser"
+                enriched.isNotEmpty() ->
+                    "Found ${enriched.size} public comment(s), forum posts, and discussion mentions"
                 else ->
-                    "No indexed public comments found for $cleanEmail"
+                    "No indexed public comments found for $cleanEmail or handles (${allHandles.joinToString()})"
             }
 
             GoogleCommentReport(
                 email = cleanEmail,
                 handle = rawHandle,
-                comments = deduplicated,
+                comments = enriched,
                 googleDirectStatus = statusText,
                 queriesRun = googleQueries,
                 dorkLinks = dorks
@@ -256,54 +304,139 @@ object GoogleCommentScraper {
 
     internal fun buildGoogleCommentQueries(
         email: String,
-        handle: String,
-        includeHandle: Boolean,
+        emailMd5: String,
+        handles: List<String>,
         knownDisplayNames: List<String> = emptyList()
     ): List<String> = buildList {
-        // 1. Direct email in comments, forums, discussions, reviews, or mailing lists
-        add("\"$email\" (comment OR reply OR posted OR review OR forum OR discussion)")
-        // 2. Exact email anywhere on the public web
+        // 1. Direct email in comments, forums, reviews, or mailing lists
+        add("\"$email\" (comment OR reply OR posted OR review OR forum OR discussion OR \"wrote:\")")
         add("\"$email\"")
-        if (includeHandle) {
-            // 3. Handle across major comment platforms indexed by Google
-            add("\"$handle\" (site:reddit.com OR site:youtube.com OR site:disqus.com OR site:news.ycombinator.com OR site:stackoverflow.com OR site:github.com OR site:medium.com OR site:quora.com OR site:trustpilot.com)")
-            // 4. Handle with explicit comment/reply markers on blogs & forums
-            add("\"$handle\" (\"commented\" OR \"replied\" OR \"posted by\" OR \"comment by\" OR \"says:\" OR \"wrote:\")")
+        // 2. Gravatar MD5 footprint (matches WordPress/Disqus/forum comments signed with this email)
+        if (emailMd5.length == 32) {
+            add("\"$emailMd5\" OR \"gravatar.com/avatar/$emailMd5\"")
         }
-        knownDisplayNames.firstOrNull { it.contains(' ') && it.length >= 5 }?.let { name ->
-            add("\"$name\" \"$handle\" (comment OR review OR forum)")
+        // 3. Every discovered handle across comment, video, review, and forum platforms
+        for (h in handles.take(4)) {
+            add("\"$h\" (site:youtube.com OR site:reddit.com OR site:disqus.com OR site:news.ycombinator.com OR site:stackoverflow.com OR site:github.com OR site:medium.com OR site:quora.com)")
+            add("\"$h\" (site:trustpilot.com OR site:tripadvisor.co.uk OR site:tripadvisor.com OR site:google.com/maps/contrib OR \"wrote a review\" OR \"reviewed\")")
+            add("\"$h\" (\"commented\" OR \"replied\" OR \"posted by\" OR \"comment by\" OR \"says:\" OR inurl:comment OR inurl:thread OR inurl:forum)")
+        }
+        // 4. Display name + handle or review queries
+        knownDisplayNames.filter { ' ' in it && it.length >= 5 }.take(2).forEach { name ->
+            add("\"$name\" (site:google.com/maps/contrib OR site:trustpilot.com OR \"wrote a review\")")
+            handles.firstOrNull()?.let { h ->
+                add("\"$name\" \"$h\" (comment OR review OR forum OR reply)")
+            }
         }
     }.distinct()
 
-    fun buildCommentDorkLinks(email: String, handle: String): List<OsintDork> {
+    internal fun buildGoogleCommentQueries(
+        email: String,
+        handle: String,
+        includeHandle: Boolean,
+        knownDisplayNames: List<String> = emptyList()
+    ): List<String> {
+        val md5 = OsintDatasets.transformAccount(email, AccountMode.HASH_MD5)
+        val handles = if (includeHandle && handle.isNotBlank()) listOf(handle) else emptyList()
+        return buildGoogleCommentQueries(email, md5, handles, knownDisplayNames)
+    }
+
+    fun buildCommentDorkLinks(
+        email: String,
+        handles: List<String>,
+        knownDisplayNames: List<String> = emptyList()
+    ): List<OsintDork> {
         val encEmail = ScanHttp.encode("\"$email\"")
-        val encHandle = ScanHttp.encode("\"$handle\"")
-        return listOf(
-            OsintDork(
-                title = "Google: All Comments & Forum Replies ($email)",
-                description = "Opens Google Search filtered for comments, replies, forum threads, and reviews containing your email.",
-                url = "https://www.google.com/search?q=$encEmail+(comment+OR+reply+OR+posted+OR+review+OR+forum+OR+discussion)",
-                toolSource = "Google Comment Dork"
-            ),
-            OsintDork(
-                title = "Google: Handle Comments (@$handle on Reddit, YouTube, Disqus, HN)",
-                description = "Searches Google for comments left under the email handle @$handle across Reddit, YouTube, Disqus, StackOverflow, Quora, and Medium.",
-                url = "https://www.google.com/search?q=$encHandle+(site:reddit.com+OR+site:youtube.com+OR+site:disqus.com+OR+site:news.ycombinator.com+OR+site:stackoverflow.com+OR+site:medium.com+OR+site:quora.com)",
-                toolSource = "Google Comment Dork"
-            ),
-            OsintDork(
-                title = "Google: Blog & WordPress Comments (\"says\" / \"commented\")",
-                description = "Finds WordPress, Blogger, and forum comment sections where @$handle or $email left a reply.",
-                url = "https://www.google.com/search?q=($encEmail+OR+$encHandle)+(\"commented\"+OR+\"replied\"+OR+\"says:\"+OR+\"posted+by\"+OR+inurl:comment)",
-                toolSource = "Google Comment Dork"
-            ),
-            OsintDork(
-                title = "Google: Public Reviews (Google Maps, Trustpilot, TripAdvisor)",
-                description = "Searches Google for public product or local business reviews associated with @$handle or $email.",
-                url = "https://www.google.com/search?q=($encEmail+OR+$encHandle)+(site:trustpilot.com+OR+site:tripadvisor.com+OR+site:google.com/maps/contrib+OR+\"wrote+a+review\")",
-                toolSource = "Google Comment Dork"
+        val handleOrGroup = handles.take(4).joinToString("+OR+") { ScanHttp.encode("\"$it\"") }
+        val handleLabel = handles.take(3).joinToString(", ") { "@$it" }
+        val primaryName = knownDisplayNames.firstOrNull { ' ' in it }
+
+        return buildList {
+            add(
+                OsintDork(
+                    title = "Google: All Comments & Forum Replies ($email & $handleLabel)",
+                    description = "Searches Google for comments, replies, forum threads, and discussions mentioning your email or linked usernames.",
+                    url = "https://www.google.com/search?q=($encEmail+OR+$handleOrGroup)+(comment+OR+reply+OR+posted+OR+review+OR+forum+OR+discussion)",
+                    toolSource = "Google Comment Dork"
+                )
             )
-        )
+            add(
+                OsintDork(
+                    title = "Google: YouTube, Reddit, Disqus & Forum Comments ($handleLabel)",
+                    description = "Finds comments left under $handleLabel on YouTube, Reddit, Disqus, HackerNews, StackOverflow, Quora, and Medium.",
+                    url = "https://www.google.com/search?q=($handleOrGroup)+(site:youtube.com+OR+site:reddit.com+OR+site:disqus.com+OR+site:news.ycombinator.com+OR+site:stackoverflow.com+OR+site:medium.com+OR+site:quora.com)",
+                    toolSource = "Google Comment Dork"
+                )
+            )
+            add(
+                OsintDork(
+                    title = "Google: WordPress, Blogger & Forum Replies (\"says\" / \"commented\")",
+                    description = "Locates blog comment sections and forum threads where $handleLabel or $email posted a comment.",
+                    url = "https://www.google.com/search?q=($encEmail+OR+$handleOrGroup)+(\"commented\"+OR+\"replied\"+OR+\"says:\"+OR+\"posted+by\"+OR+inurl:comment+OR+inurl:thread)",
+                    toolSource = "Google Comment Dork"
+                )
+            )
+            add(
+                OsintDork(
+                    title = "Google: Public Reviews (Google Maps, Trustpilot, TripAdvisor)",
+                    description = "Searches Google for public business and product reviews left by $handleLabel${primaryName?.let { " or $it" }.orEmpty()}.",
+                    url = "https://www.google.com/search?q=($encEmail+OR+$handleOrGroup${primaryName?.let { "+OR+${ScanHttp.encode("\"$it\"")}" }.orEmpty()})+(site:google.com/maps/contrib+OR+site:trustpilot.com+OR+site:tripadvisor.co.uk+OR+site:tripadvisor.com+OR+\"wrote+a+review\")",
+                    toolSource = "Google Comment Dork"
+                )
+            )
+        }
+    }
+
+    fun buildCommentDorkLinks(
+        email: String,
+        handle: String,
+        knownDisplayNames: List<String> = emptyList()
+    ): List<OsintDork> = buildCommentDorkLinks(email, listOf(handle), knownDisplayNames)
+
+    /**
+     * Crawls up to 6 matched web/blog/forum comment pages to extract the actual surrounding comment text
+     */
+    private suspend fun enrichCommentsWithPageCrawl(
+        hits: List<CommentHit>,
+        searchTerms: List<String>
+    ): List<CommentHit> = coroutineScope {
+        val semaphore = Semaphore(3)
+        var crawlCount = 0
+        hits.map { hit ->
+            val shouldCrawl = hit.sourceEngine.contains("Search") &&
+                (hit.commentSnippet.startsWith("Indexed ") || hit.commentSnippet.length < 90) &&
+                crawlCount < 6
+            if (shouldCrawl) {
+                crawlCount++
+                async {
+                    semaphore.withPermit {
+                        val extracted = crawlPageForCommentWindow(hit.url, searchTerms)
+                        if (!extracted.isNullOrBlank()) {
+                            hit.copy(commentSnippet = extracted)
+                        } else {
+                            hit
+                        }
+                    }
+                }
+            } else {
+                async { hit }
+            }
+        }.awaitAll()
+    }
+
+    private fun crawlPageForCommentWindow(url: String, searchTerms: List<String>): String? {
+        val resp = ScanHttp.get(url, timeoutMs = 7_000, maxBodyChars = 200_000)
+        if (!resp.isOk || resp.body.isBlank()) return null
+        val text = cleanText(resp.body.replace(SCRIPT_STYLE_REGEX, " "))
+        for (term in searchTerms) {
+            val idx = text.indexOf(term, ignoreCase = true)
+            if (idx >= 0) {
+                val start = (idx - 80).coerceAtLeast(0)
+                val end = (idx + term.length + 200).coerceAtMost(text.length)
+                return "…${text.substring(start, end).trim()}…"
+            }
+        }
+        return null
     }
 
     internal enum class GoogleScrapeStatus {
@@ -318,17 +451,14 @@ object GoogleCommentScraper {
         val items: List<SearchResultItem>
     )
 
-    /**
-     * Scrapes Google Search HTML using basic-HTML endpoints and multi-layout parsing.
-     */
     fun scrapeGoogleSearch(query: String): List<SearchResultItem> =
         scrapeGoogleSearchWithStatus(query).items
 
     internal fun scrapeGoogleSearchWithStatus(query: String): GoogleScrapeOutcome {
         val encoded = ScanHttp.encode(query)
         val urls = listOf(
-            "https://www.google.com/search?q=$encoded&gbv=1&hl=en&num=20",
-            "https://www.google.co.uk/search?q=$encoded&gbv=1&hl=en&num=20"
+            "https://www.google.co.uk/search?q=$encoded&gbv=1&hl=en&num=20",
+            "https://www.google.com/search?q=$encoded&gbv=1&hl=en&num=20"
         )
 
         var sawBlock = false
@@ -366,6 +496,96 @@ object GoogleCommentScraper {
         }
     }
 
+    /**
+     * Scrapes Yahoo Search HTML as an additional resilient fallback for comment dork queries.
+     */
+    internal fun scrapeYahooSearchHtml(query: String): List<SearchResultItem> {
+        val url = "https://uk.search.yahoo.com/search?p=${ScanHttp.encode(query)}&n=15"
+        val resp = ScanHttp.get(
+            url = url,
+            timeoutMs = 10_000,
+            headers = mapOf("Accept" to "text/html,application/xhtml+xml")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return emptyList()
+        val cleaned = resp.body.replace(SCRIPT_STYLE_REGEX, " ")
+        val results = mutableListOf<SearchResultItem>()
+
+        val linkRegex = Regex(
+            """<a\b[^>]*class\s*=\s*["'][^"']*(?:ac-algo|d-ib|fz-ms)[^"']*["'][^>]*href\s*=\s*["'](https?://[^"']+)["'][^>]*>(.*?)</a>""",
+            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+        )
+        for (m in linkRegex.findAll(cleaned)) {
+            var href = unescapeHtml(m.groupValues[1])
+            if (href.contains("RU=")) {
+                href = decodeUrlSafely(href.substringAfter("RU=").substringBefore("/RK=").substringBefore("/RS="))
+            }
+            if (href.contains("yahoo.com")) continue
+            val title = cleanText(m.groupValues[2])
+            if (title.length >= 4 && href.startsWith("http")) {
+                val afterIdx = (m.range.last + 1).coerceAtMost(cleaned.length)
+                val slice = cleaned.substring(afterIdx, (afterIdx + 1200).coerceAtMost(cleaned.length))
+                val snippetMatch = Regex(
+                    """<(?:p|span|div)\b[^>]*class\s*=\s*["'][^"']*(?:lh-16|fc-falcon|compText)[^"']*["'][^>]*>(.*?)</(?:p|span|div)>""",
+                    setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+                ).find(slice)?.groupValues?.get(1)?.let { cleanText(it) }.orEmpty()
+
+                results += SearchResultItem(
+                    title = title,
+                    snippet = snippetMatch.ifBlank { "Indexed comment mention via Yahoo Search" },
+                    url = href,
+                    source = "Yahoo Search"
+                )
+            }
+            if (results.size >= 15) break
+        }
+        return results
+    }
+
+    /**
+     * Queries StackOverflow / StackExchange API for a matching username and fetches their latest comments/answers.
+     */
+    internal fun scrapeStackOverflowUserActivity(handle: String): List<CommentHit> {
+        val clean = handle.trim().removePrefix("@")
+        if (clean.length < 4) return emptyList()
+        val userUrl = "https://api.stackexchange.com/2.3/users?inname=${ScanHttp.encode(clean)}&site=stackoverflow&pagesize=3"
+        val userResp = ScanHttp.get(userUrl, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
+        if (!userResp.isOk || userResp.body.isBlank()) return emptyList()
+
+        return runCatching {
+            val items = JSONObject(userResp.body).optJSONArray("items") ?: return emptyList()
+            val exactUser = (0 until items.length()).mapNotNull { items.optJSONObject(it) }
+                .firstOrNull { it.optString("display_name").equals(clean, ignoreCase = true) } ?: return emptyList()
+            val userId = exactUser.optLong("user_id", -1L)
+            if (userId <= 0L) return emptyList()
+
+            val commentsUrl = "https://api.stackexchange.com/2.3/users/$userId/comments?site=stackoverflow&pagesize=10&order=desc&sort=creation&filter=!9_bDE0E4s"
+            val cResp = ScanHttp.get(commentsUrl, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
+            if (!cResp.isOk || cResp.body.isBlank()) return emptyList()
+
+            val cItems = JSONObject(cResp.body).optJSONArray("items") ?: return emptyList()
+            (0 until cItems.length()).mapNotNull { i ->
+                val c = cItems.optJSONObject(i) ?: return@mapNotNull null
+                val commentId = c.optLong("comment_id", -1L)
+                val postId = c.optLong("post_id", -1L)
+                if (commentId <= 0L || postId <= 0L) return@mapNotNull null
+                val body = cleanText(c.optString("body")).take(260)
+                val created = c.optLong("creation_date", 0L)
+                val dateStr = if (created > 0L) SimpleDateFormat("d MMM yyyy", Locale.US).format(Date(created * 1000L)) else null
+                val link = c.optString("link").ifBlank { "https://stackoverflow.com/posts/comments/$commentId" }
+
+                CommentHit(
+                    platform = "StackExchange",
+                    title = "StackOverflow Comment by @$clean on Post #$postId",
+                    commentSnippet = body.ifBlank { "Public comment by @$clean on StackOverflow" },
+                    url = link,
+                    authorMatch = "@$clean",
+                    date = dateStr,
+                    sourceEngine = "StackExchange API"
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
     internal fun isGoogleBlockedHtml(html: String): Boolean {
         val lower = html.lowercase()
         return lower.contains("sorry/index") ||
@@ -382,18 +602,11 @@ object GoogleCommentScraper {
             lower.contains("it looks like there aren't many great matches")
     }
 
-    /**
-     * Multi-layout Google HTML SERP parser.
-     * Supports:
-     * 1. Basic HTML (`gbv=1`) `/url?q=https://...` result anchors with sibling/following snippet divs.
-     * 2. Standard desktop/mobile `<a href="https://...">...<h3>Title</h3>...</a>` blocks.
-     */
     internal fun parseGoogleSearchHtml(html: String): List<SearchResultItem> {
         if (html.isBlank()) return emptyList()
         val cleanedHtml = html.replace(SCRIPT_STYLE_REGEX, " ")
         val results = mutableListOf<SearchResultItem>()
 
-        // Strategy 1: Basic HTML `/url?q=` links
         val redirectAnchorRegex = Regex(
             """<a\b[^>]*\bhref\s*=\s*["']/url\?(?:q|url)=(https?[^"'&]+)[^"']*["'][^>]*>(.*?)</a>""",
             setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
@@ -406,13 +619,11 @@ object GoogleCommentScraper {
             if (!isExternalResultUrl(rawUrl)) continue
 
             val innerHtml = match.groupValues[2]
-            // Prefer text inside <h3> or <div class="BNeawe vvjwJb..."> if present; otherwise full anchor text
             val h3Match = Regex("""<h3[^>]*>(.*?)</h3>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
                 .find(innerHtml)?.groupValues?.get(1)
             val rawTitle = cleanText(h3Match ?: innerHtml)
             if (rawTitle.length < 3 || rawTitle.startsWith("http://") || rawTitle.startsWith("https://")) continue
 
-            // Extract snippet from the HTML slice between this </a> and the next result <a>
             val sliceStart = match.range.last + 1
             val sliceEnd = if (i + 1 < matches.size) {
                 minOf(matches[i + 1].range.first, sliceStart + 2500)
@@ -431,7 +642,6 @@ object GoogleCommentScraper {
             if (results.size >= 20) break
         }
 
-        // Strategy 2: Direct href="https://..." anchors wrapping an <h3>
         if (results.isEmpty()) {
             val directH3Regex = Regex(
                 """<a\b[^>]*\bhref\s*=\s*["'](https?://[^"']+)["'][^>]*>(?:(?!</a\b).)*?<h3[^>]*>(.*?)</h3>.*?</a>""",
@@ -470,8 +680,6 @@ object GoogleCommentScraper {
 
     private fun extractSnippetFromGoogleSlice(slice: String, title: String): String {
         if (slice.isBlank()) return ""
-
-        // 1. Check known Google snippet containers (`BNeawe s3v9rd`, `VwiC3b`, `aCOpRe`, `st`, `j`)
         val containerRegex = Regex(
             """<(?:div|span|td)\b[^>]*\bclass\s*=\s*["'][^"']*(?:s3v9rd|VwiC3b|aCOpRe|yXK7lf|st\b)[^"']*["'][^>]*>(.*?)</(?:div|span|td)>""",
             setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
@@ -483,7 +691,6 @@ object GoogleCommentScraper {
             }
         }
 
-        // 2. Fallback: strip tags from the slice, drop breadcrumb lines ("site.com › ..."), and take readable prose
         val plain = cleanText(slice)
         val cleaned = plain
             .replace(Regex("""https?://\S+"""), " ")
@@ -497,10 +704,6 @@ object GoogleCommentScraper {
         }
     }
 
-    /**
-     * Scrapes Startpage HTML (which syndicates Google Search results) when direct Google HTML
-     * is rate-limited or CAPTCHA-gated.
-     */
     internal fun scrapeStartpageGoogleHtml(query: String): List<SearchResultItem> {
         val url = "https://www.startpage.com/sp/search?query=${ScanHttp.encode(query)}"
         val resp = ScanHttp.get(
@@ -548,21 +751,21 @@ object GoogleCommentScraper {
         }
     }
 
-    /**
-     * Fetches public Reddit comments posted by `u/<handle>` via Reddit's `/user/<handle>/comments.json`.
-     */
     internal fun scrapeRedditUserComments(handle: String): List<CommentHit> {
         val clean = handle.trim().removePrefix("@")
         if (clean.length < 3) return emptyList()
-        val url = "https://www.reddit.com/user/${ScanHttp.encode(clean)}/comments.json?limit=15"
-        val resp = ScanHttp.get(url, timeoutMs = 10_000, headers = mapOf("Accept" to "application/json"))
-        if (!resp.isOk || resp.body.isBlank()) return emptyList()
-        return parseRedditCommentsJson(resp.body, "@$clean")
+        val commentsUrl = "https://www.reddit.com/user/${ScanHttp.encode(clean)}/comments.json?limit=15"
+        val overviewUrl = "https://www.reddit.com/user/${ScanHttp.encode(clean)}/overview.json?limit=15"
+        val out = mutableListOf<CommentHit>()
+        for (url in listOf(commentsUrl, overviewUrl)) {
+            val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
+            if (resp.isOk && resp.body.isNotBlank()) {
+                out += parseRedditCommentsJson(resp.body, "@$clean")
+            }
+        }
+        return out.distinctBy { it.url }
     }
 
-    /**
-     * Searches Reddit for posts/discussions mentioning the query.
-     */
     internal fun scrapeRedditCommentsByQuery(query: String, authorMatch: String): List<CommentHit> {
         val url = "https://www.reddit.com/search.json?q=${ScanHttp.encode(query)}&limit=12&sort=new"
         val resp = ScanHttp.get(url, timeoutMs = 10_000, headers = mapOf("Accept" to "application/json"))
@@ -577,7 +780,7 @@ object GoogleCommentScraper {
                 ?.optJSONArray("children") ?: return emptyList()
             (0 until children.length()).mapNotNull { i ->
                 val child = children.optJSONObject(i) ?: return@mapNotNull null
-                val kind = child.optString("kind") // "t1" = comment, "t3" = post
+                val kind = child.optString("kind")
                 val data = child.optJSONObject("data") ?: return@mapNotNull null
                 val subreddit = data.optString("subreddit_name_prefixed").ifBlank { "r/${data.optString("subreddit")}" }
                 val author = data.optString("author")
@@ -610,9 +813,6 @@ object GoogleCommentScraper {
         }.getOrDefault(emptyList())
     }
 
-    /**
-     * Queries HackerNews Algolia API specifically for `tags=comment` (either by author or text query).
-     */
     internal fun scrapeHackerNewsComments(
         query: String,
         authorMatch: String,
@@ -655,16 +855,12 @@ object GoogleCommentScraper {
         }.getOrDefault(emptyList())
     }
 
-    /**
-     * Queries GitHub's search API for issues/PRs where the user commented (`commenter:<handle>`)
-     * or where the email was mentioned.
-     */
     internal fun scrapeGitHubCommentActivity(
         query: String,
         authorMatch: String,
         isAuthorHandle: Boolean
     ): List<CommentHit> {
-        val searchQuery = if (isAuthorHandle) "commenter:$query" else query
+        val searchQuery = if (isAuthorHandle) "involves:$query" else query
         val url = "https://api.github.com/search/issues?per_page=10&sort=updated&q=${ScanHttp.encode(searchQuery)}"
         val resp = ScanHttp.get(
             url,
@@ -694,8 +890,8 @@ object GoogleCommentScraper {
 
                 CommentHit(
                     platform = "GitHub",
-                    title = if (isAuthorHandle) "$repoName: Commented on \"$title\"" else "$repoName (@$user): $title",
-                    commentSnippet = issueBody.ifBlank { "Public GitHub discussion comment in $repoName" },
+                    title = if (isAuthorHandle) "$repoName: Active on \"$title\"" else "$repoName (@$user): $title",
+                    commentSnippet = issueBody.ifBlank { "Public GitHub issue/PR comment in $repoName" },
                     url = htmlUrl,
                     authorMatch = authorMatch,
                     date = updatedAt,

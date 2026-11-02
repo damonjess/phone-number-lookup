@@ -5,6 +5,7 @@ import com.example.phone_number_lookup.OsintDatasets.SRC_CURATED
 object CuratedEmailChecks {
 
     val PROBES: List<SiteProbe> = listOf(
+        microsoftAccount(),
         mozillaFirefox(),
         chessCom(),
         gravatar(),
@@ -13,9 +14,9 @@ object CuratedEmailChecks {
         spotify(),
         github(),
         keybase(),
-        mastodonSocial(),
         openPgpKeys(),
-        dockerHub(),
+        ubuntuPgpKeys(),
+        protonMailPks(),
         twitter(),
         adobe(),
         lastFm(),
@@ -24,6 +25,61 @@ object CuratedEmailChecks {
         samsung(),
         xing(),
         strava()
+    )
+
+    /**
+     * Checks if any email address (Gmail, Yahoo, Outlook, custom domain) is registered
+     * as a Microsoft / Xbox / Skype / OneDrive account.
+     */
+    private fun microsoftAccount() = SiteProbe(
+        name = "Microsoft / Xbox / Skype",
+        category = "tech",
+        source = SRC_CURATED,
+        method = "POST",
+        urlTemplate = "https://login.live.com/GetCredentialType.srf",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://account.microsoft.com/",
+        headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
+        bodyTemplate = "{\"username\":\"{account}\",\"isOtherIdpSupported\":true,\"checkPhones\":false,\"isRemoteNGCSupported\":true,\"isCookieBannerShown\":false,\"isFidoSupported\":true}",
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"IfExistsResult\":0", "\"IfExistsResult\":5", "\"IfExistsResult\":6"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("\"IfExistsResult\":1"),
+        missingUrls = emptyList()
+    )
+
+    private fun ubuntuPgpKeys() = SiteProbe(
+        name = "Ubuntu OpenPGP Server",
+        category = "tech",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://keyserver.ubuntu.com/pks/lookup?search={account}&options=mr&op=index",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://keyserver.ubuntu.com/",
+        headers = emptyMap(),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("pub:"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("No results", "not found"),
+        missingUrls = emptyList()
+    )
+
+    private fun protonMailPks() = SiteProbe(
+        name = "ProtonMail Keyserver",
+        category = "tech",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://api.protonmail.ch/pks/lookup?op=index&search={account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://proton.me/",
+        headers = emptyMap(),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("pub:"),
+        missingCodes = setOf(404, 400, 422),
+        missingStrings = listOf("No key found", "Invalid"),
+        missingUrls = emptyList()
     )
 
     private fun mozillaFirefox() = SiteProbe(
@@ -162,23 +218,6 @@ object CuratedEmailChecks {
         missingUrls = emptyList()
     )
 
-    private fun mastodonSocial() = SiteProbe(
-        name = "Mastodon (mastodon.social)",
-        category = "social",
-        source = SRC_CURATED,
-        method = "GET",
-        urlTemplate = "https://mastodon.social/api/v1/accounts/lookup?acct={account}",
-        accountMode = AccountMode.RAW,
-        profileTemplate = "https://mastodon.social/",
-        headers = mapOf("Accept" to "application/json"),
-        bodyTemplate = null,
-        foundCodes = setOf(200),
-        foundStrings = listOf("\"acct\":"),
-        missingCodes = setOf(404),
-        missingStrings = listOf("Record not found"),
-        missingUrls = emptyList()
-    )
-
     private fun openPgpKeys() = SiteProbe(
         name = "OpenPGP Keyserver",
         category = "tech",
@@ -244,23 +283,6 @@ object CuratedEmailChecks {
         foundStrings = listOf("\"exists\":true"),
         missingCodes = setOf(404),
         missingStrings = listOf("\"exists\":false"),
-        missingUrls = emptyList()
-    )
-
-    private fun dockerHub() = SiteProbe(
-        name = "Docker Hub",
-        category = "tech",
-        source = SRC_CURATED,
-        method = "GET",
-        urlTemplate = "https://hub.docker.com/v2/users/{account}",
-        accountMode = AccountMode.RAW,
-        profileTemplate = "https://hub.docker.com/u/{account}",
-        headers = mapOf("Accept" to "application/json"),
-        bodyTemplate = null,
-        foundCodes = setOf(200),
-        foundStrings = listOf("\"username\":"),
-        missingCodes = setOf(404),
-        missingStrings = listOf("\"detail\":\"Not found\""),
         missingUrls = emptyList()
     )
 

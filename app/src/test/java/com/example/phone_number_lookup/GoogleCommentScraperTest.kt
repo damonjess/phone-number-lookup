@@ -143,7 +143,7 @@ class GoogleCommentScraperTest {
         val ghHits = GoogleCommentScraper.parseGitHubIssuesJson(ghJson, "@alex_dev99", isAuthorHandle = true)
         assertEquals(1, ghHits.size)
         assertEquals("GitHub", ghHits[0].platform)
-        assertEquals("example/repo: Commented on \"Fix race condition in viewmodel\"", ghHits[0].title)
+        assertEquals("example/repo: Active on \"Fix race condition in viewmodel\"", ghHits[0].title)
     }
 
     @Test

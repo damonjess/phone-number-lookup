@@ -72,6 +72,7 @@ import com.example.phone_number_lookup.ui.components.UsernameProfileSummaryCard
 import com.example.phone_number_lookup.ui.components.EmailIdentitySummarySection
 import com.example.phone_number_lookup.ui.components.EmailIntelBaseReport
 import com.example.phone_number_lookup.ui.components.EmailIntelDashboard
+import com.example.phone_number_lookup.ui.components.GoogleCommentsSection
 import com.example.phone_number_lookup.ui.components.EmailLinkedAccountsSection
 import com.example.phone_number_lookup.ui.components.EmailProfileStatsRow
 import com.example.phone_number_lookup.ui.components.EmailProfileSummaryCard
@@ -476,6 +477,14 @@ fun UsernameAndEmailOsintScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    GoogleCommentsSection(
+                        report = uiState.googleCommentReport,
+                        isLoading = uiState.isCommentScanning,
+                        onOpenUrl = { openUrl(context, it) },
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     // IntelBase Dossier view matching IntelBase layout + Google Comment Scraping
                     EmailIntelBaseReport(
                         target = target,
@@ -488,7 +497,7 @@ fun UsernameAndEmailOsintScreen(
                         isLoading = emailLoading,
                         onOpenUrl = { openUrl(context, it) },
                         googleCommentReport = uiState.googleCommentReport,
-                        isCommentScraping = uiState.isCommentScraping,
+                        isCommentScraping = uiState.isCommentScanning,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -994,8 +1003,8 @@ fun UsernameAndEmailOsintScreen(
                     }
 
                     val emailLinks = buildList {
-                        uiState.googleCommentReport?.comments?.forEach {
-                            add("Comment (${it.platform}): ${it.title}" to it.url)
+                        uiState.googleCommentReport?.comments?.forEach { hit ->
+                            add("Comment (${hit.platform}): ${hit.title}" to hit.url)
                         }
                         uiState.registeredSites.forEach { add("Registered: ${it.site}" to it.profileUrl) }
                         uiState.liveHits.forEach { add("Handle Match: ${it.site}" to it.profileUrl) }
@@ -1012,34 +1021,51 @@ fun UsernameAndEmailOsintScreen(
                                 context = context,
                                 title = "Email OSINT Report",
                                 target = target,
-                                sections = listOf(
-                                    PdfSection(
-                                        "Google & Web Comments (${uiState.googleCommentReport?.comments?.size ?: 0})",
-                                        uiState.googleCommentReport?.comments?.mapIndexed { i, hit ->
-                                            "${i + 1}. [${hit.platform}] ${hit.title} — \"${hit.commentSnippet}\" (${hit.url})"
-                                        }?.ifEmpty { listOf("No indexed comments found") }
-                                            ?: listOf("No indexed comments found")
-                                    ),
-                                    PdfSection(
-                                        "Registered Accounts (${uiState.registeredSites.size})",
-                                        uiState.registeredSites.mapIndexed { i, hit ->
-                                            "${i + 1}. ${hit.site} (${hit.source}) - ${hit.profileUrl}"
+                                sections = buildList {
+                                    uiState.googleCommentReport?.let { commentRep ->
+                                        if (commentRep.comments.isNotEmpty()) {
+                                            add(
+                                                PdfSection(
+                                                    heading = "Scraped Google & Public Web Comments (${commentRep.comments.size})",
+                                                    lines = commentRep.comments.flatMap { c ->
+                                                        listOf(
+                                                            "[${c.platform}] ${c.title} (Matched: ${c.authorMatch}${c.date?.let { " • $it" }.orEmpty()})",
+                                                            "  Comment: ${c.commentSnippet}",
+                                                            "  URL: ${c.url}"
+                                                        )
+                                                    }
+                                                )
+                                            )
                                         }
-                                    ),
-                                    PdfSection(
-                                        "Breach & Infostealer Exposure",
-                                        uiState.breachReport?.breachNames?.ifEmpty { listOf("No breaches reported") }
-                                            ?: listOf("Not checked")
-                                    ),
-                                    PdfSection(
-                                        "Domain & Mail Gateway Intelligence",
-                                        uiState.domainReport?.reasons.orEmpty()
-                                    ),
-                                    PdfSection(
-                                        "Handle Profile Matches (${uiState.liveHits.size})",
-                                        uiState.liveHits.map { "${it.site}: ${it.profileUrl}" }
+                                    }
+                                    add(
+                                        PdfSection(
+                                            "Registered Accounts (${uiState.registeredSites.size})",
+                                            uiState.registeredSites.mapIndexed { i, hit ->
+                                                "${i + 1}. ${hit.site} (${hit.source}) - ${hit.profileUrl}"
+                                            }
+                                        )
                                     )
-                                )
+                                    add(
+                                        PdfSection(
+                                            "Breach & Infostealer Exposure",
+                                            uiState.breachReport?.breachNames?.ifEmpty { listOf("No breaches reported") }
+                                                ?: listOf("Not checked")
+                                        )
+                                    )
+                                    add(
+                                        PdfSection(
+                                            "Domain & Mail Gateway Intelligence",
+                                            uiState.domainReport?.reasons.orEmpty()
+                                        )
+                                    )
+                                    add(
+                                        PdfSection(
+                                            "Handle Profile Matches (${uiState.liveHits.size})",
+                                            uiState.liveHits.map { "${it.site}: ${it.profileUrl}" }
+                                        )
+                                    )
+                                }
                             )
                         }
                     )

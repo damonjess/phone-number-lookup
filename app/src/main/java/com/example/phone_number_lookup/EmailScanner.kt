@@ -36,6 +36,12 @@ object EmailScanner {
         val hudsonRockDeferred = async {
             checkHudsonRockStealers(encoded)
         }
+        val combDeferred = async {
+            checkProxyNovaCombCount(encoded)
+        }
+        val pasteDeferred = async {
+            checkPastebinDumps(encoded)
+        }
 
         val response = basicDeferred.await()
         val analyticsResponse = analyticsDeferred.await()
@@ -65,7 +71,7 @@ object EmailScanner {
 
         val enrichedList = baseReport.breachNames.map { name ->
             detailedDetails[name.lowercase()] ?: name
-        } + stealerFindings
+        } + stealerFindings + combDeferred.await() + pasteDeferred.await()
 
         val finalNames = enrichedList.distinct()
         BreachReport(
@@ -120,6 +126,44 @@ object EmailScanner {
                 val os = s.optString("operating_system").takeIf { it.isNotBlank() }
                 "Infostealer Log (HudsonRock • $date${if (os != null) " • $os" else ""})"
             }
+        }.getOrDefault(emptyList())
+    }
+
+    /**
+     * Checks ProxyNova's public COMB (Compilation of Many Breaches) endpoint for record presence.
+     * Only reports the matched record count — never displays or stores any password strings.
+     */
+    private fun checkProxyNovaCombCount(encodedEmail: String): List<String> {
+        val response = ScanHttp.get(
+            "https://api.proxynova.com/comb?query=$encodedEmail&start=0&limit=5",
+            timeoutMs = 10_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!response.isOk || response.body.isBlank()) return emptyList()
+        return runCatching {
+            val count = JSONObject(response.body).optInt("count", 0)
+            if (count > 0) {
+                listOf("COMB Historical Credential Compilation ($count record${if (count == 1) "" else "s"} matched)")
+            } else emptyList()
+        }.getOrDefault(emptyList())
+    }
+
+    /**
+     * Searches Psbdmp's public Pastebin dump index for pastes containing the email address.
+     */
+    private fun checkPastebinDumps(encodedEmail: String): List<String> {
+        val response = ScanHttp.get(
+            "https://psbdmp.ws/api/v3/search/$encodedEmail",
+            timeoutMs = 10_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!response.isOk || response.body.isBlank()) return emptyList()
+        return runCatching {
+            val root = JSONObject(response.body)
+            val data = root.optJSONArray("data") ?: return emptyList()
+            if (data.length() > 0) {
+                listOf("Public Pastebin Dump Archive (${data.length()} paste${if (data.length() == 1) "" else "s"} matched)")
+            } else emptyList()
         }.getOrDefault(emptyList())
     }
 

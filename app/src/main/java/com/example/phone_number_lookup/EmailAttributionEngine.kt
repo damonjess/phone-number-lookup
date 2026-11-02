@@ -30,7 +30,10 @@ data class StealerSubjectProfile(
     val maskedIp: String?,
     val operatingSystem: String?,
     val dateCompromised: String?,
-    val antiviruses: List<String> = emptyList()
+    val antiviruses: List<String> = emptyList(),
+    val allUsernames: List<String> = emptyList(),
+    val allMaskedIps: List<String> = emptyList(),
+    val allDates: List<String> = emptyList()
 )
 
 data class EmailAttributionReport(
@@ -73,8 +76,17 @@ object EmailAttributionEngine {
         }
 
         val handle = clean.substringBefore('@')
+        // Generate likely handle variants (e.g., john.smith89 -> johnsmith89, john_smith89, johnsmith)
+        val handleVariants = buildList {
+            add(handle)
+            addAll(UsernameVariants.fromHandle(handle))
+            val strippedDigits = handle.replace(Regex("\\d+$"), "").trim('.', '_', '-')
+            if (strippedDigits.length >= 5 && strippedDigits != handle) {
+                add(strippedDigits)
+            }
+        }.filter { isDistinctiveHandle(it) }.distinctBy { it.lowercase() }.take(3)
 
-        val googleDef = async { GoogleMetadataExtractor.extract(clean) }
+        // STAGE 1: Fast primary identity & account lookups
         val githubDef = async { lookupGitHubByEmail(clean) }
         val duolingoDef = async { lookupDuolingoByEmail(clean) }
         val gravatarDef = async { lookupGravatarByEmail(clean) }
@@ -83,11 +95,15 @@ object EmailAttributionEngine {
         val keybaseDef = async { lookupKeybase("email=${ScanHttp.encode(clean)}") }
         val openPgpDef = async { lookupOpenPgpKeysByEmail(clean) }
         val pgpKeysDef = async { IdentityEnricher.fetchPgpKeys(clean) }
+        val protonPksDef = async { lookupProtonMailKeyCreation(clean) }
+        val npmEmailDef = async { lookupNpmByEmail(clean) }
         val webSearchDef = async {
             OpenWebOsintScraper.scrapeAll(listOf(clean, handle))
         }
         val instaPhoneDef = async { lookupInstagramRecoveryPhone(clean) }
-        val handleDef = if (isDistinctiveHandle(handle)) async { lookupProfilesByHandle(handle) } else null
+        val handleDef = if (handleVariants.isNotEmpty()) {
+            async { handleVariants.flatMap { lookupProfilesByHandle(it) }.distinctBy { "${it.platform}|${it.username.lowercase()}" } }
+        } else null
 
         val names = mutableListOf<AttributedValue>()
         val usernames = mutableListOf<AttributedValue>()
@@ -99,32 +115,10 @@ object EmailAttributionEngine {
 
         instaPhoneDef.await()?.let { phones += it }
 
-        // 1. Google & Play Games Attribution
-        val google = googleDef.await()
-        google.fullName?.let { names += AttributedValue(it, "Google") }
-        google.playGamesUsername?.let { usernames += AttributedValue(it, "Google Play Games") }
-        google.profileUrl?.let { url ->
-            links += AttributedProfileLink(google.fullName ?: "Google Profile", "Google Maps", url)
-        }
-        google.avatarUrl?.let { avatars += it }
-        google.mappedLocations.forEach { loc ->
-            locations += AttributedValue(loc, "Google")
-        }
-        google.reviews.forEach { rev ->
-            rev.timestampIso?.let { iso ->
-                timeline += TimelineEvent(iso, "Reviewed ${rev.title} (${rev.ratingLabel})", "Google Maps")
-            }
-        }
-        google.lastSeenDate?.let {
-            timeline += TimelineEvent(it, "Last Active", "Google / Play Games")
-        }
-        google.lastLevelUpDate?.let {
-            timeline += TimelineEvent(it, "Last Level Up", "Google Play Games")
-        }
-
-        // 2. GitHub Attribution (by Commit / Email Search)
+        // 1. GitHub Attribution (Author/Committer Email + Public Push Events)
         githubDef.await()?.let { gh ->
             gh.fullName?.let { names += AttributedValue(it, "GitHub") }
+            gh.extraNames.forEach { n -> names += AttributedValue(n, "GitHub Commits") }
             usernames += AttributedValue(gh.login, "GitHub")
             links += AttributedProfileLink(gh.login, "GitHub", gh.profileUrl)
             gh.location?.let { locations += AttributedValue(it, "GitHub") }
@@ -138,7 +132,7 @@ object EmailAttributionEngine {
             gh.updatedAt?.let { timeline += TimelineEvent(it, "Updated At", "GitHub") }
         }
 
-        // 3. Keybase Attribution
+        // 2. Keybase Attribution
         keybaseDef.await()?.let { kb ->
             kb.fullName?.let { names += AttributedValue(it, "Keybase") }
             usernames += AttributedValue(kb.username, "Keybase")
@@ -151,17 +145,29 @@ object EmailAttributionEngine {
             links += kb.proofs
         }
 
-        // 4. OpenPGP Keyserver Attribution
+        // 3. OpenPGP & ProtonMail Keyserver Attribution
         openPgpDef.await()?.let { pgp ->
             links += AttributedProfileLink(pgp.email, "OpenPGP Key", pgp.profileUrl)
             timeline += TimelineEvent("Public Key Verified", "OpenPGP Key Found", "OpenPGP Keyserver")
         }
         runCatching { pgpKeysDef.await() }.getOrNull()?.forEach { record ->
+            record.createdDate?.let { timeline += TimelineEvent(it, "PGP Key Created", "Ubuntu OpenPGP") }
             record.uids.forEach { uid ->
                 extractNameFromPgpUid(uid)?.let { name ->
                     names += AttributedValue(name, "OpenPGP Key")
                 }
             }
+        }
+        protonPksDef.await()?.let { (createdDate, uidName) ->
+            createdDate?.let { timeline += TimelineEvent(it, "ProtonMail Encryption Key Created", "ProtonMail PKS") }
+            uidName?.let { names += AttributedValue(it, "ProtonMail PKS") }
+        }
+
+        // 4. npm Maintainer Attribution
+        npmEmailDef.await().forEach { npm ->
+            usernames += AttributedValue(npm.username, "npm Registry")
+            links += AttributedProfileLink(npm.username, "npm (${npm.packageName})", "https://www.npmjs.com/~${npm.username}")
+            npm.authorName?.let { names += AttributedValue(it, "npm Registry") }
         }
 
         // 5. MyFitnessPal Handle Check
@@ -211,7 +217,7 @@ object EmailAttributionEngine {
             }
         }
 
-        // 9. Public profiles for the email's handle
+        // 9. Public profiles for the email's handle & variants
         handleDef?.await().orEmpty().forEach { profile ->
             profile.name?.let { names += AttributedValue(it, profile.platform) }
             usernames += AttributedValue(profile.username, profile.platform)
@@ -222,29 +228,26 @@ object EmailAttributionEngine {
             profile.lastActive?.let { timeline += TimelineEvent(it, "Last Active", profile.platform) }
         }
 
-        // 10. HudsonRock Infostealer Profile + Masked IP Geolocation
+        // 10. HudsonRock Infostealer Profile (All stealer entries + Masked IP Geolocation)
         val stealer = hudsonDef.await()
         if (stealer != null) {
-            stealer.computerUsername?.let { u ->
-                usernames += AttributedValue(u, "Stealer Log")
+            stealer.allUsernames.forEach { u ->
+                if (!u.startsWith("DESKTOP-", ignoreCase = true) && !u.startsWith("LAPTOP-", ignoreCase = true)) {
+                    usernames += AttributedValue(u, "Stealer Log")
+                }
             }
-            extractNameTokensFromIdentifier(handle).forEach { n ->
-                names += AttributedValue(n, "Stealer Log")
+            stealer.allDates.forEach { d ->
+                timeline += TimelineEvent(d, "Compromised in Stealer Log", "HudsonRock")
             }
-            stealer.dateCompromised?.let {
-                timeline += TimelineEvent(it, "Compromised in Stealer Log", "HudsonRock")
-            }
-            stealer.maskedIp?.let { ip ->
+            stealer.allMaskedIps.forEach { ip ->
                 resolveMaskedIpLocation(ip)?.let { geo ->
-                    locations += AttributedValue(geo, "Stealer Log")
+                    locations += AttributedValue(geo, "Stealer Log ($ip)")
                 }
             }
         }
 
-        // 11. SECOND-HOP PIVOT: Scrape discovered usernames
-        // for profiles, bios, GitHub repo locations, and web mentions!
-        val pivotHandles = usernames
-            .map { it.value.removePrefix("@").trim() }
+        // 11. SECOND-HOP PIVOT: Scrape discovered usernames for profiles, bios, repos & locations
+        val pivotHandles = (usernames.map { it.value.removePrefix("@").trim() } + handleVariants)
             .filter { isDistinctiveHandle(it) }
             .distinctBy { it.lowercase() }
             .take(5)
@@ -293,6 +296,40 @@ object EmailAttributionEngine {
             }
         }
 
+        // STAGE 2: Run GoogleMetadataExtractor WITH the discovered real names & locations!
+        val discoveredRealNames = names.map { it.value }.filter { ' ' in it && it.length >= 5 }.distinct()
+        val discoveredLocations = locations.map { it.value }.distinct()
+        val google = runCatching {
+            GoogleMetadataExtractor.extract(
+                email = clean,
+                hintNames = discoveredRealNames,
+                hintLocations = discoveredLocations
+            )
+        }.getOrNull()
+
+        if (google != null) {
+            google.fullName?.let { names += AttributedValue(it, "Google") }
+            google.playGamesUsername?.let { usernames += AttributedValue(it, "Google Play Games") }
+            google.profileUrl?.let { url ->
+                links += AttributedProfileLink(google.fullName ?: "Google Profile", "Google Maps", url)
+            }
+            google.avatarUrl?.let { avatars += it }
+            google.mappedLocations.forEach { loc ->
+                locations += AttributedValue(loc, "Google Maps")
+            }
+            google.reviews.forEach { rev ->
+                rev.timestampIso?.let { iso ->
+                    timeline += TimelineEvent(iso, "Reviewed ${rev.title} (${rev.ratingLabel})", "Google Maps")
+                }
+            }
+            google.lastSeenDate?.let {
+                timeline += TimelineEvent(it, "Last Active", "Google / Maps")
+            }
+            google.lastLevelUpDate?.let {
+                timeline += TimelineEvent(it, "Last Level Up", "Google Play Games")
+            }
+        }
+
         // 12. Infer UK Area Locations from any discovered UK landline numbers
         phones.forEach { pv ->
             val norm = PhoneNumberUtils.normalize(pv.value)
@@ -303,7 +340,7 @@ object EmailAttributionEngine {
         }
 
         val filteredNames = names
-            .filterNot { it.value.startsWith("DESKTOP-", ignoreCase = true) }
+            .filterNot { it.value.startsWith("DESKTOP-", ignoreCase = true) || it.value.startsWith("LAPTOP-", ignoreCase = true) }
             .distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
 
         val filteredPhones = phones
@@ -326,10 +363,46 @@ object EmailAttributionEngine {
         )
     }
 
+    private data class NpmEmailHit(val username: String, val authorName: String?, val packageName: String)
+
+    private fun lookupNpmByEmail(email: String): List<NpmEmailHit> {
+        val url = "https://registry.npmjs.org/-/v1/search?text=${ScanHttp.encode(email)}&size=5"
+        val resp = ScanHttp.get(url, timeoutMs = 8_000, headers = mapOf("Accept" to "application/json"))
+        if (!resp.isOk || resp.body.isBlank()) return emptyList()
+        return runCatching {
+            val objects = JSONObject(resp.body).optJSONArray("objects") ?: return emptyList()
+            val hits = mutableListOf<NpmEmailHit>()
+            for (i in 0 until objects.length()) {
+                val pkg = objects.optJSONObject(i)?.optJSONObject("package") ?: continue
+                val pkgName = pkg.optString("name")
+                val authorName = pkg.optJSONObject("author")?.optString("name")?.takeIf { it.isNotBlank() }
+                val maintainers = pkg.optJSONArray("maintainers") ?: continue
+                for (j in 0 until maintainers.length()) {
+                    val m = maintainers.optJSONObject(j) ?: continue
+                    if (m.optString("email").equals(email, ignoreCase = true)) {
+                        val user = m.optString("username").takeIf { it.isNotBlank() } ?: continue
+                        hits += NpmEmailHit(user, authorName, pkgName)
+                    }
+                }
+            }
+            hits.distinctBy { it.username.lowercase() }
+        }.getOrDefault(emptyList())
+    }
+
     /**
-     * Resolves a HudsonRock masked IP (e.g. "81.104.***.***") by substituting ".1.1" for masked
-     * octets in the /16 ISP block and querying ipwho.is for the ISP/country/region.
+     * Queries ProtonMail's public keyserver (`api.protonmail.ch/pks/lookup?op=index&search=`)
+     * to extract the exact PGP key creation date and display name for ProtonMail/custom Proton addresses.
      */
+    private fun lookupProtonMailKeyCreation(email: String): Pair<String?, String?>? {
+        val url = "https://api.protonmail.ch/pks/lookup?op=index&search=${ScanHttp.encode(email)}"
+        val resp = ScanHttp.get(url, timeoutMs = 8_000)
+        if (!resp.isOk || !resp.body.contains("pub:")) return null
+        val records = IdentityEnricher.parsePgpMachineReadable(resp.body)
+        val first = records.firstOrNull() ?: return null
+        val uidName = first.uids.firstNotNullOfOrNull { extractNameFromPgpUid(it) }
+        return first.createdDate to uidName
+    }
+
     internal fun resolveMaskedIpLocation(maskedIp: String): String? {
         val parts = maskedIp.trim().split('.')
         if (parts.size != 4) return null
@@ -353,10 +426,6 @@ object EmailAttributionEngine {
         }.getOrNull()
     }
 
-    /**
-     * Scans a discovered GitHub user's public repositories and recent events for location/region
-     * names and phone numbers (e.g. regional UK data projects or contact info in repo descriptions).
-     */
     private fun scrapeGitHubUserReposForLocationAndPhone(login: String): Pair<List<AttributedValue>, List<AttributedValue>> {
         val locs = mutableListOf<AttributedValue>()
         val phones = mutableListOf<AttributedValue>()
@@ -430,7 +499,8 @@ object EmailAttributionEngine {
         val updatedAt: String?,
         val location: String? = null,
         val bio: String? = null,
-        val inferredTimezoneLocation: String? = null
+        val inferredTimezoneLocation: String? = null,
+        val extraNames: List<String> = emptyList()
     )
 
     private fun lookupGitHubByEmail(email: String): GitHubEmailMatch? {
@@ -438,37 +508,45 @@ object EmailAttributionEngine {
         var login: String? = null
         var commitAuthorName: String? = null
         var commitTzLocation: String? = null
+        val extraNames = LinkedHashSet<String>()
 
-        val commitResp = ScanHttp.get(
-            "https://api.github.com/search/commits?per_page=5&q=author-email:$encoded",
-            timeoutMs = 12_000,
-            headers = GITHUB_HEADERS
-        )
-        if (commitResp.isOk && commitResp.body.isNotBlank()) {
-            runCatching {
-                val items = JSONObject(commitResp.body).optJSONArray("items")
-                if (items != null && items.length() > 0) {
-                    for (i in 0 until items.length()) {
-                        val item = items.optJSONObject(i) ?: continue
-                        if (login == null) {
-                            login = item.optJSONObject("author")?.optString("login")?.takeIf { it.isNotBlank() }
-                        }
-                        val authorObj = item.optJSONObject("commit")?.optJSONObject("author")
-                        val dateStr = authorObj?.optString("date").orEmpty()
-                        if (commitTzLocation == null && dateStr.length >= 6) {
-                            val tzOffset = dateStr.takeLast(6)
-                            commitTzLocation = mapIsoOffsetToRegionHint(tzOffset)
-                        }
-                        val nameCandidate = authorObj?.optString("name")?.trim()
-                        if (!nameCandidate.isNullOrBlank() && !nameCandidate.equals(login, ignoreCase = true)) {
-                            commitAuthorName = nameCandidate
-                            break
-                        } else if (commitAuthorName == null && !nameCandidate.isNullOrBlank()) {
-                            commitAuthorName = nameCandidate
+        // Search both author-email and committer-email
+        for (qualifier in listOf("author-email", "committer-email")) {
+            val commitResp = ScanHttp.get(
+                "https://api.github.com/search/commits?per_page=5&q=$qualifier:$encoded",
+                timeoutMs = 10_000,
+                headers = GITHUB_HEADERS
+            )
+            if (commitResp.isOk && commitResp.body.isNotBlank()) {
+                runCatching {
+                    val items = JSONObject(commitResp.body).optJSONArray("items")
+                    if (items != null && items.length() > 0) {
+                        for (i in 0 until items.length()) {
+                            val item = items.optJSONObject(i) ?: continue
+                            if (login == null) {
+                                login = item.optJSONObject("author")?.optString("login")?.takeIf { it.isNotBlank() }
+                                    ?: item.optJSONObject("committer")?.optString("login")?.takeIf { it.isNotBlank() }
+                            }
+                            val authorObj = item.optJSONObject("commit")?.optJSONObject("author")
+                            val dateStr = authorObj?.optString("date").orEmpty()
+                            if (commitTzLocation == null && dateStr.length >= 6) {
+                                commitTzLocation = mapIsoOffsetToRegionHint(dateStr.takeLast(6))
+                            }
+                            val nameCandidate = authorObj?.optString("name")?.trim()
+                            if (!nameCandidate.isNullOrBlank() && !nameCandidate.equals(login, ignoreCase = true)) {
+                                if (commitAuthorName == null || (' ' in nameCandidate && ' ' !in commitAuthorName)) {
+                                    commitAuthorName = nameCandidate
+                                } else {
+                                    extraNames += nameCandidate
+                                }
+                            } else if (commitAuthorName == null && !nameCandidate.isNullOrBlank()) {
+                                commitAuthorName = nameCandidate
+                            }
                         }
                     }
                 }
             }
+            if (login != null) break
         }
 
         if (login == null) {
@@ -488,6 +566,24 @@ object EmailAttributionEngine {
         }
 
         val resolvedLogin = login ?: return null
+
+        // Also inspect public push events to extract real commit author names
+        val eventsResp = ScanHttp.get(
+            "https://api.github.com/users/${ScanHttp.encode(resolvedLogin)}/events/public?per_page=30",
+            timeoutMs = 8_000,
+            headers = GITHUB_HEADERS
+        )
+        if (eventsResp.isOk && eventsResp.body.isNotBlank()) {
+            runCatching {
+                GitHubOsint.extractCommitIdentities(JSONArray(eventsResp.body)).forEach { id ->
+                    val namePart = id.substringBefore('<').trim()
+                    if (namePart.isNotBlank() && !namePart.equals(resolvedLogin, ignoreCase = true)) {
+                        extraNames += namePart
+                    }
+                }
+            }
+        }
+
         val profileResp = ScanHttp.get(
             "https://api.github.com/users/${ScanHttp.encode(resolvedLogin)}",
             timeoutMs = 10_000,
@@ -501,7 +597,8 @@ object EmailAttributionEngine {
                 avatarUrl = null,
                 createdAt = null,
                 updatedAt = null,
-                inferredTimezoneLocation = commitTzLocation
+                inferredTimezoneLocation = commitTzLocation,
+                extraNames = extraNames.toList()
             )
         }
 
@@ -522,7 +619,8 @@ object EmailAttributionEngine {
                 updatedAt = root.optString("updated_at").substringBefore('T').takeIf { it.isNotBlank() },
                 location = root.optString("location").takeIf { it.isNotBlank() && it != "null" },
                 bio = root.optString("bio").takeIf { it.isNotBlank() && it != "null" },
-                inferredTimezoneLocation = commitTzLocation
+                inferredTimezoneLocation = commitTzLocation,
+                extraNames = extraNames.toList()
             )
         }.getOrNull()
     }
@@ -605,8 +703,6 @@ object EmailAttributionEngine {
         }.getOrNull()
     }
 
-    // Matches masked numbers ("+44 *******89", "07*** ****89"), international numbers,
-    // spaced/unspaced UK mobiles ("07123 456789"), and UK landlines ("01724 123456", "020 7946 0958")
     private val MASKED_PHONE_REGEX = Regex("""(?:\+\d{1,4}[\s.-]*)?(?:[\*•xX]{2,6}[-\s.]*)+\d{2,4}""")
     private val INT_PHONE_REGEX = Regex("""\+\d{1,4}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{2,4}[-.\s]?\d{3,6}""")
     private val UK_MOBILE_REGEX = Regex("""\b07\d{3}[\s.-]?\d{3}[\s.-]?\d{3}\b|\b07\d{9}\b""")
@@ -782,17 +878,41 @@ object EmailAttributionEngine {
         if (!resp.isOk || resp.body.isBlank()) return null
         return runCatching {
             val stealers = JSONObject(resp.body).optJSONArray("stealers") ?: return null
-            val s = stealers.optJSONObject(0) ?: return null
-            val user = s.optString("username").takeIf { it.isNotBlank() && it != "null" }
-                ?: s.optString("computer_name").takeIf { it.isNotBlank() && it != "null" }
-            val ip = s.optString("ip").takeIf { it.isNotBlank() && it != "null" }
-            val os = s.optString("operating_system").takeIf { it.isNotBlank() && it != "null" }
-            val date = s.optString("date_compromised").substringBefore('T').takeIf { it.isNotBlank() }
-            val avArr = s.optJSONArray("antiviruses")
-            val avs = if (avArr != null) {
-                (0 until avArr.length()).mapNotNull { avArr.optString(it).takeIf { a -> a.isNotBlank() } }
-            } else emptyList()
-            StealerSubjectProfile(user, ip, os, date, avs)
+            if (stealers.length() == 0) return null
+
+            val allUsers = LinkedHashSet<String>()
+            val allIps = LinkedHashSet<String>()
+            val allDates = LinkedHashSet<String>()
+            val allAvs = LinkedHashSet<String>()
+            var primaryOs: String? = null
+
+            for (i in 0 until stealers.length()) {
+                val s = stealers.optJSONObject(i) ?: continue
+                s.optString("username").takeIf { it.isNotBlank() && it != "null" }?.let { allUsers += it }
+                s.optString("computer_name").takeIf { it.isNotBlank() && it != "null" }?.let { allUsers += it }
+                s.optString("ip").takeIf { it.isNotBlank() && it != "null" }?.let { allIps += it }
+                s.optString("date_compromised").substringBefore('T').takeIf { it.isNotBlank() }?.let { allDates += it }
+                if (primaryOs == null) {
+                    primaryOs = s.optString("operating_system").takeIf { it.isNotBlank() && it != "null" }
+                }
+                val avArr = s.optJSONArray("antiviruses")
+                if (avArr != null) {
+                    for (j in 0 until avArr.length()) {
+                        avArr.optString(j).takeIf { a -> a.isNotBlank() }?.let { allAvs += it }
+                    }
+                }
+            }
+
+            StealerSubjectProfile(
+                computerUsername = allUsers.firstOrNull(),
+                maskedIp = allIps.firstOrNull(),
+                operatingSystem = primaryOs,
+                dateCompromised = allDates.firstOrNull(),
+                antiviruses = allAvs.toList(),
+                allUsernames = allUsers.toList(),
+                allMaskedIps = allIps.toList(),
+                allDates = allDates.toList()
+            )
         }.getOrNull()
     }
 

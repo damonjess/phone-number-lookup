@@ -350,7 +350,18 @@ object OsintPilotEngine {
 
         // 7. Google & Web Comment Scraper (comments, forum posts, replies, reviews)
         val commentsDef = async {
-            runCatching { GoogleCommentScraper.scrapeForEmail(email) }.getOrNull()
+            val att = attrDef.await()
+            val discoveredNames = att?.namesFound?.map { it.value }?.distinct().orEmpty()
+            val discoveredHandles = att?.usernamesFound?.map { it.value.removePrefix("@") }?.distinct().orEmpty()
+            val discoveredLocations = att?.locationsFound?.map { it.value }?.distinct().orEmpty()
+            runCatching {
+                GoogleCommentScraper.scrapeForEmail(
+                    email = email,
+                    knownDisplayNames = discoveredNames,
+                    knownHandles = discoveredHandles,
+                    knownLocations = discoveredLocations
+                )
+            }.getOrNull()
         }
 
         // Await Attribution
