@@ -106,8 +106,14 @@ object EmailAttributionEngine {
         google.profileUrl?.let { url ->
             links += AttributedProfileLink(google.fullName ?: "Google Profile", "Google Maps", url)
         }
+        google.avatarUrl?.let { avatars += it }
         google.mappedLocations.forEach { loc ->
             locations += AttributedValue(loc, "Google")
+        }
+        google.reviews.forEach { rev ->
+            rev.timestampIso?.let { iso ->
+                timeline += TimelineEvent(iso, "Reviewed ${rev.title} (${rev.ratingLabel})", "Google Maps")
+            }
         }
         google.lastSeenDate?.let {
             timeline += TimelineEvent(it, "Last Active", "Google / Play Games")
@@ -197,6 +203,7 @@ object EmailAttributionEngine {
         if (webReport != null) {
             phones += webReport.extractedPhones
             usernames += webReport.extractedHandles
+            locations += webReport.extractedLocations
             webReport.results.forEach { result ->
                 val blob = "${result.title} ${result.snippet}"
                 phones += extractPhoneNumbersFromText(blob, result.source)
@@ -217,17 +224,24 @@ object EmailAttributionEngine {
 
         // 10. HudsonRock Infostealer Profile + Masked IP Geolocation
         val stealer = hudsonDef.await()
-        stealer?.computerUsername?.let { names += AttributedValue(it, "Stealer Log") }
-        stealer?.dateCompromised?.let {
-            timeline += TimelineEvent(it, "Stealer Log", "HudsonRock")
-        }
-        stealer?.maskedIp?.let { ip ->
-            resolveMaskedIpLocation(ip)?.let { geo ->
-                locations += AttributedValue(geo, "HudsonRock IP ($ip)")
+        if (stealer != null) {
+            stealer.computerUsername?.let { u ->
+                usernames += AttributedValue(u, "Stealer Log")
+            }
+            extractNameTokensFromIdentifier(handle).forEach { n ->
+                names += AttributedValue(n, "Stealer Log")
+            }
+            stealer.dateCompromised?.let {
+                timeline += TimelineEvent(it, "Compromised in Stealer Log", "HudsonRock")
+            }
+            stealer.maskedIp?.let { ip ->
+                resolveMaskedIpLocation(ip)?.let { geo ->
+                    locations += AttributedValue(geo, "Stealer Log")
+                }
             }
         }
 
-        // 11. SECOND-HOP PIVOT: Scrape discovered usernames (e.g., damonjess, @damonkirby89)
+        // 11. SECOND-HOP PIVOT: Scrape discovered usernames
         // for profiles, bios, GitHub repo locations, and web mentions!
         val pivotHandles = usernames
             .map { it.value.removePrefix("@").trim() }
@@ -264,6 +278,7 @@ object EmailAttributionEngine {
 
                 pivotWebJob.await()?.let { pw ->
                     phones += pw.extractedPhones
+                    locations += pw.extractedLocations
                     pw.results.forEach { item ->
                         val blob = "${item.title} ${item.snippet}"
                         phones += extractPhoneNumbersFromText(blob, item.source)
@@ -328,12 +343,12 @@ object EmailAttributionEngine {
             val json = JSONObject(resp.body)
             if (!json.optBoolean("success", false)) return null
             val country = json.optString("country").takeIf { it.isNotBlank() } ?: return null
-            val region = json.optString("region").takeIf { it.isNotBlank() }
-            val isp = json.optJSONObject("connection")?.optString("isp")?.takeIf { it.isNotBlank() }
+            val region = json.optString("region").takeIf { it.isNotBlank() }?.replace(Regex("""\s*\[.*?\]"""), "")?.trim()
+            val city = json.optString("city").takeIf { it.isNotBlank() }
             buildString {
-                if (region != null && !maskedIp.contains("*")) append("$region, ")
+                if (city != null) append("$city, ")
+                if (region != null && region != city) append("$region, ")
                 append(country)
-                if (isp != null) append(" (ISP block: $isp)")
             }
         }.getOrNull()
     }
@@ -598,10 +613,18 @@ object EmailAttributionEngine {
     private val UK_LANDLINE_REGEX = Regex("""\b0(?:1\d{2,4}|2[03489]|3\d{2}|800)[\s.-]?\d{3,4}[\s.-]?\d{3,4}\b""")
 
     private val UK_LOCATION_KEYWORDS = Regex(
-        """\b(Scunthorpe|North Lincolnshire|Lincolnshire|Humberside|Barton-upon-Humber|Grimsby|Hull|Doncaster|Sheffield|Leeds|Yorkshire|Manchester|London|Birmingham|Liverpool|Nottingham|Bristol|Newcastle|Glasgow|Edinburgh|Cardiff|Belfast|United Kingdom|England|Scotland|Wales)\b""",
+        """\b(Scunthorpe|North Lincolnshire|Lincolnshire|Humberside|Barton-upon-Humber|Grimsby|Hull|Cottingham|Doncaster|Sheffield|Leeds|Yorkshire|Manchester|London|Birmingham|Liverpool|Nottingham|Bristol|Newcastle|Glasgow|Edinburgh|Cardiff|Belfast|United Kingdom|England|Scotland|Wales)\b""",
         RegexOption.IGNORE_CASE
     )
     private val UK_POSTCODE_REGEX = Regex("""\b([A-Z]{1,2}\d[A-Z\d]?\s+\d[A-Z]{2})\b""")
+    private val FULL_UK_ADDRESS_REGEX = Regex(
+        """\b(\d+[\w\s]+(?:Rd|Road|St|Street|Ave|Avenue|Lane|Way|Close|Drive|Dr|Court|Ct|High St),?[\w\s,]+(?:[A-Z]{1,2}\d[A-Z\d]?\s+\d[A-Z]{2})(?:,\s*(?:United Kingdom|UK))?)\b""",
+        RegexOption.IGNORE_CASE
+    )
+    private val CITY_REGION_COUNTRY_REGEX = Regex(
+        """\b([A-Z][a-z]+(?:[\s-][A-Z][a-z]+)*,\s*(?:England|Scotland|Wales|Northern Ireland|Yorkshire|Humberside|Lincolnshire),\s*(?:United Kingdom|UK))\b""",
+        RegexOption.IGNORE_CASE
+    )
 
     internal fun extractPhoneNumbersFromText(text: String, sourceName: String): List<AttributedValue> {
         val out = mutableListOf<AttributedValue>()
@@ -631,14 +654,51 @@ object EmailAttributionEngine {
     internal fun extractLocationsFromText(text: String, sourceName: String): List<AttributedValue> {
         if (text.isBlank()) return emptyList()
         val out = mutableListOf<AttributedValue>()
+        FULL_UK_ADDRESS_REGEX.findAll(text).forEach { m ->
+            out += AttributedValue(m.value.trim().replace(Regex("\\s+"), " "), sourceName)
+        }
+        CITY_REGION_COUNTRY_REGEX.findAll(text).forEach { m ->
+            out += AttributedValue(m.value.trim().replace(Regex("\\s+"), " "), sourceName)
+        }
         UK_LOCATION_KEYWORDS.findAll(text).forEach { m ->
             val loc = m.value.trim().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-            out += AttributedValue(loc, sourceName)
+            if (out.none { it.value.contains(loc, ignoreCase = true) }) {
+                out += AttributedValue(loc, sourceName)
+            }
         }
         UK_POSTCODE_REGEX.findAll(text).forEach { m ->
-            out += AttributedValue("UK Postcode: ${m.value.trim()}", sourceName)
+            val pc = m.value.trim()
+            if (out.none { it.value.contains(pc, ignoreCase = true) }) {
+                out += AttributedValue("UK Postcode: $pc", sourceName)
+            }
         }
         return out
+    }
+
+    internal fun extractNameTokensFromIdentifier(handle: String): List<String> {
+        val clean = handle.trim().replace(Regex("\\d+$"), "").replace(Regex("[-._]+"), " ")
+        val tokens = clean.split(' ').map { it.trim().lowercase() }.filter { it.length >= 3 }
+        if (tokens.size == 1) {
+            val single = tokens[0]
+            val commonNames = listOf("alex", "john", "smith", "david", "james", "michael", "robert", "william", "chris")
+            val matches = mutableListOf<String>()
+            var rem = single
+            for (cn in commonNames) {
+                if (rem.startsWith(cn)) {
+                    matches += cn.replaceFirstChar { it.titlecase() }
+                    rem = rem.substring(cn.length)
+                } else if (rem.endsWith(cn)) {
+                    val prefix = rem.substring(0, rem.length - cn.length)
+                    if (prefix.length >= 3) {
+                        matches += prefix.replaceFirstChar { it.titlecase() }
+                    }
+                    matches += cn.replaceFirstChar { it.titlecase() }
+                    break
+                }
+            }
+            if (matches.isNotEmpty()) return matches
+        }
+        return tokens.map { it.replaceFirstChar { c -> c.titlecase() } }
     }
 
     internal fun extractNameFromPgpUid(uid: String): String? {

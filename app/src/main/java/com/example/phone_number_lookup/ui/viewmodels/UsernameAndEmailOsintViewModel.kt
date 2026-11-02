@@ -14,6 +14,8 @@ import com.example.phone_number_lookup.EmailDomainScanner
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.EmailScanner
 import com.example.phone_number_lookup.EnrichedProfileCard
+import com.example.phone_number_lookup.GoogleCommentReport
+import com.example.phone_number_lookup.GoogleCommentScraper
 import com.example.phone_number_lookup.GoogleMetadataExtractor
 import com.example.phone_number_lookup.GoogleMetadataReport
 import com.example.phone_number_lookup.IdentityEnricher
@@ -79,6 +81,8 @@ data class UsernameAndEmailOsintUiState(
     val isAttributionScanning: Boolean = false,
     val enrichedProfiles: List<EnrichedProfileCard> = emptyList(),
     val openWebReport: ScrapedWebReport? = null,
+    val googleCommentReport: GoogleCommentReport? = null,
+    val isCommentScraping: Boolean = false,
 )
 
 class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewModel(application) {
@@ -94,7 +98,8 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             UsernameAndEmailOsintUiState(
                 subTabState = tabIndex,
                 scanDepth = it.scanDepth,
-                pythonToolMode = it.pythonToolMode
+                pythonToolMode = it.pythonToolMode,
+                targetInput = it.targetInput
             )
         }
     }
@@ -157,6 +162,8 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isAttributionScanning = false,
                 enrichedProfiles = emptyList(),
                 openWebReport = null,
+                googleCommentReport = null,
+                isCommentScraping = false,
             )
         }
 
@@ -265,6 +272,13 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                         openWebReport = webMentions
                     )
                 }
+                if (webMentions != null) {
+                    mergeIntoAttribution(
+                        extraPhones = webMentions.extractedPhones,
+                        extraUsernames = webMentions.extractedHandles,
+                        extraLocations = webMentions.extractedLocations
+                    )
+                }
             }
         }
 
@@ -286,8 +300,20 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 isDomainScanning = true,
                 isEnrichingIdentity = true,
                 isGoogleMetadataScanning = true,
-                isAttributionScanning = true
+                isAttributionScanning = true,
+                isCommentScraping = true
             )
+        }
+
+        scans.start(token) { active ->
+            val commentReport = runCatching {
+                GoogleCommentScraper.scrapeForEmail(target)
+            }.getOrNull()
+            if (scans.isCurrent(active)) {
+                _uiState.update {
+                    it.copy(googleCommentReport = commentReport, isCommentScraping = false)
+                }
+            }
         }
 
         scans.start(token) { active ->
@@ -303,6 +329,11 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             if (scans.isCurrent(active)) {
                 _uiState.update {
                     it.copy(googleMetadata = meta, isGoogleMetadataScanning = false)
+                }
+                val googleNames = listOfNotNull(meta.fullName?.let { com.example.phone_number_lookup.AttributedValue(it, "Google") })
+                val googleLocations = meta.mappedLocations.map { com.example.phone_number_lookup.AttributedValue(it, "Google") }
+                if (googleNames.isNotEmpty() || googleLocations.isNotEmpty()) {
+                    mergeIntoAttribution(extraNames = googleNames, extraLocations = googleLocations)
                 }
             }
         }
@@ -387,12 +418,15 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             val attribution = EmailAttributionEngine.analyze(target)
             if (scans.isCurrent(active)) {
                 _uiState.update { it.copy(attributionReport = attribution, isAttributionScanning = false) }
-                // Re-merge any already-finished web or dossier hits
+                // Re-merge any already-finished Google metadata, web, or dossier hits
                 val cur = _uiState.value
                 mergeIntoAttribution(
                     extraPhones = cur.openWebReport?.extractedPhones.orEmpty() +
                         cur.enrichedProfiles.flatMap { c -> c.discoveredPhones.map { com.example.phone_number_lookup.AttributedValue(it, c.platform) } },
-                    extraLocations = cur.enrichedProfiles.mapNotNull { c -> c.location?.let { com.example.phone_number_lookup.AttributedValue(it, c.platform) } }
+                    extraLocations = cur.googleMetadata?.mappedLocations.orEmpty().map { com.example.phone_number_lookup.AttributedValue(it, "Google") } +
+                        cur.openWebReport?.extractedLocations.orEmpty() +
+                        cur.enrichedProfiles.mapNotNull { c -> c.location?.let { com.example.phone_number_lookup.AttributedValue(it, c.platform) } },
+                    extraNames = listOfNotNull(cur.googleMetadata?.fullName?.let { com.example.phone_number_lookup.AttributedValue(it, "Google") })
                 )
             }
         }
@@ -403,19 +437,45 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
                 _uiState.update {
                     it.copy(identityEnrichment = enrichment, isEnrichingIdentity = false)
                 }
+                val kbNames = buildList {
+                    enrichment.keybaseDisplayName?.let {
+                        add(com.example.phone_number_lookup.AttributedValue(it, "Keybase"))
+                    }
+                    enrichment.pgpRecords.flatMap { it.uids }.forEach { uid ->
+                        val namePart = uid.substringBefore('<').trim()
+                        if (namePart.isNotBlank() && !namePart.contains('@')) {
+                            add(com.example.phone_number_lookup.AttributedValue(namePart, "OpenPGP Keyserver"))
+                        }
+                    }
+                }
+                val kbHandles = enrichment.keybaseProofs.map { proof ->
+                    com.example.phone_number_lookup.AttributedValue(proof.handle, "Keybase (${proof.service})")
+                }
+                if (kbNames.isNotEmpty() || kbHandles.isNotEmpty()) {
+                    mergeIntoAttribution(extraNames = kbNames, extraUsernames = kbHandles)
+                }
             }
         }
 
         scans.start(token) { active ->
             val handle = EmailRegistrationScanner.localPart(target)
-            val queries = listOfNotNull(target, handle?.takeIf { it.length >= 4 })
+            val queries = buildList {
+                add(target)
+                add("\"$target\"")
+                if (handle != null && handle.length >= 4) {
+                    add(handle)
+                    add("\"$handle\"")
+                    add("$handle comment OR forum OR review")
+                }
+            }.distinct()
             val openWeb = runCatching { OpenWebOsintScraper.scrapeAll(queries) }.getOrNull()
             if (scans.isCurrent(active)) {
                 _uiState.update { it.copy(openWebReport = openWeb) }
                 if (openWeb != null) {
                     mergeIntoAttribution(
                         extraPhones = openWeb.extractedPhones,
-                        extraUsernames = openWeb.extractedHandles
+                        extraUsernames = openWeb.extractedHandles,
+                        extraLocations = openWeb.extractedLocations
                     )
                 }
             }

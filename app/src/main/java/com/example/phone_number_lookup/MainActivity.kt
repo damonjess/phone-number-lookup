@@ -46,6 +46,7 @@ import com.example.phone_number_lookup.ui.components.SegmentedTabs
 import com.example.phone_number_lookup.ui.components.Space
 import com.example.phone_number_lookup.ui.components.Tone
 import com.example.phone_number_lookup.ui.screens.GitHubOsintScreen
+import com.example.phone_number_lookup.ui.screens.OsintPilotScreen
 import com.example.phone_number_lookup.ui.screens.PhoneLookupScreen
 import com.example.phone_number_lookup.ui.screens.UsernameAndEmailOsintScreen
 import com.example.phone_number_lookup.ui.theme.PhonenumberlookupTheme
@@ -68,6 +69,7 @@ private data class AppTab(val label: String, val icon: ImageVector)
 fun NumberFinderApp(modifier: Modifier = Modifier) {
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf(
+        AppTab("Pilot", Icons.Filled.Search),
         AppTab("Phone", Icons.Filled.Phone),
         AppTab("Profiles", Icons.Filled.Person),
         AppTab("GitHub", Icons.Filled.Search),
@@ -97,8 +99,9 @@ fun NumberFinderApp(modifier: Modifier = Modifier) {
                 .fillMaxSize()
                 .widthIn(max = 600.dp)
             when (selectedTabIndex) {
-                0 -> PhoneLookupScreen(modifier = contentModifier)
-                1 -> UsernameAndEmailOsintScreen(modifier = contentModifier)
+                0 -> OsintPilotScreen(modifier = contentModifier)
+                1 -> PhoneLookupScreen(modifier = contentModifier)
+                2 -> UsernameAndEmailOsintScreen(modifier = contentModifier)
                 else -> GitHubOsintScreen(modifier = contentModifier)
             }
         }
@@ -130,12 +133,12 @@ private fun AppHeaderBar(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "PHONE",
+                            text = "OSINT",
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                         Text(
-                            text = "//OSINT",
+                            text = "//PILOT",
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -148,13 +151,13 @@ private fun AppHeaderBar(
                         )
                     }
                     Text(
-                        text = "ON-DEVICE RECON · NO ACCOUNT",
+                        text = "AUTONOMOUS INVESTIGATIONS · PENTESTER ARCHITECTURE",
                         style = MaterialTheme.typography.labelSmall,
-                        letterSpacing = 1.6.sp,
+                        letterSpacing = 1.4.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Pill("LOCAL", tone = Tone.ACCENT)
+                Pill("PILOT v1", tone = Tone.ACCENT)
             }
 
             SegmentedTabs(

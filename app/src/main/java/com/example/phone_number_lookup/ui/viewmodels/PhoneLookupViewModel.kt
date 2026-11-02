@@ -59,6 +59,7 @@ data class PhoneLookupUiState(
     val sourceHealth: List<SourceHealthResult> = emptyList(),
     val isCheckingHealth: Boolean = false,
     val deepFootprint: DeepPhoneOsintReport? = null,
+    val isDeepFootprintScanning: Boolean = false,
 )
 
 class PhoneLookupViewModel(application: Application) : AndroidViewModel(application) {
@@ -111,6 +112,7 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                 phoneInfogaReport = null,
                 isPhoneInfogaServerRunning = false,
                 deepFootprint = null,
+                isDeepFootprintScanning = true,
             )
         }
         phoneInfogaJob?.cancel()
@@ -191,17 +193,21 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         scans.start(token) { active ->
             val footprint = runCatching {
                 PhoneDirectoryScraper.scrapePhoneFootprint(normalized)
-            }.getOrNull() ?: return@start
+            }.getOrNull()
 
             if (scans.isCurrent(active)) {
                 _uiState.update { state ->
-                    val mergedSearch = (state.searchResults + footprint.extraWebResults)
-                        .distinctBy { it.url.lowercase().trimEnd('/') }
+                    val mergedSearch = if (footprint != null) {
+                        (state.searchResults + footprint.extraWebResults)
+                            .distinctBy { it.url.lowercase().trimEnd('/') }
+                    } else state.searchResults
+
                     state.copy(
-                        deepFootprint = footprint,
+                        deepFootprint = footprint ?: state.deepFootprint,
                         searchResults = mergedSearch,
                         searchError = if (mergedSearch.isNotEmpty()) null else state.searchError,
-                        isPrefixWebFallback = if (footprint.extraWebResults.isNotEmpty()) false else state.isPrefixWebFallback
+                        isPrefixWebFallback = if (footprint?.extraWebResults?.isNotEmpty() == true) false else state.isPrefixWebFallback,
+                        isDeepFootprintScanning = false
                     )
                 }
                 refreshVerdict()

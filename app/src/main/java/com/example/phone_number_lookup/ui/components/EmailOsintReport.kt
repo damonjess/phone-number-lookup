@@ -196,7 +196,7 @@ fun EmailIdentitySummarySection(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        photos.take(25).forEachIndexed { index, url ->
+                        photos.forEachIndexed { index, url ->
                             AsyncImage(
                                 model = url,
                                 contentDescription = "Public profile picture ${index + 1}",
@@ -211,7 +211,7 @@ fun EmailIdentitySummarySection(
                 }
                 if (links.isNotEmpty()) {
                     SummaryBlockTitle("Profile Links")
-                    links.take(25).forEach { link ->
+                    links.forEach { link ->
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -232,17 +232,10 @@ fun EmailIdentitySummarySection(
                             )
                         }
                     }
-                    if (links.size > 25) {
-                        Text(
-                            text = "+ ${links.size - 25} more links",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
                 if (locations.isNotEmpty()) {
                     SummaryBlockTitle("Locations")
-                    locations.take(25).forEach { loc ->
+                    locations.forEach { loc ->
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -286,10 +279,9 @@ private fun SummaryValues(title: String, values: List<AttributedValue>, tone: To
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        values.take(25).forEach { value ->
+        values.forEach { value ->
             Pill("${value.value} · ${value.source}", tone)
         }
-        if (values.size > 25) Pill("+${values.size - 25} more", Tone.NEUTRAL)
     }
 }
 
@@ -381,7 +373,7 @@ private fun BreachDetailCard(detail: BreachDetail, onOpenUrl: (String) -> Unit) 
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    detail.dataClasses.take(25).forEach { dataClass ->
+                    detail.dataClasses.forEach { dataClass ->
                         Pill(dataClass, Tone.NEUTRAL)
                     }
                 }
@@ -433,7 +425,7 @@ fun EmailActivityTimelineSection(
                 "No dated signal was returned for this address, so there is no timeline to plot yet.",
                 tone = Tone.NEUTRAL,
             )
-            else -> events.take(25).forEach { event -> TimelineRow(event) }
+            else -> events.forEach { event -> TimelineRow(event) }
         }
     }
 }
@@ -505,8 +497,7 @@ fun EmailLinkedAccountsSection(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                confirmed.take(30).forEach { Pill(it.name, Tone.ACCENT) }
-                if (confirmed.size > 30) Pill("+${confirmed.size - 30} more", Tone.NEUTRAL)
+                confirmed.forEach { Pill(it.name, Tone.ACCENT) }
             }
             Spacer(Modifier.height(6.dp))
         }

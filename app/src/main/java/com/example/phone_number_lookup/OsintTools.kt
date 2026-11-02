@@ -182,9 +182,29 @@ object OsintTools {
 
     fun getBlackbirdEmailScan(email: String): List<OsintDork> {
         val e = email.trim()
+        val handle = e.substringBefore('@')
         val encodedEmail = Uri.encode("\"$e\"")
+        val encodedHandle = Uri.encode("\"$handle\"")
 
         return listOf(
+            OsintDork(
+                title = "Google: Location, Comments & Web Mentions",
+                description = "Searches Google for indexed forum posts, comments, reviews, location signals, and discussions.",
+                url = "https://www.google.com/search?q=$encodedEmail+OR+$encodedHandle+(comment+OR+forum+OR+review+OR+post+OR+location)",
+                toolSource = "Google Dorks"
+            ),
+            OsintDork(
+                title = "Google: Mobile & Phone Number Discovery",
+                description = "Searches indexed UK and international mobile phone numbers linked to this email or handle.",
+                url = "https://www.google.com/search?q=$encodedEmail+OR+$encodedHandle+(\"07\"+OR+\"+44\"+OR+mobile+OR+phone+OR+tel)",
+                toolSource = "Google Dorks"
+            ),
+            OsintDork(
+                title = "Google Maps & Local Contributor Reviews",
+                description = "Searches Google Maps and review directories for contributions and public ratings.",
+                url = "https://www.google.com/search?q=site:google.com/maps+$encodedHandle+OR+$encodedEmail",
+                toolSource = "Google Dorks"
+            ),
             OsintDork(
                 title = "Blackbird: Google Breach & Leak Search",
                 description = "Searches public databases, leaks, and dump files containing this email address.",

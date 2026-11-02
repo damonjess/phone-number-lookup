@@ -24,7 +24,7 @@ class EmailProfileSummaryTest {
         timeline: List<TimelineEvent> = emptyList(),
         stealer: StealerSubjectProfile? = null
     ) = EmailAttributionReport(
-        email = "hillspropertymaintenance258@gmail.com",
+        email = "sample.user258@example.com",
         namesFound = names.map { AttributedValue(it, "Google") },
         usernamesFound = usernames.map { AttributedValue(it, "MyFitnessPal") },
         locationsFound = locations.map { AttributedValue(it, "Google") },
@@ -49,10 +49,10 @@ class EmailProfileSummaryTest {
     @Test
     fun summarisesOnlyValuesThatWereReturned() {
         val summary = EmailProfileSummaryBuilder.email(
-            email = "hillspropertymaintenance258@gmail.com",
+            email = "sample.user258@example.com",
             attribution = attribution(
                 names = listOf("Jamie Hill"),
-                usernames = listOf("hillspropertymaintenance258"),
+                usernames = listOf("sample.user258"),
                 locations = listOf("Unit 14, West One Plaza, Sheffield")
             ),
             registrations = listOf(registration("Hulu"), registration("ClassDojo")),
@@ -65,7 +65,7 @@ class EmailProfileSummaryTest {
         assertTrue(summary.headline.contains("1 breach record"))
         assertTrue(summary.bullets.any { it.contains("Hulu") && it.contains("ClassDojo") })
         assertTrue(summary.bullets.any { it.contains("Jamie Hill") })
-        assertTrue(summary.bullets.any { it.contains("hillspropertymaintenance258") })
+        assertTrue(summary.bullets.any { it.contains("sample.user258") })
         assertTrue(summary.bullets.any { it.contains("Unit 14, West One Plaza, Sheffield") })
         assertTrue(summary.bullets.any { it.contains("Cargurus") })
         assertTrue(summary.riskNote.contains("breach"))
@@ -77,7 +77,7 @@ class EmailProfileSummaryTest {
             email = "a@b.com",
             attribution = attribution(
                 stealer = StealerSubjectProfile(
-                    computerUsername = "damon-pc",
+                    computerUsername = "user-pc",
                     maskedIp = null,
                     operatingSystem = "Windows 11",
                     dateCompromised = "2024-03-02"
@@ -130,14 +130,14 @@ class EmailProfileSummaryTest {
 
     @Test
     fun handleDefaultsToTheLocalPartOfTheAddress() {
-        assertEquals("hillspropertymaintenance258", EmailProfileSummaryBuilder.handleOf("hillspropertymaintenance258@gmail.com"))
+        assertEquals("sample.user258", EmailProfileSummaryBuilder.handleOf("sample.user258@example.com"))
         assertEquals("plain", EmailProfileSummaryBuilder.handleOf("plain"))
     }
 
     @Test
     fun summarisesPhoneNumbersWhenReturned() {
         val summary = EmailProfileSummaryBuilder.email(
-            email = "hillspropertymaintenance258@gmail.com",
+            email = "sample.user258@example.com",
             attribution = attribution(
                 phones = listOf("+61 *** *** *17", "+44 **** ****08")
             ),

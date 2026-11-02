@@ -43,13 +43,30 @@ object IdentityEnricher {
         val clean = query.trim().removePrefix("@")
         if (clean.isBlank()) return@withContext IdentityEnrichmentReport()
 
-        val keybaseDeferred = async { fetchKeybase(clean, isEmail) }
+        val keybaseDeferred = async {
+            val primary = fetchKeybase(clean, isEmail)
+            if (isEmail && primary.first == null && primary.third.isEmpty()) {
+                val handle = EmailRegistrationScanner.localPart(clean)
+                if (handle != null && handle.length >= 4) {
+                    fetchKeybase(handle, isEmail = false)
+                } else {
+                    primary
+                }
+            } else {
+                primary
+            }
+        }
         val pgpDeferred = async { fetchPgpKeys(clean) }
         val waybackDeferred = async {
             if (!isEmail) {
                 fetchWaybackForUsername(clean)
             } else {
-                emptyList()
+                val handle = EmailRegistrationScanner.localPart(clean)
+                if (handle != null && handle.length >= 4) {
+                    fetchWaybackForUsername(handle)
+                } else {
+                    emptyList()
+                }
             }
         }
 

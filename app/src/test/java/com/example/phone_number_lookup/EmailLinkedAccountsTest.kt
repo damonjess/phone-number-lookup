@@ -7,7 +7,7 @@ import org.junit.Test
 
 class EmailLinkedAccountsTest {
 
-    private val email = "hillspropertymaintenance258@gmail.com"
+    private val email = "sample.user258@example.com"
 
     private fun registration(
         site: String,
@@ -22,7 +22,7 @@ class EmailLinkedAccountsTest {
         verificationStatus = verification
     )
 
-    private fun handleHit(site: String, handle: String = "hillspropertymaintenance258") = UsernameHit(
+    private fun handleHit(site: String, handle: String = "sample.user258") = UsernameHit(
         site = site,
         category = "Social",
         source = "Sherlock",
@@ -110,6 +110,6 @@ class EmailLinkedAccountsTest {
 
     @Test
     fun handleOfAnAddressIsItsLocalPart() {
-        assertEquals("hillspropertymaintenance258", EmailLinkedAccounts.handle(email))
+        assertEquals("sample.user258", EmailLinkedAccounts.handle(email))
     }
 }

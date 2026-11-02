@@ -92,7 +92,7 @@ fun EmailIntelDashboard(
                     EmptyCardText(if (isLoading) "Looking for public profile photos…" else "No public profile photos returned")
                 } else {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        photos.take(25).forEachIndexed { index, url ->
+                        photos.forEachIndexed { index, url ->
                             AsyncImage(
                                 model = url,
                                 contentDescription = "Public profile image ${index + 1}",
@@ -112,14 +112,13 @@ fun EmailIntelDashboard(
                 } else if (registrations.isEmpty()) {
                     EmptyCardText("No account reports yet")
                 } else {
-                    registrations.take(25).forEach { hit ->
+                    registrations.forEach { hit ->
                         DashboardValue(
                             text = hit.site,
                             detail = if (hit.verificationStatus == "Registered response") "Confirmed" else "Unverified report",
                             onClick = hit.profileUrl.takeIf { it.startsWith("http") }?.let { { onOpenUrl(it) } },
                         )
                     }
-                    if (registrations.size > 25) EmptyCardText("+ ${registrations.size - 25} more in service results")
                 }
             }
         }
@@ -145,7 +144,7 @@ fun EmailIntelDashboard(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             EmailDashboardCard("Links", links.size.toString(), Modifier.weight(1f)) {
                 if (links.isEmpty()) EmptyCardText(if (isLoading) "Collecting public links…" else "No public links returned")
-                else links.take(25).forEach { (name, url) ->
+                else links.forEach { (name, url) ->
                     DashboardValue(name, url.removePrefix("https://").removePrefix("http://"), onClick = { onOpenUrl(url) })
                 }
             }
@@ -157,14 +156,14 @@ fun EmailIntelDashboard(
                     breachReport == null && isLoading -> LoadingCardText("Checking breach sources…")
                     breachReport == null -> EmptyCardText("Not checked")
                     breachReport.error != null -> EmptyCardText("Could not check: ${breachReport.error}")
-                    breachReport.breached -> breachReport.breachNames.take(25).forEach { DashboardValue(it, "Reported breach") }
+                    breachReport.breached -> breachReport.breachNames.forEach { DashboardValue(it, "Reported breach") }
                     else -> EmptyCardText("No records returned by checked breach sources")
                 }
             }
             EmailDashboardCard("Dates", dates.size.toString(), Modifier.weight(1f)) {
                 if (dates.isEmpty() && isLoading) LoadingCardText("Collecting dated public signals…")
                 else if (dates.isEmpty()) EmptyCardText("No dated public signals returned")
-                else dates.take(25).forEach { event ->
+                else dates.forEach { event ->
                     DashboardValue(event.date, "${event.label} · ${event.source}")
                 }
                 breachReport?.let {
@@ -182,7 +181,7 @@ fun EmailIntelDashboard(
                 matching.isEmpty() && sourceFilter.isNotBlank() -> EmptyCardText("No service matches ‘$sourceFilter’")
                 matching.isEmpty() && isLoading -> LoadingCardText("Waiting for service results…")
                 matching.isEmpty() -> EmptyCardText("Run an email scan to see service results")
-                else -> matching.take(40).forEach { hit ->
+                else -> matching.forEach { hit ->
                     DashboardValue(
                         text = hit.site,
                         detail = "${hit.verificationStatus} · ${hit.source}",
@@ -190,7 +189,6 @@ fun EmailIntelDashboard(
                     )
                 }
             }
-            if (matching.size > 40) EmptyCardText("Showing 40 of ${matching.size}; use the service search to filter")
         }
     }
 }
@@ -223,8 +221,7 @@ private fun EmailDashboardCard(
 @Composable
 private fun ValueList(values: List<Pair<String, String>>, isLoading: Boolean) {
     if (values.isEmpty()) EmptyCardText(if (isLoading) "Collecting public signals…" else "No public values returned")
-    else values.take(25).forEach { (value, source) -> DashboardValue(value, source) }
-    if (values.size > 25) EmptyCardText("+ ${values.size - 25} more")
+    else values.forEach { (value, source) -> DashboardValue(value, source) }
 }
 
 @Composable

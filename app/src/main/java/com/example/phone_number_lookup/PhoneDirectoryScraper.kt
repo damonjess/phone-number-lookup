@@ -235,9 +235,15 @@ object PhoneDirectoryScraper {
             async { probeMicrosoftAccountByPhone(e164, rawLocal) },
             async { probeInstagramByPhone(e164, rawLocal) },
             async { probeTelegramByPhone(e164) },
+            async { probeWhatsAppBridge(e164) },
+            async { probeSnapchatByPhone(e164) },
+            async { probeAmazonByPhone(e164) },
+            async { probeTwitterByPhone(e164) },
+            async { probeGoogleByPhone(e164) },
+            async { probeAppleByPhone(e164) },
+            async { probeViberByPhone(e164) },
             async { probeGitHubByPhone(e164, rawLocal) },
-            async { probeOpenPgpByPhone(e164, rawLocal) },
-            async { probeWhatsAppBridge(e164) }
+            async { probeOpenPgpByPhone(e164, rawLocal) }
         )
         jobs.awaitAll().filterNotNull()
     }
@@ -262,7 +268,7 @@ object PhoneDirectoryScraper {
                 }.getOrDefault(-1)
                 if (existsResult == 0 || existsResult == 5 || existsResult == 6) {
                     return PhoneAccountHit(
-                        platform = "Microsoft / Xbox / Outlook / Skype",
+                        platform = "Microsoft / Xbox / Skype",
                         status = "Registered response",
                         detail = "Phone number ($candidate) is linked to an active Microsoft account (IfExistsResult=$existsResult).",
                         url = "https://login.live.com/",
@@ -337,12 +343,101 @@ object PhoneDirectoryScraper {
         return if (!titleMatch.isNullOrBlank()) {
             PhoneAccountHit(
                 platform = "Telegram",
-                status = "Public Profile Resolved",
-                detail = listOfNotNull("Name: $titleMatch", extraMatch).joinToString(" • "),
+                status = "Registered response",
+                detail = listOfNotNull("Public Telegram user: $titleMatch", extraMatch).joinToString(" • "),
                 url = url,
                 confirmed = true
             )
         } else null
+    }
+
+    private fun probeWhatsAppBridge(e164: String): PhoneAccountHit {
+        val digits = e164.filter { it.isDigit() }
+        val checkUrl = "https://api.whatsapp.com/send/?phone=$digits&text=&type=phone_number&app_absent=0"
+        val resp = ScanHttp.get(checkUrl, timeoutMs = 7_000)
+        val isConfirmed = resp.isOk && resp.body.contains("Chat on WhatsApp", ignoreCase = true) &&
+            !resp.body.contains("Phone number shared via url is invalid", ignoreCase = true)
+        return PhoneAccountHit(
+            platform = "WhatsApp",
+            status = if (isConfirmed) "Registered response" else "Direct Verification Link",
+            detail = if (isConfirmed) "Active WhatsApp account confirmed for +$digits." else "Tap to open WhatsApp profile card & message for +$digits.",
+            url = "https://wa.me/$digits",
+            confirmed = isConfirmed
+        )
+    }
+
+    private fun probeSnapchatByPhone(e164: String): PhoneAccountHit {
+        val digits = e164.filter { it.isDigit() }
+        val resp = ScanHttp.post(
+            "https://accounts.snapchat.com/accounts/merlin/login",
+            """{"phone_number":"+$digits"}""",
+            contentType = "application/json",
+            timeoutMs = 6_000
+        )
+        val isRegistered = resp.body.contains("status\":\"SUCCESS", ignoreCase = true) ||
+            resp.body.contains("challenge", ignoreCase = true) ||
+            resp.body.contains("requires_verification", ignoreCase = true)
+        return PhoneAccountHit(
+            platform = "Snapchat",
+            status = if (isRegistered) "Registered response" else "Account Check Target",
+            detail = if (isRegistered) "Snapchat account associated with +$digits." else "Snapchat account verification endpoint for +$digits.",
+            url = "https://accounts.snapchat.com",
+            confirmed = isRegistered
+        )
+    }
+
+    private fun probeAmazonByPhone(e164: String): PhoneAccountHit {
+        return PhoneAccountHit(
+            platform = "Amazon",
+            status = "Account Sign-In Target",
+            detail = "Check linked Amazon / Prime customer account for $e164.",
+            url = "https://www.amazon.com/ap/signin",
+            confirmed = false
+        )
+    }
+
+    private fun probeTwitterByPhone(e164: String): PhoneAccountHit {
+        val digits = e164.filter { it.isDigit() }
+        return PhoneAccountHit(
+            platform = "Twitter / X",
+            status = "Account Recovery Target",
+            detail = "Twitter / X account recovery lookup for +$digits.",
+            url = "https://twitter.com/account/begin_password_reset",
+            confirmed = false
+        )
+    }
+
+    private fun probeGoogleByPhone(e164: String): PhoneAccountHit {
+        val digits = e164.filter { it.isDigit() }
+        return PhoneAccountHit(
+            platform = "Google Account",
+            status = "Account Recovery Target",
+            detail = "Google account recovery endpoint accepts +$digits to verify linked services.",
+            url = "https://accounts.google.com/signin/recovery",
+            confirmed = false
+        )
+    }
+
+    private fun probeAppleByPhone(e164: String): PhoneAccountHit {
+        val digits = e164.filter { it.isDigit() }
+        return PhoneAccountHit(
+            platform = "Apple ID / iMessage",
+            status = "Apple Directory Target",
+            detail = "Verify Apple ID registration and iMessage routing for +$digits.",
+            url = "https://iforgot.apple.com/password/verify/appleid",
+            confirmed = false
+        )
+    }
+
+    private fun probeViberByPhone(e164: String): PhoneAccountHit {
+        val digits = e164.filter { it.isDigit() }
+        return PhoneAccountHit(
+            platform = "Viber",
+            status = "Messaging Profile Target",
+            detail = "Direct chat profile lookup for +$digits on Viber.",
+            url = "https://chats.viber.com/",
+            confirmed = false
+        )
     }
 
     /**
@@ -394,17 +489,6 @@ object PhoneDirectoryScraper {
             }
         }
         return null
-    }
-
-    private fun probeWhatsAppBridge(e164: String): PhoneAccountHit {
-        val digits = e164.filter { it.isDigit() }
-        return PhoneAccountHit(
-            platform = "WhatsApp Profile Check",
-            status = "Direct Verification Link",
-            detail = "Tap to open WhatsApp profile card & avatar for +$digits inside WhatsApp.",
-            url = "https://wa.me/$digits",
-            confirmed = false
-        )
     }
 
     internal fun buildAllNumberSpellings(e164: String, rawLocal: String, dorkNumber: DorkNumber?): List<String> {

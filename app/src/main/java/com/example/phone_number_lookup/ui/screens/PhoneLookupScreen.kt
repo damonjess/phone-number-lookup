@@ -312,16 +312,12 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (uiState.deepFootprint == null && uiState.isSearching) {
-                LoadingRow("Scraping caller directories, OpenStreetMap businesses & web pages…")
-                Spacer(modifier = Modifier.height(12.dp))
-            } else {
-                DeepPhoneFootprintSection(
-                    report = uiState.deepFootprint,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-            }
+            DeepPhoneFootprintSection(
+                report = uiState.deepFootprint,
+                isLoading = uiState.isDeepFootprintScanning,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
 
             val phoniaDorks = OsintTools.getPhoniaTools(normalized)
             val phoneInfogaDorks = OsintTools.getPhoneInfogaDorks(normalized, localFormat)

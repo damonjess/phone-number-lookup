@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,25 +38,44 @@ import com.example.phone_number_lookup.PhoneAccountHit
 import com.example.phone_number_lookup.ScrapedWebReport
 import com.example.phone_number_lookup.SearchResultItem
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun DeepPhoneFootprintSection(
     report: DeepPhoneOsintReport?,
+    isLoading: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    if (report == null) return
+    if (report == null && !isLoading) return
     val context = LocalContext.current
 
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Space.md)
     ) {
-        if (report.accountRegistrations.isNotEmpty()) {
-            OsintCardContainer(
-                title = "LINKED ACCOUNTS & SOCIAL REGISTRATIONS",
-                badge = "${report.accountRegistrations.size}",
-                tone = Tone.ACCENT
-            ) {
-                report.accountRegistrations.forEachIndexed { idx, hit ->
+        val confirmedAccounts = report?.accountRegistrations?.filter { it.confirmed } ?: emptyList()
+        val allAccounts = report?.accountRegistrations ?: emptyList()
+
+        OsintCardContainer(
+            title = "WHAT THIS NUMBER IS SIGNED UP TO (LINKED ACCOUNTS & SERVICES)",
+            badge = if (isLoading) "PROBING..." else "${allAccounts.size} DISCOVERED",
+            tone = if (confirmedAccounts.isNotEmpty()) Tone.ACCENT else Tone.INFO
+        ) {
+            if (isLoading && allAccounts.isEmpty()) {
+                LoadingRow("Probing registrations across Microsoft, Telegram, WhatsApp, Instagram, Snapchat, Amazon & online platforms…")
+            } else if (allAccounts.isEmpty()) {
+                Notice("No public registrations or active profiles were detected for this phone number across probed services.", tone = Tone.NEUTRAL)
+            } else {
+                if (confirmedAccounts.isNotEmpty()) {
+                    SubHeading("Confirmed Accounts & Platforms")
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        confirmedAccounts.forEach { Pill(it.platform, Tone.ACCENT) }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                allAccounts.forEachIndexed { idx, hit ->
                     if (idx > 0) {
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 6.dp),
@@ -103,7 +123,8 @@ fun DeepPhoneFootprintSection(
             }
         }
 
-        if (report.carrierAllocationHint != null || report.areaLocationHint != null || report.numberSpellings.isNotEmpty()) {
+        if (report != null) {
+            if (report.carrierAllocationHint != null || report.areaLocationHint != null || report.numberSpellings.isNotEmpty()) {
             OsintCardContainer(
                 title = "NETWORK, AREA & FORMAT INTELLIGENCE",
                 badge = "${report.numberSpellings.size} FORMATS",
@@ -252,6 +273,7 @@ fun DeepPhoneFootprintSection(
                     }
                 }
             }
+        }
         }
     }
 }
@@ -436,7 +458,8 @@ fun OpenWebMentionsSection(
     val hasData = report.results.isNotEmpty() ||
         report.extractedEmails.isNotEmpty() ||
         report.extractedPhones.isNotEmpty() ||
-        report.extractedHandles.isNotEmpty()
+        report.extractedHandles.isNotEmpty() ||
+        report.extractedLocations.isNotEmpty()
 
     if (!hasData) return
     val context = LocalContext.current
@@ -445,20 +468,24 @@ fun OpenWebMentionsSection(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Space.md)
     ) {
-        if (report.extractedEmails.isNotEmpty() ||
+        if (report.extractedLocations.isNotEmpty() ||
             report.extractedPhones.isNotEmpty() ||
+            report.extractedEmails.isNotEmpty() ||
             report.extractedHandles.isNotEmpty()
         ) {
             OsintCardContainer(
-                title = "MINED CONTACTS & HANDLES FROM WEB RESULTS",
-                badge = "${report.extractedEmails.size + report.extractedPhones.size + report.extractedHandles.size}",
+                title = "MINED LOCATIONS, CONTACTS & HANDLES",
+                badge = "${report.extractedLocations.size + report.extractedPhones.size + report.extractedEmails.size + report.extractedHandles.size}",
                 tone = Tone.ACCENT
             ) {
-                report.extractedEmails.forEach {
-                    AttributedRow(label = "Email (${it.source})", value = it.value)
+                report.extractedLocations.forEach {
+                    AttributedRow(label = "Location (${it.source})", value = it.value)
                 }
                 report.extractedPhones.forEach {
-                    AttributedRow(label = "Phone (${it.source})", value = it.value)
+                    AttributedRow(label = "Phone / Mobile (${it.source})", value = it.value)
+                }
+                report.extractedEmails.forEach {
+                    AttributedRow(label = "Email (${it.source})", value = it.value)
                 }
                 report.extractedHandles.forEach {
                     AttributedRow(label = "Handle (${it.source})", value = it.value)
@@ -467,21 +494,61 @@ fun OpenWebMentionsSection(
         }
 
         if (report.results.isNotEmpty()) {
-            OsintCardContainer(
-                title = "PUBLIC WEB, FORUM & CODE MENTIONS",
-                badge = "${report.results.size}",
-                tone = Tone.ACCENT
-            ) {
-                report.results.take(25).forEachIndexed { idx, item ->
-                    if (idx > 0) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 8.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                        )
+            val commentsAndPosts = report.results.filter {
+                it.source.contains("Reddit", ignoreCase = true) ||
+                    it.source.contains("HackerNews", ignoreCase = true) ||
+                    it.source.contains("GitHub", ignoreCase = true) ||
+                    it.title.contains("comment", ignoreCase = true) ||
+                    it.snippet.contains("comment", ignoreCase = true) ||
+                    it.title.contains("review", ignoreCase = true) ||
+                    it.snippet.contains("review", ignoreCase = true) ||
+                    it.title.contains("post", ignoreCase = true) ||
+                    it.snippet.contains("post", ignoreCase = true) ||
+                    it.title.contains("forum", ignoreCase = true) ||
+                    it.snippet.contains("forum", ignoreCase = true) ||
+                    it.snippet.contains("discussion", ignoreCase = true)
+            }
+            val otherMentions = report.results.filterNot { it in commentsAndPosts }
+
+            if (commentsAndPosts.isNotEmpty()) {
+                OsintCardContainer(
+                    title = "COMMENTS, REVIEWS & FORUM POSTS",
+                    badge = "${commentsAndPosts.size}",
+                    tone = Tone.ACCENT
+                ) {
+                    commentsAndPosts.forEachIndexed { idx, item ->
+                        if (idx > 0) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                            )
+                        }
+                        WebMentionItemRow(item) {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.url)))
+                            }
+                        }
                     }
-                    WebMentionItemRow(item) {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.url)))
+                }
+            }
+
+            if (otherMentions.isNotEmpty()) {
+                OsintCardContainer(
+                    title = "PUBLIC WEB & SEARCH ENGINE MENTIONS",
+                    badge = "${otherMentions.size}",
+                    tone = Tone.INFO
+                ) {
+                    otherMentions.forEachIndexed { idx, item ->
+                        if (idx > 0) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                            )
+                        }
+                        WebMentionItemRow(item) {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.url)))
+                            }
                         }
                     }
                 }

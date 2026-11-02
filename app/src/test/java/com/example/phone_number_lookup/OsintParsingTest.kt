@@ -592,4 +592,16 @@ class OsintParsingTest {
         val cleanedFirefox = OsintDatasets.cleanProfileUrl("Mozilla Firefox", firefoxApiUrl)
         assertEquals("https://accounts.firefox.com/", cleanedFirefox)
     }
+
+    @Test
+    fun extractLocationsFromWebSnippetExtractsUkPlacesAndPostcodes() {
+        val snippet = "User mentioned living in Scunthorpe, North Lincolnshire DN15 6AA, mobile 07123 456789."
+        val locations = EmailAttributionEngine.extractLocationsFromText(snippet, "Google Search")
+        val phones = EmailAttributionEngine.extractPhoneNumbersFromText(snippet, "Google Search")
+
+        assertTrue(locations.any { it.value.contains("Scunthorpe", ignoreCase = true) })
+        assertTrue(locations.any { it.value.contains("North Lincolnshire", ignoreCase = true) })
+        assertTrue(locations.any { it.value.contains("DN15 6AA", ignoreCase = true) })
+        assertTrue(phones.any { it.value == "07123 456789" })
+    }
 }

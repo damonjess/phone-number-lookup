@@ -1,5 +1,8 @@
 package com.example.phone_number_lookup.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -37,6 +40,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +70,7 @@ import com.example.phone_number_lookup.ui.components.EnrichedProfilesSection
 import com.example.phone_number_lookup.ui.components.OpenWebMentionsSection
 import com.example.phone_number_lookup.ui.components.UsernameProfileSummaryCard
 import com.example.phone_number_lookup.ui.components.EmailIdentitySummarySection
+import com.example.phone_number_lookup.ui.components.EmailIntelBaseReport
 import com.example.phone_number_lookup.ui.components.EmailIntelDashboard
 import com.example.phone_number_lookup.ui.components.EmailLinkedAccountsSection
 import com.example.phone_number_lookup.ui.components.EmailProfileStatsRow
@@ -204,7 +209,7 @@ fun UsernameAndEmailOsintScreen(
 
         if (uiState.subTabState == 1) {
             Spacer(Modifier.height(Space.md))
-            Notice("Email scans query public third-party services (XposedOrNot, Cloudflare DoH, Gravatar, GitHub, GitLab, Keybase and public profile endpoints) directly from this device over HTTPS.", tone = Tone.NEUTRAL)
+            Notice("Email scans query public third-party services (Google, DuckDuckGo, Brave, Bing, Reddit, GitHub, XposedOrNot, Cloudflare DoH, Gravatar, Keybase) directly over HTTPS.", tone = Tone.NEUTRAL)
         }
 
         Spacer(Modifier.height(Space.xl))
@@ -395,7 +400,7 @@ fun UsernameAndEmailOsintScreen(
 
                 1 -> {
                     val emailLoading = uiState.isRegistrationScanning || uiState.isBreachScanning ||
-                        uiState.isEnrichingIdentity || uiState.isAttributionScanning
+                        uiState.isEnrichingIdentity || uiState.isAttributionScanning || uiState.isGoogleMetadataScanning
                     val profileSummary = remember(
                         target,
                         uiState.attributionReport,
@@ -470,6 +475,23 @@ fun UsernameAndEmailOsintScreen(
                         onOpenUrl = { openUrl(context, it) },
                     )
                     Spacer(modifier = Modifier.height(12.dp))
+
+                    // IntelBase Dossier view matching IntelBase layout + Google Comment Scraping
+                    EmailIntelBaseReport(
+                        target = target,
+                        attribution = uiState.attributionReport,
+                        registrations = uiState.registeredSites,
+                        handleHits = uiState.liveHits,
+                        breachReport = uiState.breachReport,
+                        domainReport = uiState.domainReport,
+                        googleMetadata = uiState.googleMetadata,
+                        isLoading = emailLoading,
+                        onOpenUrl = { openUrl(context, it) },
+                        googleCommentReport = uiState.googleCommentReport,
+                        isCommentScraping = uiState.isCommentScraping,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     UnifiedEvidenceCard(
                         report = UnifiedEvidenceBuilder.email(
                             target = target,
@@ -593,11 +615,21 @@ fun UsernameAndEmailOsintScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 meta.reviews.forEach { rev ->
+                                    val dateSuffix = if (rev.dateLabel.isNotBlank()) " • ${rev.dateLabel}" else ""
                                     Text(
-                                        text = "• ${rev.title} (${rev.ratingLabel}) - ${rev.address}",
+                                        text = "• ${rev.title} (${rev.ratingLabel}$dateSuffix) - ${rev.address}",
                                         style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (rev.commentText.isNotBlank()) FontWeight.SemiBold else FontWeight.Normal,
                                         modifier = Modifier.padding(vertical = 1.dp)
                                     )
+                                    if (rev.commentText.isNotBlank()) {
+                                        Text(
+                                            text = "  \"${rev.commentText}\"",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(start = 12.dp, bottom = 3.dp)
+                                        )
+                                    }
                                 }
                             }
 
@@ -605,7 +637,7 @@ fun UsernameAndEmailOsintScreen(
                                 Spacer(modifier = Modifier.height(6.dp))
                                 TextButton(onClick = { openUrl(context, url) }) {
                                     Text("Open Google Maps Contributor Profile ↗")
-                                }
+                                                                }
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
@@ -646,6 +678,7 @@ fun UsernameAndEmailOsintScreen(
                             val hasAnyAttributionData = confirmedRegistered.isNotEmpty() ||
                                 allNames.isNotEmpty() ||
                                 allUsernames.isNotEmpty() ||
+                                attr.phonesFound.isNotEmpty() ||
                                 combinedLinks.isNotEmpty() ||
                                 attr.timeline.isNotEmpty() ||
                                 attr.stealerProfile != null
@@ -687,6 +720,14 @@ fun UsernameAndEmailOsintScreen(
                                     SubHeading("Usernames")
                                     allUsernames.forEach { u ->
                                         Text("• ${u.value} (${u.source})", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+
+                                if (attr.phonesFound.isNotEmpty()) {
+                                    SubHeading("Phone numbers")
+                                    attr.phonesFound.forEach { p ->
+                                        Text("• ${p.value} (${p.source})", style = MaterialTheme.typography.bodySmall)
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
                                 }
@@ -953,6 +994,9 @@ fun UsernameAndEmailOsintScreen(
                     }
 
                     val emailLinks = buildList {
+                        uiState.googleCommentReport?.comments?.forEach {
+                            add("Comment (${it.platform}): ${it.title}" to it.url)
+                        }
                         uiState.registeredSites.forEach { add("Registered: ${it.site}" to it.profileUrl) }
                         uiState.liveHits.forEach { add("Handle Match: ${it.site}" to it.profileUrl) }
                         OsintTools.getBlackbirdEmailScan(target).forEach { add(it.title to it.url) }
@@ -969,6 +1013,13 @@ fun UsernameAndEmailOsintScreen(
                                 title = "Email OSINT Report",
                                 target = target,
                                 sections = listOf(
+                                    PdfSection(
+                                        "Google & Web Comments (${uiState.googleCommentReport?.comments?.size ?: 0})",
+                                        uiState.googleCommentReport?.comments?.mapIndexed { i, hit ->
+                                            "${i + 1}. [${hit.platform}] ${hit.title} — \"${hit.commentSnippet}\" (${hit.url})"
+                                        }?.ifEmpty { listOf("No indexed comments found") }
+                                            ?: listOf("No indexed comments found")
+                                    ),
                                     PdfSection(
                                         "Registered Accounts (${uiState.registeredSites.size})",
                                         uiState.registeredSites.mapIndexed { i, hit ->

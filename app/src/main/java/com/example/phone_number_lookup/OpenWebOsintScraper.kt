@@ -14,6 +14,7 @@ data class ScrapedWebReport(
     val extractedEmails: List<AttributedValue> = emptyList(),
     val extractedPhones: List<AttributedValue> = emptyList(),
     val extractedHandles: List<AttributedValue> = emptyList(),
+    val extractedLocations: List<AttributedValue> = emptyList(),
     val businessMatches: List<AttributedValue> = emptyList()
 )
 
@@ -34,8 +35,8 @@ object OpenWebOsintScraper {
     )
 
     /**
-     * Runs parallel public scrapes across DuckDuckGo, Brave Search, Reddit JSON,
-     * HackerNews Algolia, and GitHub Issues/Commits, then mines the text for entities.
+     * Runs parallel public scrapes across Google Search, DuckDuckGo, Brave Search, Bing,
+     * Reddit JSON, HackerNews Algolia, and GitHub Issues/Commits, then mines the text for entities.
      */
     suspend fun scrapeAll(
         queries: List<String>,
@@ -47,11 +48,17 @@ object OpenWebOsintScraper {
         val primary = cleanQueries.first()
 
         coroutineScope {
-            val ddgDeferred = cleanQueries.take(4).map { q ->
+            val googleDeferred = cleanQueries.take(5).map { q ->
+                async { scrapeGoogleHtml(q) }
+            }
+            val ddgDeferred = cleanQueries.take(5).map { q ->
                 async { scrapeDuckDuckGo(q) }
             }
-            val braveDeferred = cleanQueries.take(2).map { q ->
+            val braveDeferred = cleanQueries.take(3).map { q ->
                 async { scrapeBraveHtml(q) }
+            }
+            val bingDeferred = cleanQueries.take(3).map { q ->
+                async { scrapeBingHtml(q) }
             }
             val redditDef = async { scrapeRedditSearch(primary) }
             val hnDef = async { scrapeHackerNewsAlgolia(primary) }
@@ -60,8 +67,10 @@ object OpenWebOsintScraper {
                 if (targetPhoneE164 != null) scrapeOsmOverpassPhone(targetPhoneE164) else emptyList()
             }
 
-            val allItems = (ddgDeferred.awaitAll().flatten() +
+            val allItems = (googleDeferred.awaitAll().flatten() +
+                ddgDeferred.awaitAll().flatten() +
                 braveDeferred.awaitAll().flatten() +
+                bingDeferred.awaitAll().flatten() +
                 redditDef.await() +
                 hnDef.await() +
                 ghIssuesDef.await())
@@ -70,6 +79,7 @@ object OpenWebOsintScraper {
             val emails = mutableListOf<AttributedValue>()
             val phones = mutableListOf<AttributedValue>()
             val handles = mutableListOf<AttributedValue>()
+            val locations = mutableListOf<AttributedValue>()
 
             for (item in allItems) {
                 val blob = "${item.title} ${item.snippet}"
@@ -81,6 +91,9 @@ object OpenWebOsintScraper {
                 }
                 EmailAttributionEngine.extractPhoneNumbersFromText(blob, item.source).forEach {
                     phones += it
+                }
+                EmailAttributionEngine.extractLocationsFromText(blob, item.source).forEach {
+                    locations += it
                 }
                 HANDLE_REGEX.findAll(blob).forEach { m ->
                     val rawHandle = (m.groupValues[1].ifEmpty { m.groupValues[2] })
@@ -101,9 +114,55 @@ object OpenWebOsintScraper {
                 extractedEmails = emails.distinctBy { it.value.lowercase() },
                 extractedPhones = phones.distinctBy { it.value },
                 extractedHandles = handles.distinctBy { it.value.lowercase() },
+                extractedLocations = locations.distinctBy { it.value.lowercase().trim() },
                 businessMatches = osmDef.await()
             )
         }
+    }
+
+    /**
+     * Scrapes Google Search via basic HTML view (gbv=1) for indexed public comments, mentions, and posts.
+     */
+    internal fun scrapeGoogleHtml(query: String): List<SearchResultItem> =
+        GoogleCommentScraper.scrapeGoogleSearch(query)
+
+    /**
+     * Fallback public search scraper for Bing HTML.
+     */
+    internal fun scrapeBingHtml(query: String): List<SearchResultItem> {
+        val url = "https://www.bing.com/search?q=${ScanHttp.encode(query)}"
+        val resp = ScanHttp.get(
+            url,
+            timeoutMs = 10_000,
+            headers = mapOf("Accept" to "text/html,application/xhtml+xml")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return emptyList()
+
+        val results = mutableListOf<SearchResultItem>()
+        val tagStrip = Regex("<[^>]*>")
+        val bingBlockRegex = Regex(
+            """<li class="b_algo"[^>]*>.*?<h2><a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a></h2>(?:.*?<div class="b_caption"[^>]*><p[^>]*>(.*?)</p>)?.*?</li>""",
+            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+        )
+
+        for (match in bingBlockRegex.findAll(resp.body)) {
+            val href = match.groupValues[1]
+            if (href.contains("bing.com")) continue
+            val title = match.groupValues[2].replace(tagStrip, "").trim()
+            val snippet = match.groupValues.getOrNull(3)?.replace(tagStrip, "")?.replace(Regex("\\s+"), " ")?.trim()
+                ?: "Public indexed web result via Bing"
+
+            if (title.isNotBlank()) {
+                results += SearchResultItem(
+                    title = title,
+                    snippet = snippet,
+                    url = href,
+                    source = "Bing Search"
+                )
+            }
+            if (results.size >= 15) break
+        }
+        return results
     }
 
     private fun scrapeDuckDuckGo(query: String): List<SearchResultItem> {
