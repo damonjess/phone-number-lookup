@@ -1,7 +1,5 @@
 package com.example.phone_number_lookup.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -16,22 +14,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,19 +31,18 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.phone_number_lookup.AttributedProfileLink
+import com.example.phone_number_lookup.AttributedValue
 import com.example.phone_number_lookup.EmailLinkedAccounts
-import com.example.phone_number_lookup.EnrichedProfileCard
 import com.example.phone_number_lookup.EmailProfileSummaryBuilder
 import com.example.phone_number_lookup.EmailRegistrationScanner
 import com.example.phone_number_lookup.IdentityEnrichmentReport
@@ -60,26 +50,25 @@ import com.example.phone_number_lookup.OsintPdfExporter
 import com.example.phone_number_lookup.OsintTools
 import com.example.phone_number_lookup.PdfSection
 import com.example.phone_number_lookup.PythonToolMode
-import com.example.phone_number_lookup.UsernameScanner
 import com.example.phone_number_lookup.UnifiedEvidenceBuilder
+import com.example.phone_number_lookup.UsernameScanner
 import com.example.phone_number_lookup.ui.components.AppButton
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
 import com.example.phone_number_lookup.ui.components.EmailActivityTimelineSection
 import com.example.phone_number_lookup.ui.components.EmailBreachDetailsSection
-import com.example.phone_number_lookup.ui.components.EnrichedProfilesSection
-import com.example.phone_number_lookup.ui.components.OpenWebMentionsSection
-import com.example.phone_number_lookup.ui.components.UsernameProfileSummaryCard
 import com.example.phone_number_lookup.ui.components.EmailIdentitySummarySection
 import com.example.phone_number_lookup.ui.components.EmailIntelBaseReport
 import com.example.phone_number_lookup.ui.components.EmailIntelDashboard
-import com.example.phone_number_lookup.ui.components.GoogleCommentsSection
 import com.example.phone_number_lookup.ui.components.EmailLinkedAccountsSection
 import com.example.phone_number_lookup.ui.components.EmailProfileStatsRow
 import com.example.phone_number_lookup.ui.components.EmailProfileSummaryCard
+import com.example.phone_number_lookup.ui.components.EnrichedProfilesSection
+import com.example.phone_number_lookup.ui.components.GoogleCommentsSection
 import com.example.phone_number_lookup.ui.components.IssuesSection
 import com.example.phone_number_lookup.ui.components.LoadingRow
 import com.example.phone_number_lookup.ui.components.Notice
 import com.example.phone_number_lookup.ui.components.NumberedLinksHubCard
+import com.example.phone_number_lookup.ui.components.OpenWebMentionsSection
 import com.example.phone_number_lookup.ui.components.OsintResultCard
 import com.example.phone_number_lookup.ui.components.OsintToolSectionCard
 import com.example.phone_number_lookup.ui.components.Pill
@@ -91,6 +80,7 @@ import com.example.phone_number_lookup.ui.components.Space
 import com.example.phone_number_lookup.ui.components.SubHeading
 import com.example.phone_number_lookup.ui.components.Tone
 import com.example.phone_number_lookup.ui.components.UnifiedEvidenceCard
+import com.example.phone_number_lookup.ui.components.UsernameProfileSummaryCard
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.UsernameAndEmailOsintViewModel
 import java.text.SimpleDateFormat
@@ -161,7 +151,7 @@ fun UsernameAndEmailOsintScreen(
             )
         } else if (uiState.subTabState == 1) {
             Text(
-                text = "EMAIL ENGINE · BLACKBIRD",
+                text = "EMAIL ENGINE · BLACKBIRD & MULTI-SOURCE RECON",
                 style = MaterialTheme.typography.labelSmall,
                 letterSpacing = 1.2.sp,
                 color = MaterialTheme.colorScheme.primary,
@@ -210,7 +200,10 @@ fun UsernameAndEmailOsintScreen(
 
         if (uiState.subTabState == 1) {
             Spacer(Modifier.height(Space.md))
-            Notice("Email scans query public third-party services (Google, DuckDuckGo, Brave, Bing, Reddit, GitHub, XposedOrNot, Cloudflare DoH, Gravatar, Keybase) directly over HTTPS.", tone = Tone.NEUTRAL)
+            Notice(
+                "Email scans query public third-party services (Google, DuckDuckGo, Brave, Bing, Yahoo, Reddit, GitHub, XposedOrNot, HudsonRock, Cloudflare DoH, Gravatar, Keybase) directly over HTTPS.",
+                tone = Tone.NEUTRAL
+            )
         }
 
         Spacer(Modifier.height(Space.xl))
@@ -257,6 +250,7 @@ fun UsernameAndEmailOsintScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                     }
+
                     OsintToolSectionCard(
                         toolTitle = "Live Username Scan ($target)",
                         subtitle = if (uiState.liveSitesChecked > 0)
@@ -280,7 +274,8 @@ fun UsernameAndEmailOsintScreen(
                                         (if (uiState.unreachableCount > 0) ", ${uiState.unreachableCount} couldn't be checked" else "") +
                                         (if (uiState.discardedCount > 0) ", ${uiState.discardedCount} ignored as unreliable" else "") + ".",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    softWrap = true
                                 )
                                 IssuesSection(
                                     issues = uiState.usernameIssues,
@@ -291,9 +286,10 @@ fun UsernameAndEmailOsintScreen(
                             }
                             else -> {
                                 Text(
-                                    "${countLabel(uiState.liveHits.count { it.verificationStatus == "Matched" }, "matched profile", "matched profiles")} • ${countLabel(uiState.liveHits.size, "result", "results")}",
+                                    "${countLabel(uiState.liveHits.count { it.verificationStatus == "Matched" }, "matched profile", "matched profiles")} · ${countLabel(uiState.liveHits.size, "result", "results")}",
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.titleMedium,
+                                    softWrap = true,
                                     modifier = Modifier.padding(bottom = 4.dp)
                                 )
                                 if (uiState.discardedCount > 0) {
@@ -301,6 +297,7 @@ fun UsernameAndEmailOsintScreen(
                                         "${countLabel(uiState.discardedCount, "site", "sites")} said \"found\" for a made-up username too, so they were ignored as unreliable.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        softWrap = true,
                                         modifier = Modifier.padding(bottom = 4.dp)
                                     )
                                 }
@@ -329,7 +326,8 @@ fun UsernameAndEmailOsintScreen(
                                     Text(
                                         "Found via: " + sourceCounts.entries.joinToString(", ") { "${it.key} ${it.value}" },
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        softWrap = true
                                     )
                                 }
                             }
@@ -344,6 +342,7 @@ fun UsernameAndEmailOsintScreen(
                     )
 
                     val usernameLinks = buildList {
+                        uiState.enrichedProfiles.forEach { add("Dossier: ${it.platform} (@${it.handle})" to it.profileUrl) }
                         uiState.liveHits.forEach { add("${it.site} (${it.source})" to it.profileUrl) }
                         uiState.identityEnrichment?.keybaseProofs?.forEach {
                             if (it.proofUrl.startsWith("http")) add("Keybase ${it.service}: ${it.handle}" to it.proofUrl)
@@ -351,6 +350,7 @@ fun UsernameAndEmailOsintScreen(
                         uiState.identityEnrichment?.waybackSnapshots?.forEach { wb ->
                             wb.latestArchiveUrl?.let { url -> add("Wayback Archive: ${wb.targetUrl}" to url) }
                         }
+                        uiState.openWebReport?.results?.forEach { add("Web Mention (${it.source}): ${it.title}" to it.url) }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -362,31 +362,47 @@ fun UsernameAndEmailOsintScreen(
                                 context = context,
                                 title = "Username OSINT Report",
                                 target = target,
-                                sections = listOf(
-                                    PdfSection(
-                                        "Confirmed Accounts (${uiState.liveHits.size})",
-                                        uiState.liveHits.mapIndexed { i, hit ->
-                                            "${i + 1}. ${hit.site} [${hit.category}] - ${hit.profileUrl} (${hit.evidence})"
-                                        }
-                                    ),
-                                    PdfSection(
-                                        "Keybase & OpenPGP Proofs",
-                                        buildList {
-                                            uiState.identityEnrichment?.keybaseProofs?.forEach {
-                                                add("Keybase ${it.service}: ${it.handle} (${it.proofUrl})")
+                                sections = buildList {
+                                    if (uiState.enrichedProfiles.isNotEmpty()) {
+                                        add(
+                                            PdfSection(
+                                                "Deep Profile Dossiers (${uiState.enrichedProfiles.size})",
+                                                uiState.enrichedProfiles.map { c ->
+                                                    "${c.platform} (@${c.handle}): ${listOfNotNull(c.displayName, c.location, c.statsSummary, c.bio).joinToString(" • ")} (${c.profileUrl})"
+                                                }
+                                            )
+                                        )
+                                    }
+                                    add(
+                                        PdfSection(
+                                            "Confirmed Accounts (${uiState.liveHits.size})",
+                                            uiState.liveHits.mapIndexed { i, hit ->
+                                                "${i + 1}. ${hit.site} [${hit.category}] - ${hit.profileUrl} (${hit.evidence})"
                                             }
-                                            uiState.identityEnrichment?.pgpRecords?.forEach {
-                                                add("PGP Key ${it.keyId}: ${it.uids.joinToString(", ")}")
-                                            }
-                                        }
-                                    ),
-                                    PdfSection(
-                                        "Wayback Machine Snapshots",
-                                        uiState.identityEnrichment?.waybackSnapshots?.map {
-                                            "${it.targetUrl}: ${it.snapshotCount} captures (${it.firstSeen}..${it.lastSeen}) -> ${it.latestArchiveUrl}"
-                                        }.orEmpty()
+                                        )
                                     )
-                                )
+                                    add(
+                                        PdfSection(
+                                            "Keybase & OpenPGP Proofs",
+                                            buildList {
+                                                uiState.identityEnrichment?.keybaseProofs?.forEach {
+                                                    add("Keybase ${it.service}: ${it.handle} (${it.proofUrl})")
+                                                }
+                                                uiState.identityEnrichment?.pgpRecords?.forEach {
+                                                    add("PGP Key ${it.keyId}: ${it.uids.joinToString(", ")}")
+                                                }
+                                            }
+                                        )
+                                    )
+                                    add(
+                                        PdfSection(
+                                            "Wayback Machine Snapshots",
+                                            uiState.identityEnrichment?.waybackSnapshots?.map {
+                                                "${it.targetUrl}: ${it.snapshotCount} captures (${it.firstSeen}..${it.lastSeen}) -> ${it.latestArchiveUrl}"
+                                            }.orEmpty()
+                                        )
+                                    )
+                                }
                             )
                         }
                     )
@@ -485,7 +501,6 @@ fun UsernameAndEmailOsintScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // IntelBase Dossier view matching IntelBase layout + Google Comment Scraping
                     EmailIntelBaseReport(
                         target = target,
                         attribution = uiState.attributionReport,
@@ -544,7 +559,6 @@ fun UsernameAndEmailOsintScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                     }
 
-                    // IntelBase-Style Profile Executive Summary
                     uiState.domainReport?.let { domain ->
                         val breachCount = uiState.breachReport?.breachNames?.size ?: 0
                         val regCount = uiState.registeredSites.size
@@ -571,7 +585,8 @@ fun UsernameAndEmailOsintScreen(
                                     "⚠️ Warning: This email address is hosted on a disposable/burner domain blocklist.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    softWrap = true
                                 )
                             }
                         }
@@ -629,6 +644,7 @@ fun UsernameAndEmailOsintScreen(
                                         text = "• ${rev.title} (${rev.ratingLabel}$dateSuffix) - ${rev.address}",
                                         style = MaterialTheme.typography.bodySmall,
                                         fontWeight = if (rev.commentText.isNotBlank()) FontWeight.SemiBold else FontWeight.Normal,
+                                        softWrap = true,
                                         modifier = Modifier.padding(vertical = 1.dp)
                                     )
                                     if (rev.commentText.isNotBlank()) {
@@ -636,6 +652,7 @@ fun UsernameAndEmailOsintScreen(
                                             text = "  \"${rev.commentText}\"",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            softWrap = true,
                                             modifier = Modifier.padding(start = 12.dp, bottom = 3.dp)
                                         )
                                     }
@@ -646,7 +663,7 @@ fun UsernameAndEmailOsintScreen(
                                 Spacer(modifier = Modifier.height(6.dp))
                                 TextButton(onClick = { openUrl(context, url) }) {
                                     Text("Open Google Maps Contributor Profile ↗")
-                                                                }
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
@@ -667,7 +684,7 @@ fun UsernameAndEmailOsintScreen(
                             val allUsernames = buildList {
                                 addAll(attr.usernamesFound)
                                 uiState.liveHits.forEach { hit ->
-                                    add(com.example.phone_number_lookup.AttributedValue(hit.queriedName.ifBlank { target.substringBefore('@') }, hit.site))
+                                    add(AttributedValue(hit.queriedName.ifBlank { target.substringBefore('@') }, hit.site))
                                 }
                             }.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
 
@@ -675,7 +692,7 @@ fun UsernameAndEmailOsintScreen(
                                 addAll(attr.profileLinks)
                                 uiState.liveHits.forEach { hit ->
                                     add(
-                                        com.example.phone_number_lookup.AttributedProfileLink(
+                                        AttributedProfileLink(
                                             handle = hit.queriedName.ifBlank { target.substringBefore('@') },
                                             platform = hit.site,
                                             url = hit.profileUrl
@@ -688,6 +705,7 @@ fun UsernameAndEmailOsintScreen(
                                 allNames.isNotEmpty() ||
                                 allUsernames.isNotEmpty() ||
                                 attr.phonesFound.isNotEmpty() ||
+                                attr.locationsFound.isNotEmpty() ||
                                 combinedLinks.isNotEmpty() ||
                                 attr.timeline.isNotEmpty() ||
                                 attr.stealerProfile != null
@@ -706,7 +724,12 @@ fun UsernameAndEmailOsintScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text("• ${reg.site} (${reg.category.replaceFirstChar { it.uppercase() }})", style = MaterialTheme.typography.bodySmall)
+                                            Text(
+                                                text = "• ${reg.site} (${reg.category.replaceFirstChar { it.uppercase() }})",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                softWrap = true,
+                                                modifier = Modifier.weight(1f)
+                                            )
                                             if (reg.profileUrl.isNotBlank() && reg.profileUrl.startsWith("http")) {
                                                 TextButton(onClick = { openUrl(context, reg.profileUrl) }) {
                                                     Text("Open ↗")
@@ -720,7 +743,11 @@ fun UsernameAndEmailOsintScreen(
                                 if (allNames.isNotEmpty()) {
                                     SubHeading("Names found")
                                     allNames.forEach { n ->
-                                        Text("• ${n.value} (${n.source})", style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            text = "• ${n.value} (${n.source})",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            softWrap = true
+                                        )
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
                                 }
@@ -728,7 +755,11 @@ fun UsernameAndEmailOsintScreen(
                                 if (allUsernames.isNotEmpty()) {
                                     SubHeading("Usernames")
                                     allUsernames.forEach { u ->
-                                        Text("• ${u.value} (${u.source})", style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            text = "• ${u.value} (${u.source})",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            softWrap = true
+                                        )
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
                                 }
@@ -736,7 +767,23 @@ fun UsernameAndEmailOsintScreen(
                                 if (attr.phonesFound.isNotEmpty()) {
                                     SubHeading("Phone numbers")
                                     attr.phonesFound.forEach { p ->
-                                        Text("• ${p.value} (${p.source})", style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            text = "• ${p.value} (${p.source})",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            softWrap = true
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+
+                                if (attr.locationsFound.isNotEmpty()) {
+                                    SubHeading("Locations")
+                                    attr.locationsFound.forEach { loc ->
+                                        Text(
+                                            text = "• ${loc.value} (${loc.source})",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            softWrap = true
+                                        )
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
                                 }
@@ -749,7 +796,12 @@ fun UsernameAndEmailOsintScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text("• ${link.handle} (${link.platform})", style = MaterialTheme.typography.bodySmall)
+                                            Text(
+                                                text = "• ${link.handle} (${link.platform})",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                softWrap = true,
+                                                modifier = Modifier.weight(1f)
+                                            )
                                             TextButton(onClick = { openUrl(context, link.url) }) {
                                                 Text("Open ↗")
                                             }
@@ -761,22 +813,29 @@ fun UsernameAndEmailOsintScreen(
                                     Spacer(modifier = Modifier.height(8.dp))
                                     SubHeading("Activity timeline")
                                     attr.timeline.forEach { ev ->
-                                        Text("• ${ev.date} — ${ev.label} · ${ev.source}", style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            text = "• ${ev.date} — ${ev.label} · ${ev.source}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            softWrap = true
+                                        )
                                     }
                                 }
 
                                 attr.stealerProfile?.let { sp ->
                                     SubHeading("Infostealer profile · HudsonRock")
-                                    sp.computerUsername?.let { ResultRow("Username / Host", it) }
-                                    sp.maskedIp?.let { ResultRow("IP Address", it) }
+                                    val usersLabel = sp.allUsernames.ifEmpty { listOfNotNull(sp.computerUsername) }.joinToString(", ")
+                                    val ipsLabel = sp.allMaskedIps.ifEmpty { listOfNotNull(sp.maskedIp) }.joinToString(", ")
+                                    val datesLabel = sp.allDates.ifEmpty { listOfNotNull(sp.dateCompromised) }.joinToString(", ")
+                                    if (usersLabel.isNotBlank()) ResultRow("Username / Host", usersLabel)
+                                    if (ipsLabel.isNotBlank()) ResultRow("IP Address(es)", ipsLabel)
                                     sp.operatingSystem?.let { ResultRow("Operating System", it) }
-                                    sp.dateCompromised?.let { ResultRow("Compromise Date", it) }
+                                    if (datesLabel.isNotBlank()) ResultRow("Compromise Date(s)", datesLabel)
+                                    if (sp.antiviruses.isNotEmpty()) ResultRow("Antivirus", sp.antiviruses.joinToString(", "))
                                 }
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
 
                     OsintToolSectionCard(
                         toolTitle = "Accounts Registered ($target)",
@@ -797,9 +856,10 @@ fun UsernameAndEmailOsintScreen(
                             )
                             else -> {
                                 Text(
-                                    "${countLabel(uiState.registeredSites.count { it.verificationStatus == "Registered response" }, "reported registration", "reported registrations")} • ${countLabel(uiState.registeredSites.size, "result", "results")}",
+                                    "${countLabel(uiState.registeredSites.count { it.verificationStatus == "Registered response" }, "reported registration", "reported registrations")} · ${countLabel(uiState.registeredSites.size, "result", "results")}",
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.titleMedium,
+                                    softWrap = true,
                                     modifier = Modifier.padding(bottom = 4.dp)
                                 )
                                 uiState.registeredSites.forEach { hit ->
@@ -822,7 +882,8 @@ fun UsernameAndEmailOsintScreen(
                             Text(
                                 uiState.registrationNotice!!,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
+                                color = MaterialTheme.colorScheme.error,
+                                softWrap = true
                             )
                         }
                         if (uiState.registrationDiscarded > 0 && !uiState.isRegistrationScanning) {
@@ -830,7 +891,8 @@ fun UsernameAndEmailOsintScreen(
                             Text(
                                 "${countLabel(uiState.registrationDiscarded, "site", "sites")} also said an account exists for a made-up address, so they were ignored as unreliable.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                softWrap = true
                             )
                         }
                         IssuesSection(
@@ -872,6 +934,7 @@ fun UsernameAndEmailOsintScreen(
                                             "• $reason",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurface,
+                                            softWrap = true,
                                             modifier = Modifier.padding(vertical = 1.dp),
                                         )
                                     }
@@ -884,7 +947,7 @@ fun UsernameAndEmailOsintScreen(
 
                     OsintToolSectionCard(
                         toolTitle = "Live Breach & Infostealer Check ($target)",
-                        subtitle = "Real breach lookup via XposedOrNot + HudsonRock Cavalier Infostealer API",
+                        subtitle = "Real breach lookup via XposedOrNot, HudsonRock, COMB & Pastebin",
                         containerColor = MaterialTheme.colorScheme.errorContainer
                     ) {
                         val report = uiState.breachReport
@@ -901,7 +964,7 @@ fun UsernameAndEmailOsintScreen(
                                 "Run a scan to check this email against known data breaches.",
                                 style = MaterialTheme.typography.bodyMedium
                             )
-                            report.error != null -> Text(report.error, style = MaterialTheme.typography.bodyMedium)
+                            report.error != null -> Text(report.error, style = MaterialTheme.typography.bodyMedium, softWrap = true)
                             report.breached -> {
                                 Text(
                                     "Exposed in ${report.breachNames.size} record(s):",
@@ -910,14 +973,20 @@ fun UsernameAndEmailOsintScreen(
                                     modifier = Modifier.padding(bottom = 4.dp)
                                 )
                                 report.breachNames.forEach { name ->
-                                    Text("• $name", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 1.dp))
+                                    Text(
+                                        text = "• $name",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        softWrap = true,
+                                        modifier = Modifier.padding(vertical = 1.dp)
+                                    )
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 SubHeading("Evidence timeline")
                                 Text(
                                     "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(report.checkedAt))} — XposedOrNot & HudsonRock lookup completed",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    softWrap = true
                                 )
                             }
                             else -> Text(
@@ -965,6 +1034,7 @@ fun UsernameAndEmailOsintScreen(
                                         "• $hint",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        softWrap = true,
                                         modifier = Modifier.padding(vertical = 2.dp)
                                     )
                                 }
@@ -987,11 +1057,10 @@ fun UsernameAndEmailOsintScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                cleanSiteLabel,
+                                                text = cleanSiteLabel,
                                                 style = MaterialTheme.typography.titleSmall,
+                                                softWrap = true,
                                                 modifier = Modifier.weight(1f),
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
                                             )
                                             Spacer(Modifier.width(Space.sm))
                                             Pill(hit.source, tone = Tone.INFO)
@@ -1006,11 +1075,12 @@ fun UsernameAndEmailOsintScreen(
                         uiState.googleCommentReport?.comments?.forEach { hit ->
                             add("Comment (${hit.platform}): ${hit.title}" to hit.url)
                         }
+                        uiState.enrichedProfiles.forEach { add("Dossier: ${it.platform} (@${it.handle})" to it.profileUrl) }
                         uiState.registeredSites.forEach { add("Registered: ${it.site}" to it.profileUrl) }
                         uiState.liveHits.forEach { add("Handle Match: ${it.site}" to it.profileUrl) }
+                        uiState.openWebReport?.results?.forEach { add("Web Mention (${it.source}): ${it.title}" to it.url) }
                         OsintTools.getBlackbirdEmailScan(target).forEach { add(it.title to it.url) }
                     }
-
 
                     Spacer(modifier = Modifier.height(16.dp))
                     NumberedLinksHubCard(
@@ -1022,6 +1092,27 @@ fun UsernameAndEmailOsintScreen(
                                 title = "Email OSINT Report",
                                 target = target,
                                 sections = buildList {
+                                    uiState.attributionReport?.let { attr ->
+                                        add(
+                                            PdfSection(
+                                                heading = "Attributed Names, Usernames, Phones & Locations",
+                                                lines = attr.namesFound.map { "Name (${it.source}): ${it.value}" } +
+                                                    attr.usernamesFound.map { "Username (${it.source}): ${it.value}" } +
+                                                    attr.phonesFound.map { "Phone (${it.source}): ${it.value}" } +
+                                                    attr.locationsFound.map { "Location (${it.source}): ${it.value}" }
+                                            )
+                                        )
+                                    }
+                                    if (uiState.enrichedProfiles.isNotEmpty()) {
+                                        add(
+                                            PdfSection(
+                                                heading = "Deep Profile Dossiers (${uiState.enrichedProfiles.size})",
+                                                lines = uiState.enrichedProfiles.map { c ->
+                                                    "${c.platform} (@${c.handle}): ${listOfNotNull(c.displayName, c.location, c.statsSummary, c.bio).joinToString(" • ")} (${c.profileUrl})"
+                                                }
+                                            )
+                                        )
+                                    }
                                     uiState.googleCommentReport?.let { commentRep ->
                                         if (commentRep.comments.isNotEmpty()) {
                                             add(
@@ -1107,7 +1198,8 @@ fun UsernameAndEmailOsintScreen(
                             net?.error != null -> Text(
                                 net.error,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.error
+                                color = MaterialTheme.colorScheme.error,
+                                softWrap = true
                             )
                             net != null -> {
                                 ResultRow("Domain", net.domain)
@@ -1141,7 +1233,8 @@ fun UsernameAndEmailOsintScreen(
                                         Text(
                                             sub,
                                             style = MaterialTheme.typography.bodySmall,
-                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                            fontFamily = FontFamily.Monospace,
+                                            softWrap = true,
                                             modifier = Modifier.padding(vertical = 1.dp),
                                         )
                                     }
@@ -1196,7 +1289,12 @@ private fun IdentityEnrichmentSection(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("• ${proof.service}: ${proof.handle}", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                text = "• ${proof.service}: ${proof.handle}",
+                                style = MaterialTheme.typography.bodySmall,
+                                softWrap = true,
+                                modifier = Modifier.weight(1f)
+                            )
                             if (proof.proofUrl.startsWith("http")) {
                                 TextButton(onClick = { onOpenUrl(proof.proofUrl) }) { Text("Open") }
                             }
@@ -1209,10 +1307,11 @@ private fun IdentityEnrichmentSection(
                         Text(
                             "Key ${pgp.keyId}" + (pgp.createdDate?.let { " (created $it)" } ?: ""),
                             style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            softWrap = true
                         )
                         pgp.uids.forEach { uid ->
-                            Text("• $uid", style = MaterialTheme.typography.bodySmall)
+                            Text("• $uid", style = MaterialTheme.typography.bodySmall, softWrap = true)
                         }
                     }
                 }
@@ -1227,6 +1326,7 @@ private fun IdentityEnrichmentSection(
                             Text(
                                 "• ${wb.targetUrl} (${wb.snapshotCount} captures, ${wb.firstSeen}..${wb.lastSeen})",
                                 style = MaterialTheme.typography.bodySmall,
+                                softWrap = true,
                                 modifier = Modifier.weight(1f)
                             )
                             wb.latestArchiveUrl?.let { url ->
@@ -1261,8 +1361,5 @@ private fun IdentityEnrichmentSection(
     }
 }
 
-/** "1 result" / "3 results" — avoids the "(s)" shorthand in result headers. */
 private fun countLabel(count: Int, singular: String, plural: String): String =
     if (count == 1) "1 $singular" else "$count $plural"
-
-

@@ -94,7 +94,6 @@ fun NumberFinderApp(modifier: Modifier = Modifier) {
             contentAlignment = Alignment.TopCenter,
         ) {
             CyberBackdrop()
-            // Cap the reading width so the same layout still behaves on a folded inner display.
             val contentModifier = Modifier
                 .fillMaxSize()
                 .widthIn(max = 600.dp)
@@ -108,11 +107,6 @@ fun NumberFinderApp(modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * Wordmark + mode switch in one block. The tabs live in the header rather than a bottom bar:
- * on tall gesture-navigation phones the bottom strip is exactly where the system competes for
- * touches, and a console reads top-down anyway.
- */
 @Composable
 private fun AppHeaderBar(
     tabs: List<AppTab>,
@@ -130,7 +124,7 @@ private fun AppHeaderBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "OSINT",
@@ -151,12 +145,14 @@ private fun AppHeaderBar(
                         )
                     }
                     Text(
-                        text = "AUTONOMOUS INVESTIGATIONS · PENTESTER ARCHITECTURE",
+                        text = "AUTONOMOUS INVESTIGATIONS · ON-DEVICE RECON",
                         style = MaterialTheme.typography.labelSmall,
                         letterSpacing = 1.4.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true,
                     )
                 }
+                Spacer(Modifier.width(8.dp))
                 Pill("PILOT v1", tone = Tone.ACCENT)
             }
 

@@ -157,7 +157,13 @@ fun OsintPilotScreen(
                 }
             }
 
-            if (report.resolvedNames.isNotEmpty() || report.locations.isNotEmpty() || report.telecomCarrier != null) {
+            if (report.resolvedNames.isNotEmpty() ||
+                report.resolvedAliases.isNotEmpty() ||
+                report.linkedPhones.isNotEmpty() ||
+                report.linkedEmails.isNotEmpty() ||
+                report.locations.isNotEmpty() ||
+                report.telecomCarrier != null
+            ) {
                 item {
                     PilotIdentityDossierCard(report = report)
                 }
@@ -675,11 +681,20 @@ private fun PilotLinkedAccountsCard(accounts: List<com.example.phone_number_look
 private fun PilotIdentityDossierCard(report: PilotInvestigationReport) {
     SectionCard(
         title = "IDENTITY RESOLUTION DOSSIER",
-        subtitle = "Correlated names, aliases & telecommunications telemetry",
+        subtitle = "Correlated names, usernames, phones, emails & locations",
         tone = Tone.ACCENT
     ) {
         report.resolvedNames.forEach { name ->
             PilotDataRow("Resolved Name", name.value, name.source)
+        }
+        report.resolvedAliases.forEach { alias ->
+            PilotDataRow("Username / Alias", alias.value, alias.source)
+        }
+        report.linkedEmails.forEach { email ->
+            PilotDataRow("Linked Email", email, "Email Intelligence")
+        }
+        report.linkedPhones.forEach { phone ->
+            PilotDataRow("Phone Number", phone, "Telecom / Recovery Intelligence")
         }
         report.telecomCarrier?.let {
             PilotDataRow("Telecom Carrier", it, "Network Allocation Plan")
@@ -699,8 +714,8 @@ private fun PilotIdentityDossierCard(report: PilotInvestigationReport) {
 @Composable
 private fun PilotBreachIntelligenceCard(breaches: List<com.example.phone_number_lookup.BreachDetail>) {
     SectionCard(
-        title = "BREACH INTELLIGENCE",
-        subtitle = "${breaches.size} known data breaches tied to target",
+        title = "BREACH & INFOSTEALER INTELLIGENCE",
+        subtitle = "${breaches.size} known data breaches or stealer logs tied to target",
         tone = Tone.DANGER
     ) {
         breaches.forEachIndexed { idx, breach ->
@@ -710,18 +725,22 @@ private fun PilotBreachIntelligenceCard(breaches: List<com.example.phone_number_
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
                 )
             }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = breach.name,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.error
+                        color = MaterialTheme.colorScheme.error,
+                        softWrap = true,
+                        modifier = Modifier.weight(1f)
                     )
-                    Pill(breach.breachDate ?: "Unknown Date", tone = Tone.DANGER)
+                    Spacer(Modifier.width(8.dp))
+                    Pill(breach.breachDate ?: "Reported", tone = Tone.DANGER)
                 }
                 if (breach.pwnCount > 0) {
                     Text(
@@ -734,7 +753,16 @@ private fun PilotBreachIntelligenceCard(breaches: List<com.example.phone_number_
                     Text(
                         text = "Compromised Data: ${breach.dataClasses.joinToString(", ")}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        softWrap = true
+                    )
+                }
+                if (breach.description.isNotBlank() && breach.description != breach.name) {
+                    Text(
+                        text = breach.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true
                     )
                 }
             }
@@ -792,7 +820,7 @@ private fun PilotSourcedFindingsCard(findings: List<SourcedFinding>) {
         subtitle = "${findings.size} sourced facts with confidence scores",
         tone = Tone.ACCENT
     ) {
-        findings.take(35).forEachIndexed { idx, f ->
+        findings.take(80).forEachIndexed { idx, f ->
             if (idx > 0) {
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 6.dp),
@@ -805,9 +833,7 @@ private fun PilotSourcedFindingsCard(findings: List<SourcedFinding>) {
                     .then(
                         if (f.sourceUrl != null) {
                             Modifier.clickable {
-                                runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(f.sourceUrl)))
-                                }
+                                com.example.phone_number_lookup.ui.components.openUrl(context, f.sourceUrl)
                             }
                         } else Modifier
                     )
@@ -836,12 +862,14 @@ private fun PilotSourcedFindingsCard(findings: List<SourcedFinding>) {
                 Text(
                     text = f.claim,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    softWrap = true
                 )
                 Text(
                     text = "Source: ${f.sourceName}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.outline,
+                    softWrap = true
                 )
             }
         }

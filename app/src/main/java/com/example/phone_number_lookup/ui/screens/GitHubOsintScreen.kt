@@ -3,6 +3,8 @@ package com.example.phone_number_lookup.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,7 +31,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.phone_number_lookup.ui.components.AppButton
@@ -46,6 +47,7 @@ import com.example.phone_number_lookup.ui.components.Tone
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.GitHubOsintViewModel
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GitHubOsintScreen(
     viewModel: GitHubOsintViewModel = viewModel(),
@@ -123,7 +125,7 @@ fun GitHubOsintScreen(
         uiState.profile?.let { p ->
             SectionCard(
                 title = "@${p.login}",
-                subtitle = "Public profile, commit identities and published keys",
+                subtitle = "Public profile, commit identities, gists and published keys",
                 tone = Tone.ACCENT,
             ) {
                 if (p.publicRepos != null || p.followers != null) {
@@ -158,6 +160,43 @@ fun GitHubOsintScreen(
                 }
                 if (p.sshKeys.isNotEmpty()) {
                     MetadataBlock("Published SSH keys (${p.sshKeys.size})", p.sshKeys)
+                }
+                if (p.gists.isNotEmpty()) {
+                    Spacer(Modifier.height(Space.md))
+                    Text(
+                        text = "Published Gists (${p.gists.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    p.gists.forEach { gist ->
+                        Surface(
+                            onClick = { openUrl(context, gist.htmlUrl) },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                Text(
+                                    text = gist.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    softWrap = true,
+                                )
+                                if (gist.files.isNotEmpty()) {
+                                    Text(
+                                        text = "Files: ${gist.files.joinToString(", ")} • Created ${gist.createdAt}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        softWrap = true,
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(Space.md))
@@ -206,9 +245,8 @@ fun GitHubOsintScreen(
                                 text = user.login,
                                 style = MaterialTheme.typography.titleSmall,
                                 fontFamily = FontFamily.Monospace,
+                                softWrap = true,
                                 modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
                             )
                             Spacer(Modifier.width(Space.sm))
                             Text(
@@ -241,21 +279,22 @@ fun GitHubOsintScreen(
                                 text = repo.fullName,
                                 style = MaterialTheme.typography.titleSmall,
                                 fontFamily = FontFamily.Monospace,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                softWrap = true,
                             )
                             repo.description?.let {
                                 Text(
                                     text = it,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
+                                    softWrap = true,
                                     modifier = Modifier.padding(top = 3.dp)
                                 )
                             }
                             Spacer(Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 repo.language?.let { Pill(it, Tone.NEUTRAL) }
                                 repo.stars?.let { Pill("★ $it", Tone.WARNING) }
                                 repo.forks?.let { Pill("⑂ $it", Tone.NEUTRAL) }
@@ -287,6 +326,7 @@ private fun MetadataBlock(title: String, values: List<String>) {
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurface,
+            softWrap = true,
             modifier = Modifier.padding(vertical = 2.dp),
         )
     }

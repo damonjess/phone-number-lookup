@@ -67,7 +67,8 @@ class OsintPilotViewModel(application: Application) : AndroidViewModel(applicati
             locationHint = _uiState.value.locationHint.trim().takeIf { it.isNotBlank() },
             knownAliases = _uiState.value.aliasesInput.split(',', ';', ' ')
                 .map { it.trim().removePrefix("@") }
-                .filter { it.isNotBlank() }
+                .filter { it.isNotBlank() },
+            appContext = getApplication()
         )
 
         _uiState.update {

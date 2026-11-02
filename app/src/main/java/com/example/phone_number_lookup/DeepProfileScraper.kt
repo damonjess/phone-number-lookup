@@ -31,10 +31,12 @@ object DeepProfileScraper {
     private val OG_IMAGE = Regex("""<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
     private val MAILTO_REGEX = Regex("""mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,12})""", RegexOption.IGNORE_CASE)
     private val EMAIL_REGEX = Regex("""[a-zA-Z0-9._%+-]{2,64}@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,12}""")
-    private val SOCIAL_LINK_REGEX = Regex("""https?://(?:www\.)?(?:github\.com|x\.com|twitter\.com|linkedin\.com/in|instagram\.com|t\.me|youtube\.com/@|bsky\.app/profile|mastodon\.social/@)[a-zA-Z0-9_./@-]+""", RegexOption.IGNORE_CASE)
+    private val SOCIAL_LINK_REGEX = Regex("""https?://(?:www\.)?(?:github\.com|x\.com|twitter\.com|linkedin\.com/in|instagram\.com|t\.me|youtube\.com/@|tiktok\.com/@|bsky\.app/profile|mastodon\.social/@)[a-zA-Z0-9_./@-]+""", RegexOption.IGNORE_CASE)
 
     /**
-     * Queries public JSON APIs for the username AND scrapes HTML metadata from confirmed profile hits.
+     * Queries 22+ public JSON/XML/oEmbed APIs AND automatically runs CuratedUsernameChecks
+     * when confirmedHits is empty, so consumer socials (TikTok, YouTube, Steam, Telegram,
+     * SoundCloud, Twitch, Pinterest, Linktree, Duolingo, Roblox, etc.) are always discovered.
      */
     suspend fun scrapeUsernameDossier(
         username: String,
@@ -45,6 +47,19 @@ object DeepProfileScraper {
 
         coroutineScope {
             val apiJobs = listOf(
+                async { fetchGitHubDeep(clean) },
+                async { fetchTikTokOembed(clean) },
+                async { fetchYouTubeOembed(clean) },
+                async { fetchSoundCloudOembed(clean) },
+                async { fetchTelegramPublic(clean) },
+                async { fetchSteamXml(clean) },
+                async { fetchDuolingoUser(clean) },
+                async { fetchGravatarUser(clean) },
+                async { fetchRobloxUser(clean) },
+                async { fetchVimeoUser(clean) },
+                async { fetchDailymotionUser(clean) },
+                async { fetchScratchUser(clean) },
+                async { fetchMinecraftUser(clean) },
                 async { fetchReddit(clean) },
                 async { fetchBluesky(clean) },
                 async { fetchMastodon(clean) },
@@ -55,26 +70,354 @@ object DeepProfileScraper {
                 async { fetchDockerHub(clean) },
                 async { fetchNpmMaintainer(clean) },
                 async { fetchWikipediaGlobal(clean) },
-                async { fetchStackOverflow(clean) },
-                async { fetchGitHubDeep(clean) }
+                async { fetchStackOverflow(clean) }
             )
 
-            // Scrape OpenGraph / bio / links from up to 12 confirmed profile URLs
+            // If no confirmedHits were supplied (e.g. from Pilot or Email second-hop),
+            // run CuratedUsernameChecks.PROBES so Pinterest, Linktree, Twitch, Strava, Medium, Letterboxd, etc. are checked!
+            val effectiveHits = if (confirmedHits.isNotEmpty()) {
+                confirmedHits
+            } else {
+                val probeSem = Semaphore(6)
+                CuratedUsernameChecks.PROBES.map { probe ->
+                    async {
+                        probeSem.withPermit {
+                            val res = OsintDatasets.evaluate(probe, clean, timeoutMs = 8_000)
+                            if (res.verdict == ProbeVerdict.FOUND) {
+                                UsernameHit(
+                                    site = probe.name,
+                                    category = probe.category,
+                                    source = probe.source,
+                                    profileUrl = OsintDatasets.cleanProfileUrl(probe.name, res.profileUrl),
+                                    statusCode = res.statusCode,
+                                    finalUrl = res.finalUrl,
+                                    evidence = res.evidence,
+                                    confidence = "High",
+                                    verificationStatus = "Matched",
+                                    queriedName = clean
+                                )
+                            } else null
+                        }
+                    }
+                }.awaitAll().filterNotNull()
+            }
+
+            val apiResults = apiJobs.awaitAll().filterNotNull()
+            val coveredPlatforms = apiResults.map { it.platform.lowercase() }.toSet()
+
             val htmlSemaphore = Semaphore(4)
-            val htmlJobs = confirmedHits
-                .filter { it.verificationStatus == "Matched" && it.profileUrl.startsWith("http") }
-                .take(12)
+            val htmlJobs = effectiveHits
+                .filter {
+                    it.verificationStatus == "Matched" &&
+                        it.profileUrl.startsWith("http") &&
+                        it.site.lowercase() !in coveredPlatforms
+                }
+                .take(16)
                 .map { hit ->
                     async {
                         htmlSemaphore.withPermit {
                             scrapeHtmlProfileMetadata(hit.site, clean, hit.profileUrl)
+                                ?: EnrichedProfileCard(
+                                    platform = hit.site,
+                                    handle = clean,
+                                    profileUrl = hit.profileUrl,
+                                    bio = "Confirmed public profile on ${hit.site} (${hit.category})"
+                                )
                         }
                     }
                 }
 
-            (apiJobs.awaitAll().filterNotNull() + htmlJobs.awaitAll().filterNotNull())
-                .distinctBy { "${it.platform.lowercase()}|${it.profileUrl.lowercase()}" }
+            (apiResults + htmlJobs.awaitAll().filterNotNull())
+                .distinctBy { "${it.platform.lowercase()}|${it.profileUrl.lowercase().trimEnd('/')}" }
         }
+    }
+
+    private fun fetchTikTokOembed(u: String): EnrichedProfileCard? {
+        val profileUrl = "https://www.tiktok.com/@$u"
+        val resp = ScanHttp.get(
+            "https://www.tiktok.com/oembed?url=${ScanHttp.encode(profileUrl)}",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            val authorName = root.optString("author_name").takeIf { it.isNotBlank() } ?: return null
+            val title = root.optString("title").takeIf { it.isNotBlank() }
+            val thumb = root.optString("thumbnail_url").takeIf { it.startsWith("http") }
+            EnrichedProfileCard(
+                platform = "TikTok",
+                handle = u,
+                profileUrl = profileUrl,
+                displayName = authorName,
+                bio = title,
+                avatarUrl = thumb
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchYouTubeOembed(u: String): EnrichedProfileCard? {
+        val profileUrl = "https://www.youtube.com/@$u"
+        val resp = ScanHttp.get(
+            "https://www.youtube.com/oembed?url=${ScanHttp.encode(profileUrl)}&format=json",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            val authorName = root.optString("author_name").takeIf { it.isNotBlank() } ?: return null
+            val authorUrl = root.optString("author_url").takeIf { it.startsWith("http") } ?: profileUrl
+            val thumb = root.optString("thumbnail_url").takeIf { it.startsWith("http") }
+            EnrichedProfileCard(
+                platform = "YouTube",
+                handle = u,
+                profileUrl = authorUrl,
+                displayName = authorName,
+                bio = root.optString("title").takeIf { it.isNotBlank() },
+                avatarUrl = thumb
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchSoundCloudOembed(u: String): EnrichedProfileCard? {
+        val profileUrl = "https://soundcloud.com/$u"
+        val resp = ScanHttp.get(
+            "https://soundcloud.com/oembed?url=${ScanHttp.encode(profileUrl)}&format=json",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            val author = root.optString("author_name").takeIf { it.isNotBlank() } ?: return null
+            val desc = root.optString("description").takeIf { it.isNotBlank() }
+            val thumb = root.optString("thumbnail_url").takeIf { it.startsWith("http") }
+            EnrichedProfileCard(
+                platform = "SoundCloud",
+                handle = u,
+                profileUrl = profileUrl,
+                displayName = author,
+                bio = desc,
+                avatarUrl = thumb
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchTelegramPublic(u: String): EnrichedProfileCard? {
+        val url = "https://t.me/$u"
+        val resp = ScanHttp.get(url, timeoutMs = 8_000)
+        if (!resp.isOk || resp.body.isBlank() || resp.body.contains("tgme_page_icon_user")) return null
+        val html = resp.body
+        val title = Regex("""<div[^>]*class=["'][^"']*tgme_page_title[^"']*["'][^>]*>(.*?)</div>""", RegexOption.DOT_MATCHES_ALL)
+            .find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
+            ?: return null
+        val desc = Regex("""<div[^>]*class=["'][^"']*tgme_page_description[^"']*["'][^>]*>(.*?)</div>""", RegexOption.DOT_MATCHES_ALL)
+            .find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
+        val extra = Regex("""<div[^>]*class=["'][^"']*tgme_page_extra[^"']*["'][^>]*>(.*?)</div>""", RegexOption.DOT_MATCHES_ALL)
+            .find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
+        val img = OG_IMAGE.find(html)?.groupValues?.get(1)?.takeIf { it.startsWith("http") }
+
+        return EnrichedProfileCard(
+            platform = "Telegram",
+            handle = u,
+            profileUrl = url,
+            displayName = title,
+            bio = desc,
+            discoveredEmails = extractEmails(desc.orEmpty()),
+            discoveredPhones = EmailAttributionEngine.extractPhoneNumbersFromText(desc.orEmpty(), "Telegram").map { it.value },
+            avatarUrl = img,
+            statsSummary = extra
+        )
+    }
+
+    private fun fetchSteamXml(u: String): EnrichedProfileCard? {
+        val url = "https://steamcommunity.com/id/${ScanHttp.encode(u)}?xml=1"
+        val resp = ScanHttp.get(url, timeoutMs = 8_000)
+        if (!resp.isOk || !resp.body.contains("<steamID64>")) return null
+        val xml = resp.body
+        val steamId = Regex("""<steamID><!\[CDATA\[(.*?)]]></steamID>""").find(xml)?.groupValues?.get(1)
+            ?: Regex("""<steamID>(.*?)</steamID>""").find(xml)?.groupValues?.get(1)
+        val realName = Regex("""<realname><!\[CDATA\[(.*?)]]></realname>""").find(xml)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+        val location = Regex("""<location><!\[CDATA\[(.*?)]]></location>""").find(xml)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+            ?: Regex("""<location>(.*?)</location>""").find(xml)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+        val summary = Regex("""<summary><!\[CDATA\[(.*?)]]></summary>""", RegexOption.DOT_MATCHES_ALL)
+            .find(xml)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
+        val avatar = Regex("""<avatarFull><!\[CDATA\[(.*?)]]></avatarFull>""").find(xml)?.groupValues?.get(1)
+        val memberSince = Regex("""<memberSince>(.*?)</memberSince>""").find(xml)?.groupValues?.get(1)
+
+        return EnrichedProfileCard(
+            platform = "Steam",
+            handle = u,
+            profileUrl = "https://steamcommunity.com/id/$u",
+            displayName = realName ?: steamId,
+            bio = summary?.take(260),
+            location = location,
+            avatarUrl = avatar,
+            createdDate = memberSince
+        )
+    }
+
+    private fun fetchDuolingoUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get(
+            "https://www.duolingo.com/2017-06-30/users?username=${ScanHttp.encode(u)}",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val user = JSONObject(resp.body).optJSONArray("users")?.optJSONObject(0) ?: return null
+            val username = user.optString("username").takeIf { it.isNotBlank() } ?: return null
+            val name = user.optString("name").takeIf { it.isNotBlank() && it != "null" }
+            val streak = user.optInt("streak", 0)
+            val totalXp = user.optInt("totalXp", 0)
+            val createdSec = user.optLong("creationDate", 0L)
+            EnrichedProfileCard(
+                platform = "Duolingo",
+                handle = username,
+                profileUrl = "https://www.duolingo.com/profile/$username",
+                displayName = name,
+                createdDate = if (createdSec > 0) formatEpochSeconds(createdSec) else null,
+                statsSummary = "$totalXp XP • $streak day streak"
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchGravatarUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get(
+            "https://en.gravatar.com/${ScanHttp.encode(u)}.json",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val entry = JSONObject(resp.body).optJSONArray("entry")?.optJSONObject(0) ?: return null
+            val pref = entry.optString("preferredUsername").ifBlank { u }
+            val display = entry.optString("displayName").takeIf { it.isNotBlank() }
+            val about = entry.optString("aboutMe").takeIf { it.isNotBlank() }
+            val loc = entry.optString("currentLocation").takeIf { it.isNotBlank() }
+            val thumb = entry.optString("thumbnailUrl").takeIf { it.startsWith("http") }
+            EnrichedProfileCard(
+                platform = "Gravatar",
+                handle = pref,
+                profileUrl = entry.optString("profileUrl", "https://gravatar.com/$pref"),
+                displayName = display,
+                bio = about,
+                location = loc,
+                avatarUrl = thumb
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchRobloxUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.post(
+            "https://users.roblox.com/v1/usernames/users",
+            """{"usernames":["$u"],"excludeBannedUsers":false}""",
+            contentType = "application/json",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val data = JSONObject(resp.body).optJSONArray("data")?.optJSONObject(0) ?: return null
+            val id = data.optLong("id", -1L)
+            if (id <= 0L) return null
+            val name = data.optString("name", u)
+            val display = data.optString("displayName").takeIf { it.isNotBlank() }
+            EnrichedProfileCard(
+                platform = "Roblox",
+                handle = name,
+                profileUrl = "https://www.roblox.com/users/$id/profile",
+                displayName = display,
+                statsSummary = "Roblox User ID: $id"
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchVimeoUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get("https://vimeo.com/api/v2/${ScanHttp.encode(u)}/info.json", timeoutMs = 8_000)
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            val name = root.optString("display_name").takeIf { it.isNotBlank() } ?: return null
+            val bio = BreachCatalog.plainText(root.optString("bio")).takeIf { it.isNotBlank() }
+            val loc = root.optString("location").takeIf { it.isNotBlank() }
+            val created = root.optString("created_on").substringBefore(' ').takeIf { it.isNotBlank() }
+            val thumb = root.optString("portrait_large").takeIf { it.startsWith("http") }
+            EnrichedProfileCard(
+                platform = "Vimeo",
+                handle = u,
+                profileUrl = root.optString("profile_url", "https://vimeo.com/$u"),
+                displayName = name,
+                bio = bio,
+                location = loc,
+                avatarUrl = thumb,
+                createdDate = created
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchDailymotionUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get(
+            "https://api.dailymotion.com/user/${ScanHttp.encode(u)}?fields=username,screenname,description,created_time,avatar_120_url",
+            timeoutMs = 8_000
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            if (root.has("error")) return null
+            val screen = root.optString("screenname").takeIf { it.isNotBlank() } ?: return null
+            val desc = BreachCatalog.plainText(root.optString("description")).takeIf { it.isNotBlank() }
+            val created = root.optLong("created_time", 0L)
+            EnrichedProfileCard(
+                platform = "Dailymotion",
+                handle = root.optString("username", u),
+                profileUrl = "https://www.dailymotion.com/$u",
+                displayName = screen,
+                bio = desc,
+                avatarUrl = root.optString("avatar_120_url").takeIf { it.startsWith("http") },
+                createdDate = if (created > 0) formatEpochSeconds(created) else null
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchScratchUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get("https://api.scratch.mit.edu/users/${ScanHttp.encode(u)}", timeoutMs = 8_000)
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            val username = root.optString("username").takeIf { it.isNotBlank() } ?: return null
+            val profile = root.optJSONObject("profile")
+            val bio = profile?.optString("bio")?.takeIf { it.isNotBlank() }
+            val country = profile?.optString("country")?.takeIf { it.isNotBlank() }
+            val joined = root.optJSONObject("history")?.optString("joined")?.substringBefore('T')
+            EnrichedProfileCard(
+                platform = "Scratch",
+                handle = username,
+                profileUrl = "https://scratch.mit.edu/users/$username",
+                bio = bio,
+                location = country,
+                createdDate = joined
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchMinecraftUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get("https://api.mojang.com/users/profiles/minecraft/${ScanHttp.encode(u)}", timeoutMs = 8_000)
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            val id = root.optString("id").takeIf { it.isNotBlank() } ?: return null
+            val name = root.optString("name", u)
+            EnrichedProfileCard(
+                platform = "Minecraft (Mojang)",
+                handle = name,
+                profileUrl = "https://namemc.com/profile/$name",
+                displayName = name,
+                avatarUrl = "https://mc-heads.net/avatar/$id/100",
+                statsSummary = "UUID: $id"
+            )
+        }.getOrNull()
     }
 
     private suspend fun fetchGitHubDeep(u: String): EnrichedProfileCard? {
@@ -336,10 +679,6 @@ object DeepProfileScraper {
         }.getOrNull()
     }
 
-    /**
-     * Queries the public npm registry for packages maintained by this username—frequently
-     * exposes the author's direct email address in the maintainer record.
-     */
     internal fun fetchNpmMaintainer(u: String): EnrichedProfileCard? {
         val resp = ScanHttp.get(
             "https://registry.npmjs.org/-/v1/search?text=maintainer:${ScanHttp.encode(u)}&size=5",
@@ -426,10 +765,6 @@ object DeepProfileScraper {
         }.getOrNull()
     }
 
-    /**
-     * Universal HTML scraper for matched profile pages: extracts OpenGraph titles, descriptions,
-     * avatars, mailto links, emails, phone numbers, and outbound social links.
-     */
     internal fun scrapeHtmlProfileMetadata(
         siteName: String,
         handle: String,

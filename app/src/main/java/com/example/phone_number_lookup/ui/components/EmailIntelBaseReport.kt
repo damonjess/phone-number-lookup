@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.phone_number_lookup.AttributedProfileLink
@@ -47,6 +48,8 @@ import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.GoogleCommentReport
 import com.example.phone_number_lookup.GoogleCommentScraper
 import com.example.phone_number_lookup.GoogleMetadataReport
+import com.example.phone_number_lookup.OsintDatasets
+import com.example.phone_number_lookup.OsintDork
 import com.example.phone_number_lookup.RegistrationHit
 import com.example.phone_number_lookup.TimelineEvent
 import com.example.phone_number_lookup.UsernameHit
@@ -54,19 +57,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * IntelBase-style Dossier layout for Email OSINT results.
- * Matches the structured intelligence format seen in IntelBase:
- * - Target identity headline
- * - Names with source badges
- * - Usernames with source badges
- * - Profile Pictures
- * - Profile Links
- * - Locations with source badges and interactive "Show more" toggle
- * - Activity Timeline with formatted dates and sources
- * - Registrations
- * - Data Breaches with amount/sources counters and masked disclosure notice
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EmailIntelBaseReport(
@@ -83,7 +73,6 @@ fun EmailIntelBaseReport(
     googleCommentReport: GoogleCommentReport? = null,
     isCommentScraping: Boolean = false,
 ) {
-    // Collect and deduplicate Names
     val names = remember(attribution, googleMetadata) {
         val list = mutableListOf<AttributedValue>()
         attribution?.namesFound?.let { list.addAll(it) }
@@ -91,61 +80,69 @@ fun EmailIntelBaseReport(
         list.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
     }
 
-    // Collect and deduplicate Usernames
     val usernames = remember(attribution, googleMetadata, handleHits) {
         val list = mutableListOf<AttributedValue>()
         attribution?.usernamesFound?.let { list.addAll(it) }
         googleMetadata?.playGamesUsername?.let { list.add(AttributedValue(it, "Google Play Games")) }
         handleHits.forEach { hit ->
             if (hit.verificationStatus == "Matched") {
-                list.add(AttributedValue(hit.queriedName, hit.site))
+                list.add(AttributedValue(hit.queriedName.ifBlank { target.substringBefore('@') }, hit.site))
             }
         }
         list.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
     }
 
-    // Collect Profile Photos
-    val photos = remember(attribution) {
-        attribution?.avatarUrls.orEmpty()
-            .filter { it.startsWith("http://") || it.startsWith("https://") }
+    val photos = remember(attribution, googleMetadata) {
+        buildList {
+            attribution?.avatarUrls?.let { addAll(it) }
+            googleMetadata?.avatarUrl?.let { add(it) }
+        }.filter { it.startsWith("http://") || it.startsWith("https://") }
             .distinct()
     }
 
-    // Collect Profile Links
     val profileLinks = remember(attribution, registrations, handleHits, googleMetadata) {
         val list = mutableListOf<AttributedProfileLink>()
         attribution?.profileLinks?.let { list.addAll(it) }
         googleMetadata?.profileUrl?.let {
-            list.add(AttributedProfileLink(googleMetadata.fullName ?: "Google Profile", "Google", it))
+            list.add(AttributedProfileLink(googleMetadata.fullName ?: "Google Profile", "Google Maps", it))
         }
         registrations.forEach { hit ->
             if (hit.profileUrl.startsWith("http") && hit.verificationStatus == "Registered response") {
-                list.add(AttributedProfileLink(hit.site, hit.site, hit.profileUrl))
+                list.add(
+                    AttributedProfileLink(
+                        handle = hit.site,
+                        platform = hit.site,
+                        url = OsintDatasets.cleanProfileUrl(hit.site, hit.profileUrl)
+                    )
+                )
             }
         }
         handleHits.forEach { hit ->
             if (hit.profileUrl.startsWith("http") && hit.verificationStatus == "Matched") {
-                list.add(AttributedProfileLink(hit.queriedName, hit.site, hit.profileUrl))
+                list.add(
+                    AttributedProfileLink(
+                        handle = hit.queriedName.ifBlank { target.substringBefore('@') },
+                        platform = hit.site,
+                        url = OsintDatasets.cleanProfileUrl(hit.site, hit.profileUrl)
+                    )
+                )
             }
         }
-        list.distinctBy { it.url.lowercase() }
+        list.distinctBy { it.url.lowercase().trimEnd('/') }
     }
 
-        // Collect and deduplicate Locations
     val locations = remember(attribution, googleMetadata) {
         val list = mutableListOf<AttributedValue>()
         attribution?.locationsFound?.let { list.addAll(it) }
-        googleMetadata?.mappedLocations?.forEach { list.add(AttributedValue(it, "Google")) }
+        googleMetadata?.mappedLocations?.forEach { list.add(AttributedValue(it, "Google Maps")) }
         list.distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
     }
 
-    // Collect and deduplicate Phone Numbers
     val phones = remember(attribution) {
         attribution?.phonesFound.orEmpty()
             .distinctBy { "${it.value.lowercase()}|${it.source.lowercase()}" }
     }
 
-    // Collect and sort Activity Timeline
     val timelineEvents = remember(attribution, breachReport) {
         val list = mutableListOf<TimelineEvent>()
         attribution?.timeline?.let { list.addAll(it) }
@@ -156,19 +153,18 @@ fun EmailIntelBaseReport(
         }
         breachReport?.breachNames?.forEach { breachName ->
             if (list.none { it.label.equals(breachName, ignoreCase = true) }) {
-                list.add(TimelineEvent("Recorded", breachName, "Data Breach"))
+                val yearMatch = Regex("""\b(20\d{2}(?:-\d{2}-\d{2})?)\b""").find(breachName)?.groupValues?.get(1)
+                list.add(TimelineEvent(yearMatch ?: "Recorded", breachName, "Data Breach"))
             }
         }
         list.distinctBy { "${it.date}|${it.label}|${it.source}" }
             .sortedByDescending { it.date }
     }
 
-    // All registrations (Confirmed + Holehe / Upstream reports)
     val allRegistrations = remember(registrations) {
         registrations.distinctBy { "${it.site.lowercase()}|${it.verificationStatus}" }
     }
 
-    // Breach records
     val breachNames = remember(breachReport) {
         breachReport?.breachNames.orEmpty().distinct()
     }
@@ -187,7 +183,6 @@ fun EmailIntelBaseReport(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Space.md)
     ) {
-        // 1. Target Dossier Header
         IntelBaseHeaderCard(
             target = target,
             namesCount = names.size,
@@ -200,7 +195,6 @@ fun EmailIntelBaseReport(
             isLoading = isLoading || isCommentScraping,
         )
 
-        // 2. Names Section
         IntelBaseSection(
             title = "Names",
             count = names.size,
@@ -208,22 +202,19 @@ fun EmailIntelBaseReport(
             emptyMessage = "No public name records returned by checked sources.",
         ) {
             names.forEachIndexed { index, name ->
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .padding(vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = name.value,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
                         softWrap = true,
                     )
-                    Spacer(Modifier.width(10.dp))
                     Pill(text = name.source, tone = Tone.INFO)
                 }
                 if (index < names.lastIndex) {
@@ -232,7 +223,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 3. Usernames Section
         IntelBaseSection(
             title = "Usernames",
             count = usernames.size,
@@ -240,12 +230,11 @@ fun EmailIntelBaseReport(
             emptyMessage = "No username handles returned by checked sources.",
         ) {
             usernames.forEachIndexed { index, item ->
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .padding(vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = item.value,
@@ -253,10 +242,8 @@ fun EmailIntelBaseReport(
                         fontWeight = FontWeight.Medium,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
                         softWrap = true,
                     )
-                    Spacer(Modifier.width(10.dp))
                     Pill(text = item.source, tone = Tone.ACCENT)
                 }
                 if (index < usernames.lastIndex) {
@@ -265,7 +252,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 3b. Phone Numbers Section
         IntelBaseSection(
             title = "Phone Numbers",
             count = phones.size,
@@ -273,12 +259,11 @@ fun EmailIntelBaseReport(
             emptyMessage = "No phone numbers or recovery phones returned by checked sources.",
         ) {
             phones.forEachIndexed { index, phone ->
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .padding(vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = phone.value,
@@ -286,10 +271,8 @@ fun EmailIntelBaseReport(
                         fontWeight = FontWeight.SemiBold,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
                         softWrap = true,
                     )
-                    Spacer(Modifier.width(10.dp))
                     Pill(text = phone.source, tone = Tone.WARNING)
                 }
                 if (index < phones.lastIndex) {
@@ -298,7 +281,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 4. Profile Pictures Section (if found)
         if (photos.isNotEmpty() || (isLoading && names.isEmpty())) {
             IntelBaseSection(
                 title = "Profile Pictures",
@@ -326,7 +308,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 5. Profile Links Section
         if (profileLinks.isNotEmpty() || (isLoading && names.isEmpty())) {
             IntelBaseSection(
                 title = "Profile Links",
@@ -343,14 +324,21 @@ fun EmailIntelBaseReport(
                             .padding(vertical = 8.dp, horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = "${link.handle} (${link.platform})",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.weight(1f),
-                            softWrap = true,
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${link.handle} (${link.platform})",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary,
+                                softWrap = true,
+                            )
+                            Text(
+                                text = link.url,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                softWrap = true,
+                            )
+                        }
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = "↗",
@@ -365,7 +353,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 5b. Google & Web Comments Section (Scraped comments + Google Comment Dork launchers)
         GoogleEmailCommentsSection(
             comments = comments,
             statusText = googleCommentReport?.googleDirectStatus,
@@ -374,7 +361,6 @@ fun EmailIntelBaseReport(
             onOpenUrl = onOpenUrl,
         )
 
-        // 6. Locations Section (with IntelBase-style Show more toggle!)
         IntelBaseSection(
             title = "Locations",
             count = locations.size,
@@ -385,26 +371,27 @@ fun EmailIntelBaseReport(
             val displayedLocations = if (expanded) locations else locations.take(4)
 
             displayedLocations.forEachIndexed { index, loc ->
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = "📍",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(end = 6.dp)
-                    )
-                    Text(
-                        text = loc.value,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                        softWrap = true,
-                    )
-                    Spacer(Modifier.width(8.dp))
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(
+                            text = "📍",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(end = 6.dp, top = 2.dp)
+                        )
+                        Text(
+                            text = loc.value,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            softWrap = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                     Pill(text = loc.source, tone = Tone.INFO)
                 }
                 if (index < displayedLocations.lastIndex) {
@@ -439,7 +426,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 7. Activity Timeline Section
         IntelBaseSection(
             title = "Activity Timeline",
             count = timelineEvents.size,
@@ -447,40 +433,37 @@ fun EmailIntelBaseReport(
             emptyMessage = "No dated activity signals returned.",
         ) {
             var timelineExpanded by rememberSaveable { mutableStateOf(true) }
-            val visibleEvents = if (timelineExpanded) timelineEvents else timelineEvents.take(5)
+            val visibleEvents = if (timelineExpanded) timelineEvents else timelineEvents.take(8)
 
             visibleEvents.forEachIndexed { index, event ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment = Alignment.Top,
                 ) {
                     Text(
                         text = formatIntelBaseDate(event.date),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.width(92.dp),
+                        softWrap = true,
+                        modifier = Modifier.width(96.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = event.label,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
                             softWrap = true,
                         )
                         Text(
-                            text = "· ${event.source}",
+                            text = event.source,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            softWrap = true,
                         )
                     }
                 }
@@ -489,7 +472,7 @@ fun EmailIntelBaseReport(
                 }
             }
 
-            if (timelineEvents.size > 5) {
+            if (timelineEvents.size > 8) {
                 Spacer(Modifier.height(4.dp))
                 Row(
                     modifier = Modifier
@@ -510,7 +493,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 8. Registrations Section (Confirmed + Holehe / Upstream reports)
         IntelBaseSection(
             title = "Registrations",
             count = allRegistrations.size,
@@ -540,11 +522,12 @@ fun EmailIntelBaseReport(
             ) {
                 filtered.forEach { hit ->
                     val isConfirmed = hit.verificationStatus == "Registered response"
+                    val cleanUrl = OsintDatasets.cleanProfileUrl(hit.site, hit.profileUrl)
                     Surface(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .then(
-                                if (hit.profileUrl.startsWith("http")) Modifier.clickable { onOpenUrl(hit.profileUrl) }
+                                if (cleanUrl.startsWith("http")) Modifier.clickable { onOpenUrl(cleanUrl) }
                                 else Modifier
                             ),
                         shape = RoundedCornerShape(8.dp),
@@ -569,6 +552,7 @@ fun EmailIntelBaseReport(
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurface,
+                                    softWrap = true,
                                 )
                             }
                             if ("Recovery " in hit.evidence) {
@@ -576,6 +560,7 @@ fun EmailIntelBaseReport(
                                     text = hit.evidence.substringAfter("• ").trim(),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    softWrap = true,
                                 )
                             }
                         }
@@ -584,7 +569,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 9. Data Breaches & Infostealer Section (with IntelBase-style Amount/Sources and Notice)
         IntelBaseSection(
             title = "Data Breaches",
             count = breachNames.size,
@@ -592,7 +576,6 @@ fun EmailIntelBaseReport(
             isLoading = isLoading && breachNames.isEmpty(),
             emptyMessage = "No exposure records returned by checked breach databases.",
         ) {
-            // Amount & Sources tiles
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -627,17 +610,20 @@ fun EmailIntelBaseReport(
                             fontWeight = FontWeight.Bold,
                             color = Tone.DANGER.color(),
                         )
-                        sp.computerUsername?.let { IntelBaseDetailRow("Username / Host", it) }
-                        sp.maskedIp?.let { IntelBaseDetailRow("IP Address", it) }
+                        val usersLabel = sp.allUsernames.ifEmpty { listOfNotNull(sp.computerUsername) }.joinToString(", ")
+                        val ipsLabel = sp.allMaskedIps.ifEmpty { listOfNotNull(sp.maskedIp) }.joinToString(", ")
+                        val datesLabel = sp.allDates.ifEmpty { listOfNotNull(sp.dateCompromised) }.joinToString(", ")
+                        if (usersLabel.isNotBlank()) IntelBaseDetailRow("Username / Host", usersLabel)
+                        if (ipsLabel.isNotBlank()) IntelBaseDetailRow("IP Address(es)", ipsLabel)
                         sp.operatingSystem?.let { IntelBaseDetailRow("Operating System", it) }
-                        sp.dateCompromised?.let { IntelBaseDetailRow("Compromise Date", it) }
+                        if (datesLabel.isNotBlank()) IntelBaseDetailRow("Compromise Date(s)", datesLabel)
+                        if (sp.antiviruses.isNotEmpty()) IntelBaseDetailRow("Antivirus", sp.antiviruses.joinToString(", "))
                     }
                 }
             }
 
             Spacer(Modifier.height(10.dp))
 
-            // IntelBase breach notice
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp),
@@ -656,6 +642,7 @@ fun EmailIntelBaseReport(
                         text = "Names and usernames are shown in full. Passwords, emails, IP addresses, phone numbers and hashes are masked.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true,
                     )
                 }
             }
@@ -663,15 +650,19 @@ fun EmailIntelBaseReport(
             Spacer(Modifier.height(10.dp))
 
             breachNames.forEachIndexed { index, breach ->
-                val detail = breachReport?.details?.firstOrNull { it.name.equals(breach, ignoreCase = true) }
+                val baseName = breach.substringBefore(" (").trim()
+                val detail = breachReport?.details?.firstOrNull {
+                    it.name.equals(baseName, ignoreCase = true) || it.name.equals(breach, ignoreCase = true)
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 6.dp)
+                        .padding(vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalAlignment = Alignment.Top,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
@@ -682,6 +673,7 @@ fun EmailIntelBaseReport(
                             modifier = Modifier.weight(1f),
                             softWrap = true,
                         )
+                        Spacer(Modifier.width(8.dp))
                         Pill(text = detail?.breachDate ?: "Exposed", tone = Tone.DANGER)
                     }
                     if (detail != null && detail.dataClasses.isNotEmpty()) {
@@ -689,7 +681,7 @@ fun EmailIntelBaseReport(
                             text = "Exposed fields: ${detail.dataClasses.joinToString(", ")}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 2.dp),
+                            softWrap = true,
                         )
                     }
                 }
@@ -699,7 +691,6 @@ fun EmailIntelBaseReport(
             }
         }
 
-        // 10. Technical Domain & Mail Gateway Details (Collapsible)
         domainReport?.let { domain ->
             var domainExpanded by rememberSaveable { mutableStateOf(false) }
             Card(
@@ -727,6 +718,7 @@ fun EmailIntelBaseReport(
                                 text = "MX, SPF, DMARC configuration and quality indicators",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                softWrap = true,
                             )
                         }
                         Text(
@@ -753,6 +745,7 @@ fun EmailIntelBaseReport(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error,
                                     fontWeight = FontWeight.Bold,
+                                    softWrap = true,
                                 )
                             }
                         }
@@ -763,11 +756,12 @@ fun EmailIntelBaseReport(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun GoogleEmailCommentsSection(
     comments: List<CommentHit>,
     statusText: String?,
-    dorkLinks: List<com.example.phone_number_lookup.OsintDork>,
+    dorkLinks: List<OsintDork>,
     isLoading: Boolean,
     onOpenUrl: (String) -> Unit,
 ) {
@@ -794,9 +788,10 @@ private fun GoogleEmailCommentsSection(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = statusText ?: "Scrapes Google Search, Reddit, HackerNews & GitHub for comments made by this email or handle",
+                        text = statusText ?: "Scrapes Google Search, Google Maps Reviews, Reddit, HackerNews & GitHub for comments made by this email or its handles",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        softWrap = true,
                     )
                 }
                 Spacer(Modifier.width(8.dp))
@@ -809,7 +804,7 @@ private fun GoogleEmailCommentsSection(
             Spacer(Modifier.height(10.dp))
 
             when {
-                isLoading -> LoadingRow("Scraping Google Search & public comment indexes for your email and handle…")
+                isLoading -> LoadingRow("Scraping Google Search & public comment indexes for your email and handles…")
                 comments.isEmpty() -> Notice(
                     "No directly indexed comments returned from unauthenticated scrape. Use the Google Comment Dork launchers below to view live Google comment results in your browser.",
                     tone = Tone.NEUTRAL,
@@ -826,24 +821,21 @@ private fun GoogleEmailCommentsSection(
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalAlignment = Alignment.Top,
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
+                                FlowRow(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
                                     modifier = Modifier.weight(1f),
                                 ) {
                                     Pill(text = hit.platform, tone = Tone.ACCENT)
                                     Pill(text = hit.authorMatch, tone = Tone.INFO)
-                                    hit.date?.let { d ->
-                                        Text(
-                                            text = d,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
+                                    hit.date?.takeIf { it.isNotBlank() }?.let { d ->
+                                        Pill(text = d, tone = Tone.NEUTRAL)
                                     }
                                 }
+                                Spacer(Modifier.width(6.dp))
                                 Text(
                                     text = "↗",
                                     style = MaterialTheme.typography.titleMedium,
@@ -869,7 +861,7 @@ private fun GoogleEmailCommentsSection(
                                 text = "${hit.sourceEngine} · ${hit.url}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.outline,
-                                maxLines = 1,
+                                softWrap = true,
                             )
                         }
                         if (index < visibleComments.lastIndex) {
@@ -932,11 +924,13 @@ private fun GoogleEmailCommentsSection(
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurface,
+                                    softWrap = true,
                                 )
                                 Text(
                                     text = dork.description,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    softWrap = true,
                                 )
                             }
                             Spacer(Modifier.width(8.dp))
@@ -1058,9 +1052,11 @@ private fun IntelBaseSection(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
+                    softWrap = true,
                     modifier = Modifier.weight(1f),
                 )
                 if (count > 0) {
+                    Spacer(Modifier.width(8.dp))
                     Pill(text = count.toString(), tone = tone)
                 }
             }
@@ -1079,20 +1075,28 @@ private fun IntelBaseSection(
 @Composable
 private fun IntelBaseDetailRow(label: String, value: String) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            softWrap = true,
+            modifier = Modifier.weight(0.9f),
         )
+        Spacer(Modifier.width(10.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End,
+            softWrap = true,
+            modifier = Modifier.weight(1.3f),
         )
     }
 }
