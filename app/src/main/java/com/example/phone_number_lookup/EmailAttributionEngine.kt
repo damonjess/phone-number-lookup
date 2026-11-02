@@ -7,6 +7,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class AttributedValue(
     val value: String,
@@ -48,12 +51,37 @@ data class EmailAttributionReport(
     val stealerProfile: StealerSubjectProfile? = null
 ) {
     val firstSeen: String?
-        get() = timeline.mapNotNull { it.date.takeIf { d -> d.matches(Regex("\\d{4}-\\d{2}-\\d{2}.*")) } }
-            .minOrNull()
+        get() = firstSeen(null)
 
     val lastSeen: String?
-        get() = timeline.mapNotNull { it.date.takeIf { d -> d.matches(Regex("\\d{4}-\\d{2}-\\d{2}.*")) } }
-            .maxOrNull()
+        get() = lastSeen(null)
+
+    fun firstSeen(breachReport: BreachReport? = null): String? {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val allDates = (timeline.filterNot { it.label == "Updated At" }.map { it.date } +
+                breachReport?.details.orEmpty().mapNotNull { it.breachDate } +
+                breachReport?.breachNames.orEmpty().mapNotNull { name ->
+                    Regex("""\b(20\d{2}(?:-\d{2}-\d{2})?)\b""").find(name)?.groupValues?.get(1)
+                })
+            .mapNotNull { it.takeIf { d -> d.matches(Regex("\\d{4}.*")) && d.take(10) <= today } }
+        return allDates.minOrNull()
+    }
+
+    fun lastSeen(breachReport: BreachReport? = null): String? {
+        val googleDate = timeline
+            .filter { it.source.contains("Google", ignoreCase = true) }
+            .maxOfOrNull { it.date }
+        if (googleDate != null) return googleDate
+
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val allDates = (timeline.filterNot { it.label == "Updated At" }.map { it.date } +
+                breachReport?.details.orEmpty().mapNotNull { it.breachDate } +
+                breachReport?.breachNames.orEmpty().mapNotNull { name ->
+                    Regex("""\b(20\d{2}(?:-\d{2}-\d{2})?)\b""").find(name)?.groupValues?.get(1)
+                })
+            .mapNotNull { it.takeIf { d -> d.matches(Regex("\\d{4}.*")) && d.take(10) <= today } }
+        return allDates.maxOrNull()
+    }
 
     val hasData: Boolean
         get() = namesFound.isNotEmpty() ||
@@ -129,7 +157,6 @@ object EmailAttributionEngine {
             }
             gh.avatarUrl?.let { avatars += it }
             gh.createdAt?.let { timeline += TimelineEvent(it, "Creation Date", "GitHub") }
-            gh.updatedAt?.let { timeline += TimelineEvent(it, "Updated At", "GitHub") }
         }
 
         // 2. Keybase Attribution

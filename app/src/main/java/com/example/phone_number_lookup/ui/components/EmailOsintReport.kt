@@ -117,8 +117,8 @@ fun EmailProfileStatsRow(
 ) {
     val accounts = registrations.distinctBy { it.site.lowercase() }.size
     val breaches = breachReport?.breachNames.orEmpty().distinct().size
-    val firstSeen = shortDate(attribution?.firstSeen)
-    val lastSeen = shortDate(attribution?.lastSeen)
+    val firstSeen = shortDate(attribution?.firstSeen(breachReport))
+    val lastSeen = shortDate(attribution?.lastSeen(breachReport))
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatTile(

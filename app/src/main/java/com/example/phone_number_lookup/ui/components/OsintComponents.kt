@@ -359,6 +359,8 @@ fun copyToClipboard(context: Context, label: String, text: String) {
 fun sanitizeUrlForOpening(url: String): String {
     val trimmed = url.trim()
     if (trimmed.startsWith("viber://") || trimmed.startsWith("tel:")) return trimmed
+    // Evidence URLs can target a specific issue, comment, or review. Keep the full path.
+    OsintDatasets.preserveSourceUrl(trimmed)?.let { return it }
     return OsintDatasets.cleanProfileUrl("", trimmed)
 }
 

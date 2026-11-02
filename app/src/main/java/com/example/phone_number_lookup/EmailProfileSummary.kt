@@ -81,8 +81,8 @@ object EmailProfileSummaryBuilder {
                     }
                 )
             }
-            val first = attribution?.firstSeen
-            val last = attribution?.lastSeen
+            val first = attribution?.firstSeen(breachReport)
+            val last = attribution?.lastSeen(breachReport)
             if (first != null || last != null) {
                 add(
                     buildString {

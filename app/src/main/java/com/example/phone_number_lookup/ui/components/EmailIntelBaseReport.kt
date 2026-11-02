@@ -145,7 +145,7 @@ fun EmailIntelBaseReport(
 
     val timelineEvents = remember(attribution, breachReport) {
         val list = mutableListOf<TimelineEvent>()
-        attribution?.timeline?.let { list.addAll(it) }
+        attribution?.timeline?.filterNot { it.label == "Updated At" }?.let { list.addAll(it) }
         breachReport?.details?.forEach { detail ->
             detail.breachDate?.let { date ->
                 list.add(TimelineEvent(date, detail.name, "Data Breach"))
@@ -157,7 +157,9 @@ fun EmailIntelBaseReport(
                 list.add(TimelineEvent(yearMatch ?: "Recorded", breachName, "Data Breach"))
             }
         }
-        list.distinctBy { "${it.date}|${it.label}|${it.source}" }
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        list.filter { it.date == "Recorded" || it.date <= today }
+            .distinctBy { "${it.date}|${it.label}|${it.source}" }
             .sortedByDescending { it.date }
     }
 

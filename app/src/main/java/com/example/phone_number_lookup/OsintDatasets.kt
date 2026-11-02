@@ -529,6 +529,16 @@ object OsintDatasets {
         return out
     }
 
+    /** Keep specific source records intact; profile-template cleanup may remove deep paths. */
+    fun preserveSourceUrl(rawUrl: String): String? {
+        val trimmed = rawUrl.trim()
+        return runCatching {
+            val uri = java.net.URI(trimmed)
+            val scheme = uri.scheme?.lowercase()
+            trimmed.takeIf { scheme in setOf("http", "https") && !uri.host.isNullOrBlank() }
+        }.getOrNull()
+    }
+
     fun cleanProfileUrl(siteName: String, rawUrl: String): String {
         val siteLower = siteName.trim().lowercase()
         val rawLower = rawUrl.trim().lowercase()

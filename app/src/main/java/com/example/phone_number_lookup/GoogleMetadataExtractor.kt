@@ -496,7 +496,7 @@ object GoogleMetadataExtractor {
     private fun formatMicrosToIsoDate(micros: Long): String? {
         if (micros <= 0L) return null
         val millis = micros / 1_000L
-        if (millis <= 946684800000L) return null // sanity check: after year 2000
+        if (millis <= 946684800000L || millis > System.currentTimeMillis()) return null // sanity check: year 2000 to current time
         return runCatching {
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
             sdf.timeZone = TimeZone.getTimeZone("UTC")
