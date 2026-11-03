@@ -134,7 +134,8 @@ object OpenWebOsintScraper {
         val resp = ScanHttp.get(
             url,
             timeoutMs = 10_000,
-            headers = mapOf("Accept" to "text/html,application/xhtml+xml")
+            headers = mapOf("Accept" to "text/html,application/xhtml+xml"),
+            maxBodyChars = 2_000_000
         )
         if (!resp.isOk || resp.body.isBlank()) return emptyList()
 
@@ -167,7 +168,7 @@ object OpenWebOsintScraper {
 
     private fun scrapeDuckDuckGo(query: String): List<SearchResultItem> {
         val url = "https://html.duckduckgo.com/html/?q=${ScanHttp.encode(query)}"
-        val resp = ScanHttp.get(url, timeoutMs = 12_000)
+        val resp = ScanHttp.get(url, timeoutMs = 12_000, maxBodyChars = 2_000_000)
         return when (val out = DdgParser.classify(resp.code, resp.body)) {
             is DdgOutcome.Results -> out.items
             else -> emptyList()
@@ -182,32 +183,53 @@ object OpenWebOsintScraper {
         val resp = ScanHttp.get(
             url,
             timeoutMs = 12_000,
-            headers = mapOf("Accept" to "text/html,application/xhtml+xml")
+            headers = mapOf("Accept" to "text/html,application/xhtml+xml"),
+            maxBodyChars = 2_000_000
         )
         if (!resp.isOk || resp.body.isBlank()) return emptyList()
 
+        val tagStrip = Regex("<[^>]*>")
+        val scriptStrip = Regex("""<(script|style)\b.*?</\1>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        val cleaned = resp.body.replace(scriptStrip, " ")
         val results = mutableListOf<SearchResultItem>()
-        val blockRegex = Regex(
-            """<a[^>]+href="(https?://[^"]+)"[^>]*class="[^"]*svelte-[^"]*"[^>]*>.*?<div[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</div>""",
+
+        val anchorRegex = Regex(
+            """<a\b[^>]*\bhref="(https?://[^"]+)"[^>]*>(?:(?!</a\b).)*?<div[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</div>.*?</a>""",
             setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
         )
-        val tagStrip = Regex("<[^>]*>")
+        val matches = anchorRegex.findAll(cleaned).toList()
 
-        for (match in blockRegex.findAll(resp.body)) {
+        for (i in matches.indices) {
+            val match = matches[i]
             val href = match.groupValues[1]
             if (href.contains("brave.com")) continue
-            val title = match.groupValues[2].replace(tagStrip, "").trim()
-            if (title.isNotBlank()) {
-                results += SearchResultItem(
-                    title = title,
-                    snippet = "Indexed web result via Brave Search",
-                    url = href,
-                    source = "Brave Search"
-                )
+            val title = match.groupValues[2].replace(tagStrip, " ").replace(Regex("\\s+"), " ").trim()
+            if (title.isBlank()) continue
+
+            val sliceStart = match.range.last + 1
+            val sliceEnd = if (i + 1 < matches.size) {
+                minOf(matches[i + 1].range.first, sliceStart + 2000)
+            } else {
+                minOf(cleaned.length, sliceStart + 2000)
             }
+            val afterSlice = if (sliceStart < sliceEnd) cleaned.substring(sliceStart, sliceEnd) else ""
+            val descMatch = Regex(
+                """<(?:p|div)\b[^>]*class="[^"]*(?:snippet-description|snippet-content)[^"]*"[^>]*>(.*?)</(?:p|div)>""",
+                setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+            ).find(afterSlice)?.groupValues?.get(1)
+            val snippet = descMatch?.replace(tagStrip, " ")?.replace(Regex("\\s+"), " ")?.trim()
+                ?.takeIf { it.length >= 15 }
+                ?: "Indexed web result via Brave Search"
+
+            results += SearchResultItem(
+                title = title,
+                snippet = snippet.take(280),
+                url = href,
+                source = "Brave Search"
+            )
             if (results.size >= 15) break
         }
-        return results
+        return results.distinctBy { it.url.lowercase().trimEnd('/') }
     }
 
     /**

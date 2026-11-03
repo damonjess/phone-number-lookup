@@ -46,16 +46,22 @@ data class GoogleMetadataReport(
 
 object GoogleMetadataExtractor {
 
+    private const val MAPS_MAX_BODY_CHARS = 4_000_000
+
     private val TITLE_REGEX = Regex("""<title[^>]*>(.*?)</title>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
     private val TIMEZONE_REGEX = Regex("""ctz=([^&"']+)""", RegexOption.IGNORE_CASE)
     private val TBM_MAP_PATH_REGEX = Regex("""(/search\?tbm=map[^"]+)""")
     private val MAS_PATH_REGEX = Regex("""(/locationhistory/preview/mas\?[^"]*pb\\u003d[^"]+)""")
-    private val GAIA_ID_FROM_CONTRIB_REGEX = Regex("""/maps/contrib/(\d{21})""")
+    private val GAIA_ID_FROM_CONTRIB_REGEX = Regex(
+        """(?:/maps/contrib/|%2Fmaps%2Fcontrib%2F|\\+/maps\\+/contrib\\+/)(\d{21})""",
+        RegexOption.IGNORE_CASE
+    )
 
     private val DESKTOP_MAPS_HEADERS = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language" to "en-GB,en-US;q=0.9,en;q=0.8"
+        "Accept-Language" to "en-GB,en-US;q=0.9,en;q=0.8",
+        "Cookie" to "CONSENT=YES+cb.20240116-07-p0.en-GB+FX+999; SOCS=CAISHAgBEhJnd3NfMjAyNDAxMTYtMF9SQzIaAmVuIAEaBgiA_LyuBg"
     )
 
     private val GENERIC_TEST_IDENTIFIERS = setOf(
@@ -223,19 +229,33 @@ object GoogleMetadataExtractor {
         val cleanName = candidateName.trim()
         if (cleanName.length < 5 || ' ' !in cleanName) return@coroutineScope null
 
-        // Build candidate Google Maps search queries
+        // Filter out non-geographic location strings like "UTC+01:00...", "Timezone:", or "UK mobile range"
+        val cleanCities = hintLocations
+            .filterNot {
+                it.contains("UTC", ignoreCase = true) ||
+                    it.contains("GMT", ignoreCase = true) ||
+                    it.contains("Timezone", ignoreCase = true) ||
+                    it.contains("mobile range", ignoreCase = true) ||
+                    it.contains("ISP", ignoreCase = true)
+            }
+            .map { it.removePrefix("UK Postcode:").substringBefore(',').substringBefore('(').trim() }
+            .filter { it.length >= 3 && !it.equals("United Kingdom", ignoreCase = true) }
+            .distinct()
+
         val mapsQueries = buildList {
-            hintLocations.take(3).forEach { loc ->
-                val city = loc.substringBefore(',').trim()
-                if (city.length >= 3) {
-                    add("$cleanName $city")
-                }
+            cleanCities.take(3).forEach { city ->
+                add("$cleanName $city")
             }
             add(cleanName)
-        }.distinct().take(6)
+            add("$cleanName UK")
+        }.distinct().take(5)
 
         val jobs = mapsQueries.map { q ->
-            async { searchMapsTbmForReviewerGaiaId(q, cleanName) }
+            async {
+                HostGate.run("google.com/maps", minGapMs = 300) {
+                    searchMapsTbmForReviewerGaiaId(q, cleanName)
+                }
+            }
         }
 
         val webJob = async {
@@ -249,11 +269,15 @@ object GoogleMetadataExtractor {
     }
 
     internal fun searchMapsTbmForReviewerGaiaId(query: String, targetReviewerName: String): String? {
-        val searchUrl = "https://www.google.com/maps/search/${ScanHttp.encode(query)}?hl=en"
-        val htmlResp = ScanHttp.get(searchUrl, timeoutMs = 10_000, headers = DESKTOP_MAPS_HEADERS)
+        val searchUrl = "https://www.google.com/maps/search/${ScanHttp.encode(query)}?hl=en-GB&gl=uk"
+        val htmlResp = ScanHttp.get(
+            searchUrl,
+            timeoutMs = 12_000,
+            headers = DESKTOP_MAPS_HEADERS,
+            maxBodyChars = MAPS_MAX_BODY_CHARS
+        )
         if (!htmlResp.isOk || htmlResp.body.isBlank()) return null
 
-        // Check if the HTML itself already contains the reviewer name & contrib link
         extractGaiaIdForNameFromPayload(htmlResp.body, targetReviewerName)?.let { return it }
 
         val tbmMatch = TBM_MAP_PATH_REGEX.find(htmlResp.body)?.groupValues?.get(1) ?: return null
@@ -262,7 +286,12 @@ object GoogleMetadataExtractor {
             .replace("\\u0026", "&")
             .replace("\\u003d", "=")
         val tbmUrl = "https://www.google.com$tbmPath"
-        val tbmResp = ScanHttp.get(tbmUrl, timeoutMs = 10_000, headers = DESKTOP_MAPS_HEADERS)
+        val tbmResp = ScanHttp.get(
+            tbmUrl,
+            timeoutMs = 12_000,
+            headers = DESKTOP_MAPS_HEADERS,
+            maxBodyChars = MAPS_MAX_BODY_CHARS
+        )
         if (!tbmResp.isOk || tbmResp.body.isBlank()) return null
 
         return extractGaiaIdForNameFromPayload(tbmResp.body, targetReviewerName)
@@ -290,11 +319,34 @@ object GoogleMetadataExtractor {
     }
 
     private fun searchOpenWebForContribGaiaId(email: String, handle: String, candidateName: String): String? {
-        val dork = """site:google.com/maps/contrib ("$candidateName" OR "$email" OR "$handle")"""
-        val ddgUrl = "https://html.duckduckgo.com/html/?q=${ScanHttp.encode(dork)}"
-        val resp = ScanHttp.get(ddgUrl, timeoutMs = 8_000)
-        if (resp.isOk && resp.body.isNotBlank()) {
-            GAIA_ID_FROM_CONTRIB_REGEX.find(resp.body)?.groupValues?.get(1)?.let { return it }
+        val queries = listOf(
+            """site:google.com/maps/contrib "$candidateName"""",
+            """"google.com/maps/contrib" "$candidateName"""",
+            """site:google.com/maps/contrib ("$candidateName" OR "$email" OR "$handle")"""
+        )
+        for (dork in queries) {
+            val braveUrl = "https://search.brave.com/search?q=${ScanHttp.encode(dork)}&source=web"
+            val braveResp = ScanHttp.get(braveUrl, timeoutMs = 10_000, maxBodyChars = 2_000_000)
+            if (braveResp.isOk && braveResp.body.isNotBlank()) {
+                GAIA_ID_FROM_CONTRIB_REGEX.find(braveResp.body)?.groupValues?.get(1)?.let { return it }
+            }
+
+            val googleUrl = "https://www.google.co.uk/search?q=${ScanHttp.encode(dork)}&hl=en&gl=uk"
+            val googleResp = ScanHttp.get(
+                googleUrl,
+                timeoutMs = 10_000,
+                headers = DESKTOP_MAPS_HEADERS,
+                maxBodyChars = 2_000_000
+            )
+            if (googleResp.isOk && googleResp.body.isNotBlank()) {
+                GAIA_ID_FROM_CONTRIB_REGEX.find(googleResp.body)?.groupValues?.get(1)?.let { return it }
+            }
+
+            val ddgUrl = "https://html.duckduckgo.com/html/?q=${ScanHttp.encode(dork)}"
+            val ddgResp = ScanHttp.get(ddgUrl, timeoutMs = 10_000, maxBodyChars = 2_000_000)
+            if (ddgResp.isOk && ddgResp.body.isNotBlank()) {
+                GAIA_ID_FROM_CONTRIB_REGEX.find(ddgResp.body)?.groupValues?.get(1)?.let { return it }
+            }
         }
         return null
     }
@@ -314,8 +366,13 @@ object GoogleMetadataExtractor {
      * uploaded photo locations, and Local Guide profile via `/locationhistory/preview/mas`.
      */
     internal fun fetchContributorReviews(gaiaId: String): ContributorParsedData? {
-        val contribUrl = "https://www.google.com/maps/contrib/$gaiaId/reviews?hl=en-GB"
-        val htmlResp = ScanHttp.get(contribUrl, timeoutMs = 10_000, headers = DESKTOP_MAPS_HEADERS)
+        val contribUrl = "https://www.google.com/maps/contrib/$gaiaId/reviews?hl=en-GB&gl=uk"
+        val htmlResp = ScanHttp.get(
+            contribUrl,
+            timeoutMs = 12_000,
+            headers = DESKTOP_MAPS_HEADERS,
+            maxBodyChars = MAPS_MAX_BODY_CHARS
+        )
         if (!htmlResp.isOk || htmlResp.body.isBlank()) return null
 
         val masMatch = MAS_PATH_REGEX.find(htmlResp.body)?.groupValues?.get(1) ?: return null
@@ -324,7 +381,12 @@ object GoogleMetadataExtractor {
             .replace("\\u0026", "&")
             .replace("&amp;", "&")
         val masUrl = "https://www.google.com$masPath"
-        val masResp = ScanHttp.get(masUrl, timeoutMs = 12_000, headers = DESKTOP_MAPS_HEADERS)
+        val masResp = ScanHttp.get(
+            masUrl,
+            timeoutMs = 15_000,
+            headers = DESKTOP_MAPS_HEADERS,
+            maxBodyChars = MAPS_MAX_BODY_CHARS
+        )
         if (!masResp.isOk || masResp.body.isBlank()) return null
 
         return parseLocationHistoryMasJson(gaiaId, masResp.body)

@@ -798,28 +798,42 @@ object EmailAttributionEngine {
         return out
     }
 
+    private val KNOWN_NAME_PARTS = listOf(
+        "damon", "daniel", "kirby", "jess", "jessica", "alex", "alexander", "john", "smith",
+        "david", "james", "michael", "robert", "william", "chris", "christopher", "matthew",
+        "thomas", "andrew", "joshua", "ryan", "LIAM", "jack", "harry", "oliver", "CHARLIE",
+        "george", "lucas", "henry", "lewis", "scott", "adam", "LUKE", "nathan", "connor",
+        "callum", "aaron", "benjamin", "samuel", "joseph", "edward", "peter", "paul", "mark",
+        "steven", "stephen", "kevin", "brian", "jason", "jeff", "gary", "timothy", "jose",
+        "larry", "jeffrey", "frank", "eric", "anna", "sarah", "emma", "laura", "hannah",
+        "SOPHIE", "chloe", "emily", "grace", "alice", "rachel", "rebecca", "katie", "amy",
+        "claire", "helen", "nicola", "lisa", "karen", "michelle", "amanda", "melissa",
+        "jones", "williams", "brown", "taylor", "davies", "wilson", "evans", "johnson",
+        "roBERTS", "walker", "wright", "robinson", "thompson", "white", "hughes", "edwards",
+        "green", "hall", "wood", "harris", "martin", "jackson", "clarke", "clark", "turner",
+        "hill", "moore", "cooper", "ward", "morris", "king", "watson", "baker", "harrison"
+    ).map { it.lowercase() }.distinct().sortedByDescending { it.length }
+
     internal fun extractNameTokensFromIdentifier(handle: String): List<String> {
         val clean = handle.trim().replace(Regex("\\d+$"), "").replace(Regex("[-._]+"), " ")
         val tokens = clean.split(' ').map { it.trim().lowercase() }.filter { it.length >= 3 }
         if (tokens.size == 1) {
             val single = tokens[0]
-            val commonNames = listOf("alex", "john", "smith", "david", "james", "michael", "robert", "william", "chris")
-            val matches = mutableListOf<String>()
-            var rem = single
-            for (cn in commonNames) {
-                if (rem.startsWith(cn)) {
-                    matches += cn.replaceFirstChar { it.titlecase() }
-                    rem = rem.substring(cn.length)
-                } else if (rem.endsWith(cn)) {
-                    val prefix = rem.substring(0, rem.length - cn.length)
-                    if (prefix.length >= 3) {
-                        matches += prefix.replaceFirstChar { it.titlecase() }
-                    }
-                    matches += cn.replaceFirstChar { it.titlecase() }
-                    break
+            for (part in KNOWN_NAME_PARTS) {
+                if (single.startsWith(part) && single.length - part.length >= 3) {
+                    val rest = single.substring(part.length)
+                    return listOf(
+                        part.replaceFirstChar { it.titlecase() },
+                        rest.replaceFirstChar { it.titlecase() }
+                    )
+                } else if (single.endsWith(part) && single.length - part.length >= 3) {
+                    val prefix = single.substring(0, single.length - part.length)
+                    return listOf(
+                        prefix.replaceFirstChar { it.titlecase() },
+                        part.replaceFirstChar { it.titlecase() }
+                    )
                 }
             }
-            if (matches.isNotEmpty()) return matches
         }
         return tokens.map { it.replaceFirstChar { c -> c.titlecase() } }
     }
