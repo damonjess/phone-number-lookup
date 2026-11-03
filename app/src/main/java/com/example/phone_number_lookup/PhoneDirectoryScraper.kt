@@ -96,23 +96,31 @@ object PhoneDirectoryScraper {
         val areaHint = PhoneNumberUtils.getAreaInfo(normalized)
 
         coroutineScope {
-            val accountsDef = async { checkPhoneAccountRegistrations(e164, rawLocal) }
-            val whoCalledDef = async { scrapeWhoCalledUk(rawLocal) }
-            val shouldIAnswerDef = async { scrapeShouldIAnswerUk(rawLocal) }
-            val tellowsDef = async { scrapeTellowsUkHtml(rawLocal) }
-            val whoCallsMeDef = async { scrapeWhoCallsMe(rawLocal) }
-            val unknownPhoneDef = async { scrapeUnknownPhone(rawLocal) }
-            val notes800Def = async { scrape800Notes(rawLocal) }
-            val osmDef = async { scrapeOsmOverpassDetailed(e164, rawLocal) }
-
+            val accountsDef = async {
+                kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                    checkPhoneAccountRegistrations(e164, rawLocal)
+                }.orEmpty()
+            }
+            val whoCalledDef = async { kotlinx.coroutines.withTimeoutOrNull(7_000L) { scrapeWhoCalledUk(rawLocal) } }
+            val shouldIAnswerDef = async { kotlinx.coroutines.withTimeoutOrNull(7_000L) { scrapeShouldIAnswerUk(rawLocal) } }
+            val tellowsDef = async { kotlinx.coroutines.withTimeoutOrNull(7_000L) { scrapeTellowsUkHtml(rawLocal) } }
+            val whoCallsMeDef = async { kotlinx.coroutines.withTimeoutOrNull(7_000L) { scrapeWhoCallsMe(rawLocal) } }
+            val unknownPhoneDef = async { kotlinx.coroutines.withTimeoutOrNull(7_000L) { scrapeUnknownPhone(rawLocal) } }
+            val notes800Def = async { kotlinx.coroutines.withTimeoutOrNull(7_000L) { scrape800Notes(rawLocal) } }
+            val osmDef = async {
+                kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                    scrapeOsmOverpassDetailed(e164, rawLocal)
+                }.orEmpty()
+            }
             val webDef = async {
-                val primaryOr = allSpellings.take(5).joinToString(" OR ") { "\"$it\"" }
-                val socialQuery = "(\"$rawLocal\" OR \"$e164\" OR \"${allSpellings.getOrElse(2) { rawLocal }}\") (site:facebook.com OR site:instagram.com OR site:linkedin.com OR site:x.com OR site:tiktok.com OR site:t.me OR site:gumtree.com OR site:yell.com OR site:checkatrade.com)"
-                val pasteCodeQuery = "(\"$rawLocal\" OR \"$e164\") (site:github.com OR site:pastebin.com OR site:reddit.com OR site:gov.uk)"
-                OpenWebOsintScraper.scrapeAll(
-                    queries = listOf(primaryOr, socialQuery, pasteCodeQuery),
-                    targetPhoneE164 = e164
-                )
+                kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                    val primaryOr = allSpellings.take(5).joinToString(" OR ") { "\"$it\"" }
+                    val socialQuery = "(\"$rawLocal\" OR \"$e164\") (site:facebook.com OR site:instagram.com OR site:linkedin.com OR site:x.com OR site:tiktok.com OR site:gumtree.com OR site:yell.com)"
+                    OpenWebOsintScraper.scrapeAll(
+                        queries = listOf(primaryOr, socialQuery),
+                        targetPhoneE164 = e164
+                    )
+                } ?: ScrapedWebReport(query = "", results = emptyList())
             }
 
             val accountHits = accountsDef.await()
@@ -232,18 +240,12 @@ object PhoneDirectoryScraper {
         rawLocal: String
     ): List<PhoneAccountHit> = coroutineScope {
         val jobs = listOf(
-            async { probeMicrosoftAccountByPhone(e164, rawLocal) },
-            async { probeInstagramByPhone(e164, rawLocal) },
-            async { probeTelegramByPhone(e164) },
-            async { probeWhatsAppBridge(e164) },
-            async { probeSnapchatByPhone(e164) },
-            async { probeAmazonByPhone(e164) },
-            async { probeTwitterByPhone(e164) },
-            async { probeGoogleByPhone(e164) },
-            async { probeAppleByPhone(e164) },
-            async { probeViberByPhone(e164) },
-            async { probeGitHubByPhone(e164, rawLocal) },
-            async { probeOpenPgpByPhone(e164, rawLocal) }
+            async { kotlinx.coroutines.withTimeoutOrNull(6_000L) { probeMicrosoftAccountByPhone(e164, rawLocal) } },
+            async { kotlinx.coroutines.withTimeoutOrNull(6_000L) { probeInstagramByPhone(e164, rawLocal) } },
+            async { kotlinx.coroutines.withTimeoutOrNull(6_000L) { probeTelegramByPhone(e164) } },
+            async { kotlinx.coroutines.withTimeoutOrNull(6_000L) { probeGitHubByPhone(e164, rawLocal) } },
+            async { kotlinx.coroutines.withTimeoutOrNull(6_000L) { probeOpenPgpByPhone(e164, rawLocal) } },
+            async { probeWhatsAppBridge(e164) }
         )
         jobs.awaitAll().filterNotNull()
     }
@@ -542,7 +544,7 @@ object PhoneDirectoryScraper {
         val url = "https://who-called.co.uk/Number/$digits"
         val resp = ScanHttp.get(
             url,
-            timeoutMs = 10_000,
+            timeoutMs = 6_000,
             headers = mapOf(
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language" to "en-GB,en;q=0.9",

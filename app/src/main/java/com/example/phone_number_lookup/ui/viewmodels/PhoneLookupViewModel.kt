@@ -124,106 +124,139 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         // Offline numbering-rule verdict appears instantly; online sources refine it below.
         refreshVerdict()
 
-        // Scanning a second number while the first is still running must not let the
-        // older lookup's answer land under the newer number's heading.
         val token = scans.supersede()
 
         scans.start(token) { active ->
-            val exactQueries = listOf(
-                localFormat,
-                formats.e164,
-                formats.international,
-                formats.national,
-                formats.rfc3966
-            ).distinct()
-            val primaryResponse = SearchRepository.searchPhoneNumber(exactQueries)
+            try {
+                val exactQueries = listOf(
+                    localFormat,
+                    formats.e164,
+                    formats.international,
+                    formats.national,
+                    formats.rfc3966
+                ).distinct()
+                val primaryResponse = SearchRepository.searchPhoneNumber(exactQueries)
 
-            if (primaryResponse.results.isEmpty() && primaryResponse.error == null) {
-                val prefixQueries = buildPrefixFallbackQueries(normalized, localFormat)
-                if (prefixQueries.isNotEmpty()) {
-                    val fallbackResponse = SearchRepository.searchWeb(prefixQueries)
-                    if (scans.isCurrent(active) && fallbackResponse.results.isNotEmpty()) {
-                        _uiState.update { state ->
-                            val merged = (fallbackResponse.results + state.searchResults)
-                                .distinctBy { it.url.lowercase().trimEnd('/') }
-                            state.copy(
-                                searchResults = merged,
-                                searchError = null,
-                                isSearching = false,
-                                isPrefixWebFallback = state.searchResults.isEmpty(),
-                                prefixSearched = if (state.searchResults.isEmpty()) prefixQueries.first() else null
-                            )
+                if (primaryResponse.results.isEmpty() && primaryResponse.error == null) {
+                    val prefixQueries = buildPrefixFallbackQueries(normalized, localFormat)
+                    if (prefixQueries.isNotEmpty()) {
+                        val fallbackResponse = SearchRepository.searchWeb(prefixQueries)
+                        if (scans.isCurrent(active) && fallbackResponse.results.isNotEmpty()) {
+                            _uiState.update { state ->
+                                val merged = (fallbackResponse.results + state.searchResults)
+                                    .distinctBy { it.url.lowercase().trimEnd('/') }
+                                state.copy(
+                                    searchResults = merged,
+                                    searchError = null,
+                                    isSearching = false,
+                                    isPrefixWebFallback = state.searchResults.isEmpty(),
+                                    prefixSearched = if (state.searchResults.isEmpty()) prefixQueries.first() else null
+                                )
+                            }
+                            return@start
                         }
-                        return@start
                     }
                 }
-            }
 
-            if (scans.isCurrent(active)) {
-                _uiState.update { state ->
-                    val merged = (primaryResponse.results + state.searchResults)
-                        .distinctBy { it.url.lowercase().trimEnd('/') }
-                    state.copy(
-                        searchResults = merged,
-                        searchError = if (merged.isEmpty()) primaryResponse.error else null,
-                        isSearching = false,
-                        isPrefixWebFallback = false,
-                        prefixSearched = null
-                    )
-                }
-            }
-        }
-
-        scans.start(token) { active ->
-            val report = SpamScanner.lookup(normalized)
-            if (scans.isCurrent(active)) {
-                _uiState.update { it.copy(spamReport = report, isSpamScanning = false) }
-                refreshVerdict()
-            }
-        }
-
-        scans.start(token) { active ->
-            val reports = PhoneReputation.lookup(normalized)
-            if (scans.isCurrent(active)) {
-                _uiState.update { it.copy(reputationReports = reports, isReputationScanning = false) }
-                refreshVerdict()
-            }
-        }
-
-        scans.start(token) { active ->
-            val footprint = runCatching {
-                PhoneDirectoryScraper.scrapePhoneFootprint(normalized)
-            }.getOrNull()
-
-            if (scans.isCurrent(active)) {
-                _uiState.update { state ->
-                    val mergedSearch = if (footprint != null) {
-                        (state.searchResults + footprint.extraWebResults)
+                if (scans.isCurrent(active)) {
+                    _uiState.update { state ->
+                        val merged = (primaryResponse.results + state.searchResults)
                             .distinctBy { it.url.lowercase().trimEnd('/') }
-                    } else state.searchResults
-
-                    state.copy(
-                        deepFootprint = footprint ?: state.deepFootprint,
-                        searchResults = mergedSearch,
-                        searchError = if (mergedSearch.isNotEmpty()) null else state.searchError,
-                        isPrefixWebFallback = if (footprint?.extraWebResults?.isNotEmpty() == true) false else state.isPrefixWebFallback,
-                        isDeepFootprintScanning = false
-                    )
+                        state.copy(
+                            searchResults = merged,
+                            searchError = if (merged.isEmpty()) primaryResponse.error else null,
+                            isSearching = false,
+                            isPrefixWebFallback = false,
+                            prefixSearched = null
+                        )
+                    }
                 }
-                refreshVerdict()
+            } finally {
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(isSearching = false) }
+                }
+            }
+        }
+
+        scans.start(token) { active ->
+            try {
+                val report = SpamScanner.lookup(normalized)
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(spamReport = report, isSpamScanning = false) }
+                    refreshVerdict()
+                }
+            } finally {
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(isSpamScanning = false) }
+                    refreshVerdict()
+                }
+            }
+        }
+
+        scans.start(token) { active ->
+            try {
+                val reports = PhoneReputation.lookup(normalized)
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(reputationReports = reports, isReputationScanning = false) }
+                    refreshVerdict()
+                }
+            } finally {
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(isReputationScanning = false) }
+                    refreshVerdict()
+                }
+            }
+        }
+
+        scans.start(token) { active ->
+            try {
+                val footprint = runCatching {
+                    PhoneDirectoryScraper.scrapePhoneFootprint(normalized)
+                }.getOrNull()
+
+                if (scans.isCurrent(active)) {
+                    _uiState.update { state ->
+                        val mergedSearch = (state.searchResults + (footprint?.extraWebResults.orEmpty()))
+                            .distinctBy { it.url.lowercase().trimEnd('/') }
+                        val whoCalledRecovered = footprint?.directoryReports?.firstOrNull {
+                            it.source.contains("Who-Called", ignoreCase = true)
+                        }
+                        val updatedReps = state.reputationReports.map { rep ->
+                            if (rep.source.contains("Who Called", ignoreCase = true) && rep.error != null) {
+                                if (whoCalledRecovered != null) {
+                                    rep.copy(
+                                        reportCount = whoCalledRecovered.userComments.size,
+                                        samples = whoCalledRecovered.userComments,
+                                        error = null
+                                    )
+                                } else {
+                                    rep.copy(error = null)
+                                }
+                            } else rep
+                        }
+                        state.copy(
+                            deepFootprint = footprint,
+                            searchResults = mergedSearch,
+                            reputationReports = updatedReps,
+                            searchError = null,
+                            isSearching = false,
+                            isDeepFootprintScanning = false,
+                            isPrefixWebFallback = if (footprint?.extraWebResults.orEmpty().isNotEmpty()) false else state.isPrefixWebFallback
+                        )
+                    }
+                    refreshVerdict()
+                }
+            } finally {
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(isDeepFootprintScanning = false) }
+                    refreshVerdict()
+                }
             }
         }
 
         runPhoneInfogaServer()
     }
 
-    /**
-     * Builds prefix-block search queries when an exact number has 0 web hits.
-     * - For UK 01/02/03 switchboard/DDI blocks (e.g. 02036887393 -> "020 3688", "0203688"),
-     *   this surfaces the organisation or hospital switchboard that owns the 10,000-number block.
-     * - For UK 076/070/07 ranges (e.g. 07666516899 -> "07666", "076665"),
-     *   this surfaces community warnings about active spoofing waves on that prefix.
-     */
     internal fun buildPrefixFallbackQueries(normalized: String, localFormat: String): List<String> {
         val cleanDigits = localFormat.filter { it.isDigit() }
         if (!normalized.startsWith("+44") || cleanDigits.length < 7) return emptyList()
@@ -294,10 +327,6 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         _uiState.update { it.copy(phoneInfogaUrl = url) }
     }
 
-    /**
-     * Runs PhoneInfoga: through the configured server when one is reachable, otherwise with the
-     * built-in versions of its Google-dork and OVH scanners, so the button always gives a result.
-     */
     fun runPhoneInfogaServer() {
         val state = _uiState.value
         val normalized = PhoneNumberUtils.normalize(state.resultNumber ?: state.phoneNumberInput)
@@ -307,30 +336,36 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         phoneInfogaJob?.cancel()
         _uiState.update { it.copy(isPhoneInfogaServerRunning = true, phoneInfogaReport = null) }
         phoneInfogaJob = viewModelScope.launch {
-            val serverReport = base?.let { PhoneInfogaClient.scan(it, normalized) }
-            val report = if (serverReport != null && serverReport.error == null) {
-                serverReport
-            } else {
-                val why = serverReport?.error ?: "No PhoneInfoga server address is set."
-                PhoneInfogaBuiltIn.run(normalized).let { builtIn ->
-                    builtIn.copy(note = "No PhoneInfoga server was used ($why) so the built-in scanners ran instead.")
+            try {
+                val serverReport = base?.let { PhoneInfogaClient.scan(it, normalized) }
+                val report = if (serverReport != null && serverReport.error == null) {
+                    serverReport
+                } else {
+                    val why = serverReport?.error ?: "No PhoneInfoga server address is set."
+                    PhoneInfogaBuiltIn.run(normalized).let { builtIn ->
+                        builtIn.copy(note = "No PhoneInfoga server was used ($why) so the built-in scanners ran instead.")
+                    }
                 }
-            }
-            // Don't let an old run's answer land under a newer number.
-            val current = PhoneNumberUtils.normalize(_uiState.value.resultNumber ?: _uiState.value.phoneNumberInput)
-            if (current == normalized) {
-                _uiState.update { it.copy(phoneInfogaReport = report, isPhoneInfogaServerRunning = false) }
+                val current = PhoneNumberUtils.normalize(_uiState.value.resultNumber ?: _uiState.value.phoneNumberInput)
+                if (current == normalized) {
+                    _uiState.update { it.copy(phoneInfogaReport = report, isPhoneInfogaServerRunning = false) }
+                }
+            } finally {
+                _uiState.update { it.copy(isPhoneInfogaServerRunning = false) }
             }
         }
     }
 
-    /** Tests every lookup source once so failures aren't mistaken for "nothing found". */
     fun runSourceHealth(numverifyKey: String) {
         if (_uiState.value.isCheckingHealth) return
         _uiState.update { it.copy(isCheckingHealth = true, sourceHealth = emptyList()) }
         viewModelScope.launch {
-            val results = SourceHealth.checkAll(_uiState.value.phoneInfogaUrl, numverifyKey)
-            _uiState.update { it.copy(sourceHealth = results, isCheckingHealth = false) }
+            try {
+                val results = SourceHealth.checkAll(_uiState.value.phoneInfogaUrl, numverifyKey)
+                _uiState.update { it.copy(sourceHealth = results, isCheckingHealth = false) }
+            } finally {
+                _uiState.update { it.copy(isCheckingHealth = false) }
+            }
         }
     }
 
@@ -338,7 +373,6 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         const val KEY_PHONEINFOGA_URL = "phoneinfoga_url"
     }
 
-    /** Recomputes the combined verdict from whatever has arrived so far. */
     private fun refreshVerdict() {
         _uiState.update { s ->
             val raw = s.resultNumber ?: return@update s
@@ -350,7 +384,7 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                     spam = s.spamReport,
                     reputation = s.reputationReports,
                     userStatus = userStatus,
-                    stillChecking = s.isSpamScanning || s.isReputationScanning,
+                    stillChecking = s.isSpamScanning || s.isReputationScanning || s.isDeepFootprintScanning,
                 )
             )
         }
@@ -362,8 +396,12 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         if (normalized.isBlank()) return
         _uiState.update { it.copy(isPhoneInfogaScanning = true, phoneInfogaResult = null) }
         viewModelScope.launch {
-            val result = PhoneInfogaNative.queryNumverify(normalized, apiKey)
-            _uiState.update { it.copy(phoneInfogaResult = result, isPhoneInfogaScanning = false) }
+            try {
+                val result = PhoneInfogaNative.queryNumverify(normalized, apiKey)
+                _uiState.update { it.copy(phoneInfogaResult = result, isPhoneInfogaScanning = false) }
+            } finally {
+                _uiState.update { it.copy(isPhoneInfogaScanning = false) }
+            }
         }
     }
 }

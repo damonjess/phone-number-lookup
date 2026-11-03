@@ -19,8 +19,6 @@ data class SearchResponse(
     val error: String? = null
 )
 
-
-
 object SearchRepository {
     private data class Cached(val response: SearchResponse, val expiresAt: Long)
     private val cache = ConcurrentHashMap<String, Cached>()
@@ -76,13 +74,27 @@ object SearchRepository {
         val spellings = buildSearchSpellings(numberFormats)
         if (spellings.isEmpty()) return@withContext SearchResponse(emptyList())
         val queries = buildPhoneInvestigationQueries(spellings)
-        val responses = queries.map { query -> async { searchQuery(query) } }.awaitAll()
+        val responses = queries.map { query ->
+            async {
+                HostGate.run("duckduckgo.com", minGapMs = 350) {
+                    searchQuery(query)
+                }
+            }
+        }.awaitAll()
+
         val merged = LinkedHashMap<String, SearchResultItem>()
         responses.flatMap { it.results }.forEach { result ->
             val key = result.url.trimEnd('/').lowercase()
             if (key.isNotBlank()) merged.putIfAbsent(key, result)
         }
-        val errors = responses.mapNotNull { it.error }.distinct()
+
+        val anySucceededOrEmpty = responses.any { it.error == null }
+        val errors = if (merged.isNotEmpty() || anySucceededOrEmpty) {
+            emptyList()
+        } else {
+            responses.mapNotNull { it.error }.distinct()
+        }
+
         SearchResponse(
             results = merged.values.take(DdgParser.MAX_RESULTS * queries.size),
             error = errors.takeIf { it.isNotEmpty() }?.joinToString(" ")
@@ -119,9 +131,9 @@ object SearchRepository {
 
     private fun fetch(query: String): DdgOutcome {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val get = ScanHttp.get("$ENDPOINT?q=$encoded", timeoutMs = 10_000)
+        val get = ScanHttp.get("$ENDPOINT?q=$encoded", timeoutMs = 10_000, maxBodyChars = 2_000_000)
         val first = DdgParser.classify(get.code, get.body)
-        if (first !is DdgOutcome.Blocked) return first
+        if (first is DdgOutcome.Results || first is DdgOutcome.NoResults) return first
 
         val post = ScanHttp.post(
             ENDPOINT,
@@ -131,9 +143,9 @@ object SearchRepository {
             headers = mapOf("Origin" to "https://html.duckduckgo.com", "Referer" to ENDPOINT)
         )
         val second = DdgParser.classify(post.code, post.body)
-        if (second !is DdgOutcome.Blocked) return second
+        if (second is DdgOutcome.Results || second is DdgOutcome.NoResults) return second
 
-        // Fallback to DuckDuckGo Lite if the main HTML endpoint is rate-limiting
+        // Fallback 1: DuckDuckGo Lite
         val lite = ScanHttp.post(
             LITE_ENDPOINT,
             "q=$encoded",
@@ -149,6 +161,28 @@ object SearchRepository {
                 return DdgOutcome.NoResults
             }
         }
+
+        // Fallback 2: Brave Search HTML, Bing HTML & Yahoo UK HTML (bypasses DuckDuckGo bot checks completely)
+        val braveItems = runCatching { OpenWebOsintScraper.scrapeBraveHtml(query) }.getOrDefault(emptyList())
+        if (braveItems.isNotEmpty()) return DdgOutcome.Results(braveItems)
+
+        val bingItems = runCatching { OpenWebOsintScraper.scrapeBingHtml(query) }.getOrDefault(emptyList())
+        if (bingItems.isNotEmpty()) return DdgOutcome.Results(bingItems)
+
+        val yahooItems = runCatching { GoogleCommentScraper.scrapeYahooSearchHtml(query) }.getOrDefault(emptyList())
+        if (yahooItems.isNotEmpty()) return DdgOutcome.Results(yahooItems)
+
+        // If Brave Search is reachable with HTTP 200 and returned 0 matches, treat as a genuine NoResults
+        // rather than reporting a false "[ Blocked ]" error from DuckDuckGo.
+        val braveProbe = ScanHttp.get(
+            "https://search.brave.com/search?q=$encoded&source=web",
+            timeoutMs = 8_000,
+            maxBodyChars = 500_000
+        )
+        if (braveProbe.isOk && braveProbe.body.isNotBlank()) {
+            return DdgOutcome.NoResults
+        }
+
         return second
     }
 

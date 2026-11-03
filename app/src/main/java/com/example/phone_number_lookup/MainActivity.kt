@@ -1,6 +1,13 @@
 package com.example.phone_number_lookup
 
+import android.annotation.SuppressLint
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -21,25 +28,39 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.phone_number_lookup.ui.components.CyberBackdrop
 import com.example.phone_number_lookup.ui.components.Pill
 import com.example.phone_number_lookup.ui.components.SegmentedTabs
@@ -54,6 +75,7 @@ import com.example.phone_number_lookup.ui.theme.PhonenumberlookupTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        NativeWebScraper.init(applicationContext)
         enableEdgeToEdge()
         setContent {
             PhonenumberlookupTheme {
@@ -68,6 +90,7 @@ private data class AppTab(val label: String, val icon: ImageVector)
 @Composable
 fun NumberFinderApp(modifier: Modifier = Modifier) {
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
+    val browserReq by NativeWebScraper.browserRequest.collectAsState()
     val tabs = listOf(
         AppTab("Pilot", Icons.Filled.Search),
         AppTab("Phone", Icons.Filled.Phone),
@@ -102,6 +125,147 @@ fun NumberFinderApp(modifier: Modifier = Modifier) {
                 1 -> PhoneLookupScreen(modifier = contentModifier)
                 2 -> UsernameAndEmailOsintScreen(modifier = contentModifier)
                 else -> GitHubOsintScreen(modifier = contentModifier)
+            }
+        }
+    }
+
+    browserReq?.let { req ->
+        InAppOsintBrowserDialog(
+            request = req,
+            onDismiss = { NativeWebScraper.closeInApp() }
+        )
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun InAppOsintBrowserDialog(
+    request: InAppBrowserRequest,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var currentUrl by remember(request.url) { mutableStateOf(request.url) }
+    var isLoading by remember(request.url) { mutableStateOf(true) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Filled.Close, contentDescription = "Close in-app view")
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp)
+                            ) {
+                                Text(
+                                    text = "IN-APP NATIVE BROWSER",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = currentUrl,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    if (webViewRef?.canGoBack() == true) {
+                                        webViewRef?.goBack()
+                                    }
+                                }
+                            ) {
+                                Text("Back")
+                            }
+                            TextButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(currentUrl)))
+                                    }
+                                }
+                            ) {
+                                Text("Ext ↗")
+                            }
+                        }
+                        if (isLoading) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                    }
+                }
+
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            webViewRef = this
+                            val cm = CookieManager.getInstance()
+                            cm.setAcceptCookie(true)
+                            cm.setAcceptThirdPartyCookies(this, true)
+                            settings.apply {
+                                javaScriptEnabled = true
+                                domStorageEnabled = true
+                                databaseEnabled = true
+                                setSupportZoom(true)
+                                builtInZoomControls = true
+                                displayZoomControls = false
+                                userAgentString =
+                                    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                            }
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    req: WebResourceRequest?
+                                ): Boolean {
+                                    val target = req?.url?.toString() ?: return false
+                                    if (!target.startsWith("http://") && !target.startsWith("https://")) {
+                                        runCatching {
+                                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
+                                        }
+                                        return true
+                                    }
+                                    currentUrl = target
+                                    return false
+                                }
+
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    isLoading = false
+                                    if (!url.isNullOrBlank()) currentUrl = url
+                                    CookieManager.getInstance().flush()
+                                }
+                            }
+                            loadUrl(request.url)
+                        }
+                    }
+                )
             }
         }
     }

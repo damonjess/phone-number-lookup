@@ -313,7 +313,7 @@ fun DorkLauncherCard(
         dorks.forEach { dork ->
             Surface(
                 onClick = { openUrl(context, dork.url) },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 shape = MaterialTheme.shapes.small,
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
             ) {
@@ -321,23 +321,28 @@ fun DorkLauncherCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Pill(dork.toolSource, tone = Tone.ACCENT)
                         Text(
-                            text = dork.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            softWrap = true,
-                            modifier = Modifier.weight(1f)
+                            text = "Open in-app ↗",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
                         )
-                        Spacer(Modifier.width(Space.sm))
-                        Pill(dork.toolSource, tone = Tone.NEUTRAL)
                     }
+                    Text(
+                        text = dork.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        softWrap = true
+                    )
                     Text(
                         text = dork.description,
                         style = MaterialTheme.typography.bodySmall,
@@ -367,8 +372,13 @@ fun sanitizeUrlForOpening(url: String): String {
 fun openUrl(context: Context, url: String) {
     try {
         val sanitized = sanitizeUrlForOpening(url)
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(sanitized))
-        context.startActivity(intent)
+        if (sanitized.startsWith("http://") || sanitized.startsWith("https://")) {
+            // Keep all HTTP/HTTPS searches, dorks, and profiles native inside the app!
+            com.example.phone_number_lookup.NativeWebScraper.openInApp(sanitized)
+        } else {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(sanitized))
+            context.startActivity(intent)
+        }
     } catch (e: ActivityNotFoundException) {
         Toast.makeText(context, "No app available to handle this link", Toast.LENGTH_SHORT).show()
     } catch (e: Exception) {

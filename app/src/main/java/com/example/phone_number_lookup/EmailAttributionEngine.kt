@@ -68,18 +68,13 @@ data class EmailAttributionReport(
     }
 
     fun lastSeen(breachReport: BreachReport? = null): String? {
-        val googleDate = timeline
-            .filter { it.source.contains("Google", ignoreCase = true) }
-            .maxOfOrNull { it.date }
-        if (googleDate != null) return googleDate
-
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        val allDates = (timeline.filterNot { it.label == "Updated At" }.map { it.date } +
+        val allDates = (timeline.map { it.date } +
                 breachReport?.details.orEmpty().mapNotNull { it.breachDate } +
                 breachReport?.breachNames.orEmpty().mapNotNull { name ->
                     Regex("""\b(20\d{2}(?:-\d{2}-\d{2})?)\b""").find(name)?.groupValues?.get(1)
                 })
-            .mapNotNull { it.takeIf { d -> d.matches(Regex("\\d{4}.*")) && d.take(10) <= today } }
+            .mapNotNull { it.takeIf { d -> d.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) && d <= today } }
         return allDates.maxOrNull()
     }
 
@@ -108,10 +103,6 @@ object EmailAttributionEngine {
         val handleVariants = buildList {
             add(handle)
             addAll(UsernameVariants.fromHandle(handle))
-            val strippedDigits = handle.replace(Regex("\\d+$"), "").trim('.', '_', '-')
-            if (strippedDigits.length >= 5 && strippedDigits != handle) {
-                add(strippedDigits)
-            }
         }.filter { isDistinctiveHandle(it) }.distinctBy { it.lowercase() }.take(3)
 
         // STAGE 1: Fast primary identity & account lookups
@@ -157,6 +148,7 @@ object EmailAttributionEngine {
             }
             gh.avatarUrl?.let { avatars += it }
             gh.createdAt?.let { timeline += TimelineEvent(it, "Creation Date", "GitHub") }
+            gh.updatedAt?.let { timeline += TimelineEvent(it, "Last Public Activity", "GitHub") }
         }
 
         // 2. Keybase Attribution
@@ -595,6 +587,7 @@ object EmailAttributionEngine {
         val resolvedLogin = login ?: return null
 
         // Also inspect public push events to extract real commit author names
+        var latestEventDate: String? = null
         val eventsResp = ScanHttp.get(
             "https://api.github.com/users/${ScanHttp.encode(resolvedLogin)}/events/public?per_page=30",
             timeoutMs = 8_000,
@@ -602,7 +595,9 @@ object EmailAttributionEngine {
         )
         if (eventsResp.isOk && eventsResp.body.isNotBlank()) {
             runCatching {
-                GitHubOsint.extractCommitIdentities(JSONArray(eventsResp.body)).forEach { id ->
+                val evArr = JSONArray(eventsResp.body)
+                latestEventDate = evArr.optJSONObject(0)?.optString("created_at")?.substringBefore('T')?.takeIf { it.isNotBlank() }
+                GitHubOsint.extractCommitIdentities(evArr).forEach { id ->
                     val namePart = id.substringBefore('<').trim()
                     if (namePart.isNotBlank() && !namePart.equals(resolvedLogin, ignoreCase = true)) {
                         extraNames += namePart
@@ -623,7 +618,7 @@ object EmailAttributionEngine {
                 profileUrl = "https://github.com/$resolvedLogin",
                 avatarUrl = null,
                 createdAt = null,
-                updatedAt = null,
+                updatedAt = latestEventDate,
                 inferredTimezoneLocation = commitTzLocation,
                 extraNames = extraNames.toList()
             )
@@ -643,7 +638,7 @@ object EmailAttributionEngine {
                 profileUrl = root.optString("html_url", "https://github.com/$resolvedLogin"),
                 avatarUrl = root.optString("avatar_url").takeIf { it.isNotBlank() },
                 createdAt = root.optString("created_at").substringBefore('T').takeIf { it.isNotBlank() },
-                updatedAt = root.optString("updated_at").substringBefore('T').takeIf { it.isNotBlank() },
+                updatedAt = latestEventDate ?: root.optString("updated_at").substringBefore('T').takeIf { it.isNotBlank() },
                 location = root.optString("location").takeIf { it.isNotBlank() && it != "null" },
                 bio = root.optString("bio").takeIf { it.isNotBlank() && it != "null" },
                 inferredTimezoneLocation = commitTzLocation,

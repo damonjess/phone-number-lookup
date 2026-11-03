@@ -19,6 +19,15 @@ object PhoneReputation {
 
     private const val MAX_SAMPLES = 5
 
+    private val BROWSER_HEADERS = mapOf(
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "en-GB,en-US;q=0.9,en;q=0.8",
+        "Upgrade-Insecure-Requests" to "1",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "none"
+    )
+
     private val DIGITS_REGEX = Regex("[^0-9]")
     private val CALL_TYPE_REGEX = Regex("call type:\\s*([^\\n|]{2,40})", RegexOption.IGNORE_CASE)
     private val CALLER_REGEX = Regex("caller:\\s*([^\\n|]{2,40})", RegexOption.IGNORE_CASE)
@@ -43,7 +52,7 @@ object PhoneReputation {
         RegexOption.IGNORE_CASE
     )
     private val WC_REPUTATION_REGEX = Regex(
-        """(?:has\s+|user\s+reputation:\s*)(negative|dangerous|harassing|neutral|positive|safe)(?:\s+community\s+rating)?""",
+        """(?:has\s+|user\s+reputation:\s*|overall\s+rating\s+is\s*)(negative|dangerous|harassing|neutral|positive|safe)(?:\s+community\s+rating)?""",
         RegexOption.IGNORE_CASE
     )
     private val WC_COMMENTS_COUNT_REGEX = Regex(
@@ -51,7 +60,7 @@ object PhoneReputation {
         RegexOption.IGNORE_CASE
     )
     private val WC_LOOKUPS_REGEX = Regex(
-        """([\d,]+)\s+(?:lookups|searches)""",
+        """(?:number\s+of\s+searches:\s*|([\d,]+)\s+(?:lookups|searches))(\d+)?""",
         RegexOption.IGNORE_CASE
     )
     private val WC_BREAKDOWN_REGEX = Regex(
@@ -78,49 +87,33 @@ object PhoneReputation {
         val northAmerica = digits.length == 11 && digits.startsWith("1")
         val uk = digits.length in 11..12 && digits.startsWith("44")
 
-        val jobs = ArrayList<Pair<String, () -> ReputationReport>>()
+        val jobs = ArrayList<Triple<String, String, suspend () -> ReputationReport>>()
         if (northAmerica) {
             val national = digits.substring(1)
             val dashed = "1-${national.substring(0, 3)}-${national.substring(3, 6)}-${national.substring(6)}"
-            jobs.add(
-                "WhoCallsMe" to {
-                    queryHtml(
-                        source = "WhoCallsMe",
-                        url = "https://whocallsme.com/Phone-Number.aspx/$national",
-                    )
-                }
-            )
-            jobs.add(
-                "800notes" to {
-                    queryHtml(
-                        source = "800notes",
-                        url = "https://800notes.com/Phone.aspx/$dashed",
-                    )
-                }
-            )
+            val wcmUrl = "https://whocallsme.com/Phone-Number.aspx/$national"
+            val notesUrl = "https://800notes.com/Phone.aspx/$dashed"
+            jobs.add(Triple("WhoCallsMe", wcmUrl) { queryHtml("WhoCallsMe", wcmUrl) })
+            jobs.add(Triple("800notes", notesUrl) { queryHtml("800notes", notesUrl) })
         } else if (uk) {
             val ukLocal = "0" + digits.removePrefix("44")
-            jobs.add(
-                "Who Called UK" to {
-                    queryWhoCalledUk(ukLocal)
-                }
-            )
-            jobs.add(
-                "Should I Answer UK" to {
-                    queryShouldIAnswerUk(ukLocal)
-                }
-            )
-            jobs.add(
-                "WhoCallsMe" to {
-                    queryHtml(
-                        source = "WhoCallsMe",
-                        url = "https://whocallsme.com/Phone-Number.aspx/$ukLocal",
-                    )
-                }
-            )
+            val wcUrl = "https://who-called.co.uk/Number/$ukLocal"
+            val siaUrl = "https://www.shouldianswer.co.uk/phone-number/$ukLocal"
+            val wcmUrl = "https://whocallsme.com/Phone-Number.aspx/$ukLocal"
+            jobs.add(Triple("Who Called UK", wcUrl) { queryWhoCalledUk(ukLocal) })
+            jobs.add(Triple("Should I Answer UK", siaUrl) { queryShouldIAnswerUk(ukLocal) })
+            jobs.add(Triple("WhoCallsMe", wcmUrl) { queryHtml("WhoCallsMe", wcmUrl) })
         }
 
-        jobs.map { (_, job) -> async { job() } }.awaitAll()
+        jobs.map { (source, url, job) ->
+            async {
+                kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                    runCatching { job() }.getOrElse {
+                        ReputationReport(source, url, false, 0, emptyList(), emptyList())
+                    }
+                } ?: ReputationReport(source, url, false, 0, emptyList(), emptyList())
+            }
+        }.awaitAll()
     }
 
     fun supportedSources(e164: String): List<String> {
@@ -138,18 +131,82 @@ object PhoneReputation {
 
     internal fun queryWhoCalledUk(ukLocal: String): ReputationReport {
         val url = "https://who-called.co.uk/Number/$ukLocal"
-        val response = ScanHttp.get(url, timeoutMs = 15_000)
+        val response = ScanHttp.get(
+            url,
+            timeoutMs = 6_000,
+            headers = BROWSER_HEADERS + ("Referer" to "https://who-called.co.uk/"),
+            maxBodyChars = 1_500_000
+        )
         if (response.isNetworkError) {
             return ReputationReport("Who Called UK", url, false, 0, emptyList(), emptyList(), "Network error")
         }
         if (response.code == 404 || response.code == 410) {
             return ReputationReport("Who Called UK", url, false, 0, emptyList(), emptyList())
         }
-        if (!response.isOk) {
-            return ReputationReport("Who Called UK", url, false, 0, emptyList(), emptyList(), "HTTP ${response.code}")
+
+        val htmlBody = if (response.isOk && !isCloudflareChallenge(response.body)) {
+            response.body
+        } else {
+            ""
         }
 
-        val text = htmlToText(response.body)
+        // Fast search-index recovery when Cloudflare blocks direct HTTP (avoids waiting on WebView)
+        if (htmlBody.isBlank()) {
+            val indexedFallback = recoverWhoCalledFromSearchIndex(ukLocal, url)
+            if (indexedFallback != null) return indexedFallback
+            return ReputationReport("Who Called UK", url, false, 0, emptyList(), emptyList())
+        }
+
+        return parseWhoCalledUkHtml(ukLocal, url, htmlBody)
+    }
+
+    private fun isCloudflareChallenge(html: String): Boolean {
+        val lower = html.lowercase()
+        return lower.contains("<title>just a moment") ||
+            lower.contains("cf-browser-verification") ||
+            lower.contains("challenge-platform")
+    }
+
+    private fun recoverWhoCalledFromSearchIndex(ukLocal: String, url: String): ReputationReport? {
+        val query = "site:who-called.co.uk \"$ukLocal\""
+        val items = runCatching { OpenWebOsintScraper.scrapeBraveHtml(query) }.getOrDefault(emptyList())
+            .ifEmpty { runCatching { OpenWebOsintScraper.scrapeBingHtml(query) }.getOrDefault(emptyList()) }
+            .ifEmpty { runCatching { GoogleCommentScraper.scrapeYahooSearchHtml(query) }.getOrDefault(emptyList()) }
+
+        val matching = items.filter {
+            it.url.contains("who-called.co.uk", ignoreCase = true) &&
+                (it.url.contains(ukLocal) || it.title.contains(ukLocal) || it.snippet.contains(ukLocal))
+        }
+
+        if (matching.isNotEmpty()) {
+            val combinedText = matching.joinToString(" ") { "${it.title} ${it.snippet}" }
+            val parsed = parseWhoCalledUkHtml(ukLocal, url, combinedText)
+            val samples = (parsed.samples + matching.map { it.snippet.trim() }.filter { it.isNotBlank() })
+                .distinct()
+                .take(MAX_SAMPLES)
+            return parsed.copy(
+                hasReports = true,
+                reportCount = maxOf(parsed.reportCount, samples.size),
+                samples = samples,
+                error = null
+            )
+        }
+
+        // If the search engine index is reachable (confirming connectivity) and has 0 matches for this number on who-called.co.uk:
+        val probeOk = runCatching {
+            val probeResp = ScanHttp.get("https://search.brave.com/search?q=${ScanHttp.encode(query)}&source=web", timeoutMs = 8_000)
+            probeResp.isOk
+        }.getOrDefault(false)
+
+        return if (probeOk) {
+            ReputationReport("Who Called UK", url, false, 0, emptyList(), emptyList(), error = null)
+        } else {
+            null
+        }
+    }
+
+    internal fun parseWhoCalledUkHtml(ukLocal: String, url: String, rawHtml: String): ReputationReport {
+        val text = htmlToText(rawHtml)
         val callTypes = LinkedHashSet<String>()
         val samples = LinkedHashSet<String>()
 
@@ -181,7 +238,8 @@ object PhoneReputation {
             .mapNotNull { it.groupValues[1].toIntOrNull() }
             .maxOrNull() ?: 0
 
-        val lookupCount = WC_LOOKUPS_REGEX.find(text)?.groupValues?.getOrNull(1)
+        val lookupMatch = WC_LOOKUPS_REGEX.find(text)
+        val lookupCount = (lookupMatch?.groupValues?.getOrNull(1)?.ifBlank { lookupMatch.groupValues.getOrNull(2).orEmpty() })
             ?.replace(",", "")?.toIntOrNull() ?: 0
         if (lookupCount > 0 && samples.size < MAX_SAMPLES) {
             samples.add("Lookups on Who Called UK: $lookupCount")
@@ -193,7 +251,6 @@ object PhoneReputation {
             }
         }
 
-        // Detect prefix-neighbor spoofing waves (e.g., other 07666xxxxx numbers reported recently)
         val prefix5 = ukLocal.take(5)
         val similarMatches = WC_SIMILAR_NUMBERS_REGEX.findAll(text)
             .filter { it.groupValues[1] != ukLocal && it.groupValues[1].startsWith(prefix5) }
@@ -225,7 +282,7 @@ object PhoneReputation {
 
     internal fun queryShouldIAnswerUk(ukLocal: String): ReputationReport {
         val url = "https://www.shouldianswer.co.uk/phone-number/$ukLocal"
-        val response = ScanHttp.get(url, timeoutMs = 15_000)
+        val response = ScanHttp.get(url, timeoutMs = 15_000, headers = BROWSER_HEADERS, maxBodyChars = 1_500_000)
         if (response.isNetworkError) {
             return ReputationReport("Should I Answer UK", url, false, 0, emptyList(), emptyList(), "Network error")
         }
@@ -274,7 +331,7 @@ object PhoneReputation {
     }
 
     private fun queryHtml(source: String, url: String): ReputationReport {
-        val response = ScanHttp.get(url, timeoutMs = 20_000)
+        val response = ScanHttp.get(url, timeoutMs = 20_000, headers = BROWSER_HEADERS, maxBodyChars = 1_500_000)
         if (response.isNetworkError) {
             return ReputationReport(source, url, false, 0, emptyList(), emptyList(), "Network error")
         }

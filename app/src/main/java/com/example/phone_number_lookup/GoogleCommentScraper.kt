@@ -84,17 +84,20 @@ object GoogleCommentScraper {
 
         val emailMd5 = OsintDatasets.transformAccount(cleanEmail, AccountMode.HASH_MD5)
 
+        // ONLY use exact handles — NEVER strip trailing digits (e.g. damonkirby86 must NOT become damonkirby!)
         val allHandles = buildList {
             if (rawHandle.length >= 4 && rawHandle !in GENERIC_HANDLES) {
                 add(rawHandle)
                 val alnum = rawHandle.replace(Regex("[^a-zA-Z0-9_-]"), "")
-                if (alnum.length >= 4) add(alnum)
-                val noTrailingDigits = rawHandle.replace(Regex("\\d+$"), "").trim('.', '_', '-')
-                if (noTrailingDigits.length >= 5) add(noTrailingDigits)
+                if (alnum.length >= 4 && alnum != rawHandle) add(alnum)
             }
             knownHandles.forEach { h ->
                 val cleanH = h.trim().removePrefix("@")
-                if (cleanH.length >= 4 && cleanH.lowercase() !in GENERIC_HANDLES && !cleanH.contains('.')) {
+                if (cleanH.length >= 4 &&
+                    cleanH.lowercase() !in GENERIC_HANDLES &&
+                    !cleanH.contains('.') &&
+                    !cleanH.contains(' ')
+                ) {
                     add(cleanH)
                 }
             }
@@ -321,8 +324,13 @@ object GoogleCommentScraper {
             allHits += ghHandlesDef.await()
             allHits += stackOverflowDef.await()
 
+            val strictIdentifiers = (listOf(cleanEmail, emailMd5) + allHandles).map { it.lowercase() }.distinct()
             val deduplicated = allHits
                 .filter { it.url.startsWith("http") && it.title.isNotBlank() }
+                .filter { hit ->
+                    if (hit.sourceEngine == "Google Maps Reviews") true
+                    else matchesExactTargetIdentifier(hit, strictIdentifiers)
+                }
                 .distinctBy { "${normalizeUrlForDedup(it.url)}|${it.title.lowercase()}" }
 
             val searchTerms = (listOf(cleanEmail, rawHandle) + allHandles + effectiveDisplayNames)
@@ -366,6 +374,20 @@ object GoogleCommentScraper {
                 queriesRun = googleQueries,
                 dorkLinks = dorks
             )
+        }
+    }
+
+    /**
+     * Ensures a search result actually belongs to one of the user's exact identifiers
+     * (e.g. "damonkirby86" or "damonjess"), rejecting partial prefix matches like "damonkirby".
+     */
+    internal fun matchesExactTargetIdentifier(hit: CommentHit, exactIds: List<String>): Boolean {
+        val blob = "${hit.title} ${hit.commentSnippet} ${hit.url} ${hit.authorMatch}"
+        return exactIds.any { id ->
+            if (id.isBlank()) false
+            else if ('@' in id) blob.contains(id, ignoreCase = true)
+            else Regex("""(?<![a-zA-Z0-9])${Regex.escape(id)}(?![a-zA-Z0-9])""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(blob)
         }
     }
 
@@ -586,6 +608,24 @@ object GoogleCommentScraper {
             }
             if (isGoogleNoResultsHtml(resp.body)) {
                 return GoogleScrapeOutcome(GoogleScrapeStatus.NO_RESULTS, emptyList())
+            }
+        }
+
+        // Fallback: Use on-device Chromium WebView to pass Google's JS/cookie check natively!
+        if (sawBlock) {
+            val webViewHtml = kotlinx.coroutines.runBlocking {
+                NativeWebScraper.fetchRenderedHtml(
+                    "https://www.google.co.uk/search?q=$encoded&hl=en&gl=uk&num=15"
+                )
+            }
+            if (!webViewHtml.isNullOrBlank() && !isGoogleBlockedHtml(webViewHtml)) {
+                val parsed = parseGoogleSearchHtml(webViewHtml)
+                if (parsed.isNotEmpty()) {
+                    return GoogleScrapeOutcome(GoogleScrapeStatus.OK, parsed)
+                }
+                if (isGoogleNoResultsHtml(webViewHtml)) {
+                    return GoogleScrapeOutcome(GoogleScrapeStatus.NO_RESULTS, emptyList())
+                }
             }
         }
 
@@ -1043,7 +1083,7 @@ object GoogleCommentScraper {
 
                 CommentHit(
                     platform = "GitHub",
-                    title = if (isAuthorHandle) "$repoName: Commented on \"$title\"" else "$repoName (@$user): $title",
+                    title = if (isAuthorHandle) "$repoName: Active on \"$title\"" else "$repoName (@$user): $title",
                     commentSnippet = issueBody.ifBlank { "Public GitHub issue/PR comment in $repoName" },
                     url = htmlUrl,
                     authorMatch = authorMatch,
