@@ -7,6 +7,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Base64
 
 data class ScrapedWebReport(
     val query: String,
@@ -33,6 +34,41 @@ object OpenWebOsintScraper {
         "protonmail", "proton", "aol", "msn", "live", "mail", "support",
         "share", "intent", "search", "explore", "home", "login", "signup"
     )
+
+    private val BING_RESULT_OPEN = Regex(
+        """<li\b[^>]*\bclass\s*=\s*["'][^"']*\bb_algo\b[^"']*["'][^>]*>""",
+        RegexOption.IGNORE_CASE
+    )
+    private val BING_H2 = Regex(
+        """<h2\b[^>]*>(.*?)</h2>""",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+    )
+    private val BING_ANCHOR = Regex(
+        """<a\b([^>]*)>(.*?)</a>""",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+    )
+    private val BING_HREF = Regex(
+        """\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')""",
+        RegexOption.IGNORE_CASE
+    )
+    private val BING_CLASS = Regex(
+        """\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')""",
+        RegexOption.IGNORE_CASE
+    )
+    private val BING_CAPTION = Regex(
+        """<div\b[^>]*\bclass\s*=\s*["'][^"']*\bb_caption\b[^"']*["'][^>]*>(.*?)</div>""",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+    )
+    private val BING_PARAGRAPH = Regex(
+        """<p\b[^>]*>(.*?)</p>""",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+    )
+    private val BING_SCRIPT_STYLE = Regex(
+        """<(script|style)\b.*?</\1>""",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+    )
+    private val BING_TAG = Regex("<[^>]*>")
+    private val BING_WHITESPACE = Regex("""\s+""")
 
     /**
      * Runs parallel public scrapes across Google Search, DuckDuckGo, Brave Search, Bing,
@@ -128,9 +164,14 @@ object OpenWebOsintScraper {
 
     /**
      * Fallback public search scraper for Bing HTML.
+     *
+     * Bing no longer puts the result link inside `<h2>`: the heading is plain text and the URL
+     * sits in a sibling anchor (class `tilk`, or the title anchor right after the heading).
+     * The old single regex required `<h2><a href=...>` and therefore matched nothing at all,
+     * so Bing silently contributed zero results. Each `b_algo` block is now parsed on its own.
      */
     internal fun scrapeBingHtml(query: String): List<SearchResultItem> {
-        val url = "https://www.bing.com/search?q=${ScanHttp.encode(query)}"
+        val url = "https://www.bing.com/search?q=${ScanHttp.encode(query)}&count=20&setlang=en-GB"
         val resp = ScanHttp.get(
             url,
             timeoutMs = 10_000,
@@ -138,33 +179,85 @@ object OpenWebOsintScraper {
             maxBodyChars = 2_000_000
         )
         if (!resp.isOk || resp.body.isBlank()) return emptyList()
-
-        val results = mutableListOf<SearchResultItem>()
-        val tagStrip = Regex("<[^>]*>")
-        val bingBlockRegex = Regex(
-            """<li class="b_algo"[^>]*>.*?<h2><a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a></h2>(?:.*?<div class="b_caption"[^>]*><p[^>]*>(.*?)</p>)?.*?</li>""",
-            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
-        )
-
-        for (match in bingBlockRegex.findAll(resp.body)) {
-            val href = match.groupValues[1]
-            if (href.contains("bing.com")) continue
-            val title = match.groupValues[2].replace(tagStrip, "").trim()
-            val snippet = match.groupValues.getOrNull(3)?.replace(tagStrip, "")?.replace(Regex("\\s+"), " ")?.trim()
-                ?: "Public indexed web result via Bing"
-
-            if (title.isNotBlank()) {
-                results += SearchResultItem(
-                    title = title,
-                    snippet = snippet,
-                    url = href,
-                    source = "Bing Search"
-                )
-            }
-            if (results.size >= 15) break
-        }
-        return results
+        return parseBingHtml(resp.body)
     }
+
+    internal fun parseBingHtml(html: String): List<SearchResultItem> {
+        if (html.isBlank()) return emptyList()
+        val cleaned = html.replace(BING_SCRIPT_STYLE, " ")
+        val results = mutableListOf<SearchResultItem>()
+
+        // Split on the result wrapper, so markup changes inside one block cannot hide the rest.
+        for (block in cleaned.split(BING_RESULT_OPEN).drop(1)) {
+            if (results.size >= 15) break
+
+            val anchors = BING_ANCHOR.findAll(block).mapNotNull { anchor ->
+                val attrs = anchor.groupValues[1]
+                val href = BING_HREF.find(attrs)
+                    ?.let { it.groupValues[1].ifEmpty { it.groupValues[2] } }
+                    ?.let(::decodeBingRedirect)
+                    .orEmpty()
+                if (!href.startsWith("http") || href.contains("bing.com")) return@mapNotNull null
+                val classes = BING_CLASS.find(attrs)
+                    ?.let { it.groupValues[1].ifEmpty { it.groupValues[2] } }
+                    .orEmpty()
+                BingAnchor(href = href, classes = classes, label = cleanBingText(anchor.groupValues[2]))
+            }.toList()
+            if (anchors.isEmpty()) continue
+
+            val heading = BING_H2.find(block)
+            val href = anchors.firstOrNull { "tilk" in it.classes }?.href
+                ?: heading?.let { h2 -> anchors.firstOrNull { cleanBingText(h2.groupValues[1]).startsWith(it.label) } }?.href
+                ?: anchors.first().href
+            val title = heading?.let { cleanBingText(it.groupValues[1]) }.orEmpty()
+                .ifBlank { anchors.firstOrNull { it.label.length >= 3 }?.label.orEmpty() }
+            if (title.length < 3) continue
+
+            val caption = BING_CAPTION.find(block)?.groupValues?.get(1).orEmpty()
+            val snippet = BING_PARAGRAPH.find(caption)?.groupValues?.get(1)
+                ?.let(::cleanBingText)
+                ?.takeIf { it.isNotBlank() }
+                ?: cleanBingText(caption)
+
+            results += SearchResultItem(
+                title = title,
+                snippet = snippet.take(320).ifBlank { "Public indexed web result via Bing" },
+                url = href,
+                source = "Bing Search"
+            )
+        }
+
+        return results.distinctBy { it.url.lowercase().trimEnd('/') }
+    }
+
+    private data class BingAnchor(val href: String, val classes: String, val label: String)
+
+    /** Bing wraps some organic links as `bing.com/ck/a?...&u=a1<base64url target>`. */
+    private fun decodeBingRedirect(raw: String): String {
+        val href = raw.replace("&amp;", "&").trim()
+        if (!href.contains("bing.com/ck/a")) return href
+        val encoded = Regex("""[?&]u=a1([^&]+)""").find(href)?.groupValues?.get(1) ?: return href
+        return runCatching {
+            val padded = encoded + "=".repeat((4 - encoded.length % 4) % 4)
+            String(Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
+        }.getOrDefault(href).takeIf { it.startsWith("http") } ?: href
+    }
+
+    private fun cleanBingText(fragment: String): String =
+        fragment.replace(BING_TAG, " ")
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&#x27;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&nbsp;", " ")
+            .replace("&bull;", "•")
+            .replace("&mdash;", "—")
+            .replace("&ndash;", "–")
+            .replace("&hellip;", "…")
+            .replace(BING_WHITESPACE, " ")
+            .trim()
 
     private fun scrapeDuckDuckGo(query: String): List<SearchResultItem> {
         val url = "https://html.duckduckgo.com/html/?q=${ScanHttp.encode(query)}"

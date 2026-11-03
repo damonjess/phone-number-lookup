@@ -347,6 +347,12 @@ object GoogleMetadataExtractor {
             if (ddgResp.isOk && ddgResp.body.isNotBlank()) {
                 GAIA_ID_FROM_CONTRIB_REGEX.find(ddgResp.body)?.groupValues?.get(1)?.let { return it }
             }
+
+            // Bing is the open index that still answers these requests, so it can surface the
+            // contributor URL when Google and DuckDuckGo refuse the app's traffic.
+            OpenWebOsintScraper.scrapeBingHtml(dork).firstNotNullOfOrNull { item ->
+                GAIA_ID_FROM_CONTRIB_REGEX.find(item.url)?.groupValues?.get(1)
+            }?.let { return it }
         }
         return null
     }

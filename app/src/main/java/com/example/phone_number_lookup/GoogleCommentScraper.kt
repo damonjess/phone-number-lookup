@@ -122,18 +122,22 @@ object GoogleCommentScraper {
             effectiveDisplayNames
         )
 
-        // Concise queries that search engines won't reject or CAPTCHA-block
+        // Concise queries that search engines won't reject or CAPTCHA-block. Only the first four
+        // reach the engines, so each slot asks one question; comment dorks come first because this
+        // section is about comments, and the plain-handle query last still catches profile pages.
         val liveSearchQueries = buildList {
             add("\"$cleanEmail\"")
-            allHandles.take(3).forEach { h ->
+            allHandles.take(2).forEach { h ->
                 add("\"$h\" (comment OR review OR reply OR forum)")
-                add("\"$h\"")
             }
-            effectiveDisplayNames.take(2).forEach { name ->
+            allHandles.firstOrNull()?.let { h ->
+                add("\"$h\" (site:reddit.com OR site:youtube.com OR site:disqus.com OR site:news.ycombinator.com OR site:stackoverflow.com OR site:quora.com OR site:medium.com OR site:trustpilot.com)")
+            }
+            effectiveDisplayNames.firstOrNull { ' ' in it }?.let { name ->
                 add("site:google.com/maps/contrib \"$name\"")
-                allHandles.firstOrNull()?.let { h -> add("\"$name\" \"$h\"") }
             }
-        }.distinct().take(5)
+            allHandles.firstOrNull()?.let { h -> add("\"$h\"") }
+        }.distinct().take(4)
 
         coroutineScope {
             // 0. Direct Google Maps Contributor Reviews & Comments
@@ -274,46 +278,37 @@ object GoogleCommentScraper {
                 return "@$rawHandle"
             }
 
-            for ((query, outcome) in googleOutcomes) {
-                val label = matchLabelForQuery(query)
-                outcome.items.forEach { item ->
-                    allHits += toCommentHit(item, label, "Google Search")
+            // A search engine that has nothing for a query still pads the page with unrelated
+            // results (Bing serves Gmail sign-in pages for a bare address), so a hit only counts
+            // when its own text really mentions the term that was searched.
+            fun addSearchHits(items: List<SearchResultItem>, label: String, engine: String) {
+                items.filter { searchHitMatchesQuery(label, it) }.forEach { item ->
+                    allHits += toCommentHit(item, label, engine)
                 }
+            }
+
+            for ((query, outcome) in googleOutcomes) {
+                addSearchHits(outcome.items, matchLabelForQuery(query), "Google Search")
             }
 
             for ((query, items) in braveDeferred.awaitAll()) {
-                val label = matchLabelForQuery(query)
-                items.forEach { item ->
-                    allHits += toCommentHit(item, label, "Brave Search")
-                }
+                addSearchHits(items, matchLabelForQuery(query), "Brave Search")
             }
 
             for ((query, items) in startpageDeferred.awaitAll()) {
-                val label = matchLabelForQuery(query)
-                items.forEach { item ->
-                    allHits += toCommentHit(item, label, "Google (via Startpage)")
-                }
+                addSearchHits(items, matchLabelForQuery(query), "Google (via Startpage)")
             }
 
             for ((query, items) in ddgDeferred.awaitAll()) {
-                val label = matchLabelForQuery(query)
-                items.forEach { item ->
-                    allHits += toCommentHit(item, label, "DuckDuckGo Search")
-                }
+                addSearchHits(items, matchLabelForQuery(query), "DuckDuckGo Search")
             }
 
             for ((query, items) in bingDeferred.awaitAll()) {
-                val label = matchLabelForQuery(query)
-                items.forEach { item ->
-                    allHits += toCommentHit(item, label, "Bing Search")
-                }
+                addSearchHits(items, matchLabelForQuery(query), "Bing Search")
             }
 
             for ((query, items) in yahooDeferred.awaitAll()) {
-                val label = matchLabelForQuery(query)
-                items.forEach { item ->
-                    allHits += toCommentHit(item, label, "Yahoo Search")
-                }
+                addSearchHits(items, matchLabelForQuery(query), "Yahoo Search")
             }
 
             val mapsHits = googleMapsDef.await()
@@ -346,17 +341,19 @@ object GoogleCommentScraper {
                         .thenByDescending { it.date != null }
                 )
 
+            val foundSources = enriched.map { it.sourceEngine }.distinct()
+            val sourceSummary = foundSources.joinToString(", ")
             val statusText = when {
                 mapsHits.isNotEmpty() ->
                     "Google Maps Reviews & comment indexes queried across ${allHandles.size} handle(s) (${enriched.size} found, including ${mapsHits.size} Google Maps contribution(s))"
                 anyGoogleOk && enriched.isNotEmpty() ->
                     "Google Search & comment indexes queried across ${allHandles.size} handle(s) (${enriched.size} found)"
                 anyGoogleBlocked && enriched.isNotEmpty() ->
-                    "Google rate-limited direct HTML; recovered ${enriched.size} comment(s) & mentions via Brave, Yahoo, Bing & platform APIs"
+                    "Google blocked automated search from this IP; recovered ${enriched.size} comment(s) and mention(s) via $sourceSummary"
                 anyGoogleBlocked ->
-                    "Google challenged automated requests from this IP — tap the Google Comment Dorks below to view live in browser"
+                    "Google blocked automated search from this IP, and the open indexes returned no public comments for $cleanEmail. Use the Google dorks below to run the searches in your browser"
                 enriched.isNotEmpty() ->
-                    "Found ${enriched.size} public comment(s), forum posts, and web mentions"
+                    "Found ${enriched.size} public comment(s), forum posts, and web mentions via $sourceSummary"
                 else ->
                     "No indexed public comments found for $cleanEmail or handles (${allHandles.joinToString()})"
             }
@@ -1055,6 +1052,22 @@ object GoogleCommentScraper {
                 )
             }
         }.getOrDefault(emptyList())
+    }
+
+    /**
+     * True when [item] actually contains the email, `@handle`, or display name that was searched.
+     * Handles are matched on token boundaries so `@alex` does not accept `@alex99`.
+     */
+    internal fun searchHitMatchesQuery(label: String, item: SearchResultItem): Boolean {
+        val blob = "${item.title} ${item.snippet} ${item.url}"
+        val needle = label.removePrefix("@").trim()
+        if (needle.isBlank()) return true
+        return if (label.startsWith("@")) {
+            Regex("""(?<![A-Za-z0-9_])${Regex.escape(needle)}(?![A-Za-z0-9_])""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(blob)
+        } else {
+            blob.contains(needle, ignoreCase = true)
+        }
     }
 
     internal fun toCommentHit(
