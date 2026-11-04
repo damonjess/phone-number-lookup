@@ -447,6 +447,37 @@ fun UsernameAndEmailOsintScreen(
                         attribution = uiState.attributionReport,
                         isLoading = emailLoading,
                     )
+                    val apifySummary = remember(
+                        target,
+                        uiState.registeredSites,
+                        uiState.registrationChecked,
+                        uiState.registrationIssues,
+                        uiState.liveHits,
+                        uiState.attributionReport,
+                        uiState.breachReport,
+                        uiState.domainReport,
+                        uiState.enrichedProfiles
+                    ) {
+                        com.example.phone_number_lookup.ApifyStyleEmailIntel.buildSummary(
+                            email = target,
+                            registrations = uiState.registeredSites,
+                            registrationChecked = uiState.registrationChecked,
+                            registrationIssues = uiState.registrationIssues,
+                            handleHits = uiState.liveHits,
+                            attribution = uiState.attributionReport,
+                            breachReport = uiState.breachReport,
+                            domainReport = uiState.domainReport,
+                            enrichedProfiles = uiState.enrichedProfiles
+                        )
+                    }
+                    com.example.phone_number_lookup.ui.components.ApifyStyleEmailSummaryCard(
+                        summary = apifySummary,
+                        attribution = uiState.attributionReport,
+                        breachReport = uiState.breachReport,
+                        domainReport = uiState.domainReport,
+                        onOpenUrl = { openUrl(context, it) },
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     EmailIdentitySummarySection(
                         attribution = uiState.attributionReport,

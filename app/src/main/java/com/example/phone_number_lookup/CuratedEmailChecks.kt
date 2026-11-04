@@ -18,13 +18,27 @@ object CuratedEmailChecks {
         ubuntuPgpKeys(),
         protonMailPks(),
         twitter(),
+        pinterest(),
+        quora(),
+        tumblr(),
+        imgur(),
+        wattpad(),
+        patreon(),
+        substack(),
+        letterboxd(),
         adobe(),
         lastFm(),
         eventbrite(),
         evernote(),
         samsung(),
         xing(),
-        strava()
+        strava(),
+        gitlab(),
+        replit(),
+        figma(),
+        codecademy(),
+        anyDo(),
+        codepen()
     )
 
     /**

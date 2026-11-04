@@ -431,6 +431,20 @@ object OsintPilotEngine {
             } else null
         }
 
+        val socialMediaDef = async {
+            val att = attrDef.await()
+            val discoveredNames = att?.namesFound?.map { it.value }?.distinct().orEmpty()
+            val discoveredHandles = att?.usernamesFound?.map { it.value.removePrefix("@") }?.distinct().orEmpty()
+            runCatching {
+                SocialMediaEmailScraper.scanForEmail(
+                    email = cleanEmail,
+                    exactHandles = listOf(localPart) + discoveredHandles,
+                    fullNames = discoveredNames,
+                    locationHint = context.locationHint
+                )
+            }.getOrDefault(emptyList())
+        }
+
         // Await Attribution + Handle Hits
         val attribution = attrDef.await()
         val handleUsernameHits = handleScanDef.await()
@@ -444,6 +458,58 @@ object OsintPilotEngine {
                 if (cleanH.length >= 4 && !cleanH.contains(' ')) add(cleanH)
             }
         }.distinctBy { it.lowercase() }.take(5)
+
+        // Run Free Public Records, Breach PII/Password Patterns, Alias Correlation & Address Timeline
+        val deepPublicRecords = FreePublicRecordsAndBreachIntel.enrichTarget(
+            email = cleanEmail,
+            username = localPart,
+            fullName = attribution?.namesFound?.firstOrNull()?.value,
+            discoveredHandles = allHandlesToEnrich,
+            existingLocations = attribution?.locationsFound.orEmpty(),
+            existingTimeline = attribution?.timeline.orEmpty()
+        )
+
+        // 1. Add Exposed PII & Password Storage Patterns to Breach Agent
+        if (deepPublicRecords.piiSummary.exposedFields.isNotEmpty()) {
+            val piiClaim = "Exposed PII Classes across breaches: ${deepPublicRecords.piiSummary.exposedFields.joinToString(", ")}"
+            publicRecords += AttributedValue(piiClaim, "LeakCheck & XposedOrNot")
+            findings += SourcedFinding(category = "Breach", claim = piiClaim, sourceName = "Breach PII Analytics", confidence = ConfidenceLevel.HIGH)
+        }
+        deepPublicRecords.piiSummary.passwordPatterns.forEach { pattern ->
+            findings += SourcedFinding(category = "Breach", claim = "Password Storage Pattern: $pattern", sourceName = "XposedOrNot Metrics", confidence = ConfidenceLevel.HIGH)
+        }
+        deepPublicRecords.piiSummary.stealerUsernameHits.forEach { sh ->
+            findings += SourcedFinding(category = "Breach", claim = sh, sourceName = "HudsonRock Username Cavalier", confidence = ConfidenceLevel.HIGH)
+        }
+
+        // 2. Add Corporate Registries, Court Filings, Official Gazette & Postcode Records
+        deepPublicRecords.filings.forEach { filing ->
+            publicRecords += AttributedValue("[${filing.category}] ${filing.title} — ${filing.detail}", filing.url)
+            filing.addressOrLocation?.let { addr ->
+                locations += AttributedValue(addr, filing.category)
+            }
+            findings += SourcedFinding(
+                category = "Public Record",
+                claim = "${filing.title}: ${filing.detail}",
+                sourceName = filing.category,
+                sourceUrl = filing.url,
+                confidence = ConfidenceLevel.HIGH
+            )
+        }
+
+        // 3. Add Alias Correlations & Associates
+        deepPublicRecords.aliasCorrelations.forEach { corr ->
+            findings += SourcedFinding(
+                category = "Identity",
+                claim = "Alias Correlation (@${corr.handleA} ↔ @${corr.handleB}): ${corr.reason} (${corr.confidenceScore}% match)",
+                sourceName = "Alias Graph Engine",
+                confidence = ConfidenceLevel.HIGH
+            )
+        }
+        deepPublicRecords.associates.forEach { assoc ->
+            names += assoc
+            findings += SourcedFinding(category = "Identity", claim = "Associated Officer / Entity: ${assoc.value}", sourceName = assoc.source, confidence = ConfidenceLevel.MEDIUM)
+        }
 
         val deepDossiersDef = async {
             allHandlesToEnrich.mapIndexed { index, h ->
@@ -588,6 +654,23 @@ object OsintPilotEngine {
             )
         }
 
+        socialMediaDef.await().forEach { social ->
+            accounts += PhoneAccountHit(
+                platform = "${social.platform} (${social.matchedIdentifier})",
+                status = if (social.verifiedByEmail) "Email Match" else "Handle Match",
+                detail = "${social.handleOrTitle} — ${social.snippet}",
+                url = social.url,
+                confirmed = true
+            )
+            findings += SourcedFinding(
+                category = "Registration",
+                claim = "${social.platform} (${social.matchedIdentifier}): ${social.handleOrTitle} — ${social.snippet}",
+                sourceName = social.platform,
+                sourceUrl = social.url,
+                confidence = if (social.verifiedByEmail) ConfidenceLevel.HIGH else ConfidenceLevel.MEDIUM
+            )
+        }
+
         // Process Breaches (Synthesizing BreachDetail for ALL breachNames including Naz.API, AlienStealerLogs, HudsonRock, COMB, Pastebin)
         val breachOutcome = breachDef.await()
         breachOutcome?.let { bo ->
@@ -729,6 +812,9 @@ object OsintPilotEngine {
         val publicRecords = mutableListOf<AttributedValue>()
         val breaches = mutableListOf<BreachDetail>()
 
+        context.locationHint?.let { locations += AttributedValue(it, "User Context Hint") }
+        context.knownAliases.forEach { aliases += AttributedValue("@$it", "User Context Hint") }
+
         // 1. Identity & Keybase / PGP / Wayback
         val enrichDef = async {
             runCatching { IdentityEnricher.enrich(clean, isEmail = false) }.getOrNull()
@@ -854,7 +940,64 @@ object OsintPilotEngine {
             }
         }
 
-        // Cross-pivot: If an email was discovered for this username (e.g. from GitHub commits or npm), check breaches!
+        // 5. Run Free Public Records, Breach PII, HudsonRock Username Stealer & Alias Correlation
+        val deepPublicRecords = FreePublicRecordsAndBreachIntel.enrichTarget(
+            email = discoveredEmails.firstOrNull(),
+            username = clean,
+            fullName = names.firstOrNull { ' ' in it.value }?.value,
+            discoveredHandles = aliases.map { it.value.removePrefix("@") },
+            existingLocations = locations
+        )
+
+        if (deepPublicRecords.piiSummary.exposedFields.isNotEmpty()) {
+            val piiClaim = "Exposed PII Classes for @$clean: ${deepPublicRecords.piiSummary.exposedFields.joinToString(", ")}"
+            publicRecords += AttributedValue(piiClaim, "LeakCheck Public API")
+            findings += SourcedFinding(category = "Breach", claim = piiClaim, sourceName = "LeakCheck Public API", confidence = ConfidenceLevel.HIGH)
+        }
+        deepPublicRecords.piiSummary.leakCheckSources.forEach { src ->
+            breaches += BreachDetail(
+                name = src.substringBefore(" (").trim(),
+                breachDate = src.substringAfter("(", "").removeSuffix(")").takeIf { it.isNotBlank() },
+                description = "LeakCheck breach record for @$clean: $src",
+                dataClasses = deepPublicRecords.piiSummary.exposedFields.ifEmpty { listOf("Username", "Credentials") },
+                verified = true
+            )
+            findings += SourcedFinding(category = "Breach", claim = "Username @$clean exposed in $src", sourceName = "LeakCheck Public API", confidence = ConfidenceLevel.HIGH)
+        }
+        deepPublicRecords.piiSummary.stealerUsernameHits.forEach { sh ->
+            breaches += BreachDetail(
+                name = "HudsonRock Infostealer Log",
+                description = sh,
+                dataClasses = listOf("Username", "Saved Credentials", "System Telemetry"),
+                verified = true
+            )
+            findings += SourcedFinding(category = "Breach", claim = sh, sourceName = "HudsonRock Username Cavalier", confidence = ConfidenceLevel.HIGH)
+        }
+        deepPublicRecords.filings.forEach { filing ->
+            publicRecords += AttributedValue("[${filing.category}] ${filing.title} — ${filing.detail}", filing.url)
+            filing.addressOrLocation?.let { addr -> locations += AttributedValue(addr, filing.category) }
+            findings += SourcedFinding(
+                category = "Public Record",
+                claim = "${filing.title}: ${filing.detail}",
+                sourceName = filing.category,
+                sourceUrl = filing.url,
+                confidence = ConfidenceLevel.HIGH
+            )
+        }
+        deepPublicRecords.aliasCorrelations.forEach { corr ->
+            findings += SourcedFinding(
+                category = "Identity",
+                claim = "Alias Correlation (@${corr.handleA} ↔ @${corr.handleB}): ${corr.reason} (${corr.confidenceScore}% match)",
+                sourceName = "Alias Graph Engine",
+                confidence = ConfidenceLevel.HIGH
+            )
+        }
+        deepPublicRecords.associates.forEach { assoc ->
+            names += assoc
+            findings += SourcedFinding(category = "Identity", claim = "Associated Officer / Entity: ${assoc.value}", sourceName = assoc.source, confidence = ConfidenceLevel.MEDIUM)
+        }
+
+        // Cross-pivot: If an email was discovered for this username, check full email breaches
         discoveredEmails.distinct().take(2).forEach { emailHit ->
             val br = runCatching { EmailScanner.check(emailHit) }.getOrNull()
             if (br != null) {
@@ -866,14 +1009,15 @@ object OsintPilotEngine {
         }
 
         val dedupAccounts = deduplicateAccounts(accounts)
+        val dedupBreaches = breaches.distinctBy { it.name.lowercase() }
         val dedupPhotos = photos.distinctBy { it.url }
 
         val finalStatuses = listOf(
-            PilotAgentStatus("agent_id", "Identity Resolution Agent", "Who is this, really?", "Resolved ${names.distinctBy { it.value.lowercase() }.size} name(s), ${discoveredEmails.distinct().size} email(s) & ${discoveredPhones.distinct().size} phone(s)", countBadge = "${names.distinctBy { it.value.lowercase() }.size} names", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = names.size + discoveredEmails.size + discoveredPhones.size),
-            PilotAgentStatus("agent_footprint", "Digital Footprint Agent", "Where are they active?", "Scanned 300+ platforms & 24+ deep profile APIs", countBadge = "${dedupAccounts.size} accounts", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = dedupAccounts.size),
-            PilotAgentStatus("agent_breach", "Breach Intelligence Agent", "What has already leaked?", if (breaches.isNotEmpty()) "Identified ${breaches.size} breach exposures via discovered email" else "No breach exposures found for discovered emails", countBadge = "${breaches.size} breaches", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = breaches.size),
-            PilotAgentStatus("agent_records", "Public Records Agent", "What do the public records say?", "Cross-referenced Wayback archives, forums, Reddit, HN & GitHub", countBadge = "${publicRecords.size} records", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = publicRecords.size),
-            PilotAgentStatus("agent_telecom", "Telecom & Telemetry Agent", "Where can they be reached?", "Mapped profile locations & regional signals", countBadge = "${locations.distinctBy { it.value.lowercase() }.size} locations", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = locations.size),
+            PilotAgentStatus("agent_id", "Identity Resolution Agent", "Who is this, really?", "Resolved ${names.distinctBy { it.value.lowercase() }.size} name(s), ${aliases.distinctBy { it.value.lowercase() }.size} alias(es) & ${discoveredEmails.distinct().size} email(s)", countBadge = "${names.distinctBy { it.value.lowercase() }.size} names", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = names.size + aliases.size + discoveredEmails.size),
+            PilotAgentStatus("agent_footprint", "Digital Footprint Agent", "Where are they active?", "Scanned 300+ platforms & 27+ deep profile APIs", countBadge = "${dedupAccounts.size} accounts", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = dedupAccounts.size),
+            PilotAgentStatus("agent_breach", "Breach Intelligence Agent", "What has already leaked?", if (dedupBreaches.isNotEmpty()) "Identified ${dedupBreaches.size} breach & stealer exposures" else "No breach exposures found", countBadge = "${dedupBreaches.size} breaches", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = dedupBreaches.size),
+            PilotAgentStatus("agent_records", "Public Records Agent", "What do the public records say?", "Cross-referenced Companies House, Gazette, Case Law, Wayback & web records", countBadge = "${publicRecords.size} records", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = publicRecords.size),
+            PilotAgentStatus("agent_telecom", "Telecom & Telemetry Agent", "Where can they be reached?", "Mapped profile locations, postcodes & contact signals", countBadge = "${locations.distinctBy { it.value.lowercase() }.size} locations", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = locations.size + discoveredPhones.size),
             PilotAgentStatus("agent_media", "Media & Visual Agent", "What do they look like?", if (dedupPhotos.isNotEmpty()) "Recovered ${dedupPhotos.size} profile avatars" else "No avatar found", countBadge = "${dedupPhotos.size} photos", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = dedupPhotos.size)
         )
 
@@ -886,8 +1030,8 @@ object OsintPilotEngine {
             linkedEmails = discoveredEmails.distinct(),
             linkedPhones = discoveredPhones.distinct(),
             linkedAccounts = dedupAccounts,
-            breachRecords = breaches,
-            totalBreachCount = breaches.size,
+            breachRecords = dedupBreaches,
+            totalBreachCount = dedupBreaches.size,
             publicRecords = publicRecords.distinctBy { it.value.lowercase() },
             locations = locations.distinctBy { it.value.lowercase() },
             recoveredPhotos = dedupPhotos,
@@ -907,13 +1051,16 @@ object OsintPilotEngine {
         val findings = mutableListOf<SourcedFinding>()
         val photos = mutableListOf<PilotMediaPhoto>()
         val accounts = mutableListOf<PhoneAccountHit>()
+        val names = mutableListOf(AttributedValue(name, "Target Query"))
         val aliases = mutableListOf<AttributedValue>()
         val locations = mutableListOf<AttributedValue>()
         val discoveredEmails = mutableListOf<String>()
         val discoveredPhones = mutableListOf<String>()
         val publicRecords = mutableListOf<AttributedValue>()
+        val breaches = mutableListOf<BreachDetail>()
 
         context.locationHint?.let { locations += AttributedValue(it, "User Context Hint") }
+        context.knownAliases.forEach { aliases += AttributedValue("@$it", "User Context Hint") }
 
         val query = "\"$name\" ${context.locationHint.orEmpty()}".trim()
         val webDef = async {
@@ -921,13 +1068,22 @@ object OsintPilotEngine {
                 OpenWebOsintScraper.scrapeAll(
                     listOf(
                         query,
-                        "\"$name\" (site:linkedin.com/in OR site:company-information.service.gov.uk OR site:github.com OR site:x.com)"
+                        "\"$name\" (site:linkedin.com/in OR site:company-information.service.gov.uk OR site:thegazette.co.uk OR site:github.com)"
                     )
                 )
             }.getOrNull()
         }
         val ghUsersDef = async {
             runCatching { GitHubOsint.searchUsers(name, limit = 5) }.getOrDefault(emptyList())
+        }
+
+        // Run Real-Time Public Records (UK Companies House, Official Gazette, UK National Archives Case Law, GLEIF)
+        val deepRecordsDef = async {
+            FreePublicRecordsAndBreachIntel.enrichTarget(
+                fullName = name,
+                discoveredHandles = context.knownAliases,
+                existingLocations = locations
+            )
         }
 
         ghUsersDef.await().forEach { u ->
@@ -956,13 +1112,55 @@ object OsintPilotEngine {
             }
         }
 
+        val deepPublicRecords = deepRecordsDef.await()
+        deepPublicRecords.filings.forEach { filing ->
+            publicRecords += AttributedValue("[${filing.category}] ${filing.title} — ${filing.detail}", filing.url)
+            filing.addressOrLocation?.let { addr ->
+                locations += AttributedValue(addr, filing.category)
+                findings += SourcedFinding(category = "Location", claim = "Registered Filing Address: $addr", sourceName = filing.category, sourceUrl = filing.url, confidence = ConfidenceLevel.HIGH)
+            }
+            findings += SourcedFinding(
+                category = "Public Record",
+                claim = "${filing.title}: ${filing.detail}",
+                sourceName = filing.category,
+                sourceUrl = filing.url,
+                confidence = ConfidenceLevel.HIGH
+            )
+        }
+        deepPublicRecords.associates.forEach { assoc ->
+            names += assoc
+            findings += SourcedFinding(category = "Identity", claim = "Associated Officer / Entity: ${assoc.value}", sourceName = assoc.source, confidence = ConfidenceLevel.MEDIUM)
+        }
+        deepPublicRecords.aliasCorrelations.forEach { corr ->
+            findings += SourcedFinding(
+                category = "Identity",
+                claim = "Alias Correlation (@${corr.handleA} ↔ @${corr.handleB}): ${corr.reason} (${corr.confidenceScore}% match)",
+                sourceName = "Alias Graph Engine",
+                confidence = ConfidenceLevel.HIGH
+            )
+        }
+
+        // If web or public records uncovered an email address for this person, check breaches automatically
+        discoveredEmails.distinct().take(2).forEach { emailHit ->
+            val br = runCatching { EmailScanner.check(emailHit) }.getOrNull()
+            if (br != null) {
+                breaches.addAll(synthesizeBreachDetails(br))
+                br.breachNames.forEach { bName ->
+                    findings += SourcedFinding(category = "Breach", claim = "Breach via discovered email ($emailHit): $bName", sourceName = "Breach Intelligence", confidence = ConfidenceLevel.HIGH)
+                }
+            }
+        }
+
         val dedupAccounts = deduplicateAccounts(accounts)
+        val dedupBreaches = breaches.distinctBy { it.name.lowercase() }
+        val dedupLocations = locations.distinctBy { it.value.lowercase() }
+
         val finalStatuses = listOf(
-            PilotAgentStatus("agent_id", "Identity Resolution Agent", "Who is this, really?", "Searched directories, GitHub, LinkedIn & public web", countBadge = "${1 + aliases.size} identities", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = 1 + aliases.size),
+            PilotAgentStatus("agent_id", "Identity Resolution Agent", "Who is this, really?", "Searched corporate officers, associates, GitHub & public web", countBadge = "${names.size + aliases.size} identities", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = names.size + aliases.size),
             PilotAgentStatus("agent_footprint", "Digital Footprint Agent", "Where are they active?", "Checked LinkedIn, GitHub & public social indexes", countBadge = "${dedupAccounts.size} profiles", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = dedupAccounts.size),
-            PilotAgentStatus("agent_breach", "Breach Intelligence Agent", "What has already leaked?", "Evaluated discovered contact identifiers", countBadge = "0 records", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = 0),
-            PilotAgentStatus("agent_records", "Public Records Agent", "What do the public records say?", "Found matching public web documents & corporate links", countBadge = "${publicRecords.size} filings", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = publicRecords.size),
-            PilotAgentStatus("agent_telecom", "Telecom & Telemetry Agent", "Where can they be reached?", "Extracted locations & phone numbers from web records", countBadge = "${locations.distinctBy { it.value.lowercase() }.size} locations", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = locations.size + discoveredPhones.size),
+            PilotAgentStatus("agent_breach", "Breach Intelligence Agent", "What has already leaked?", if (dedupBreaches.isNotEmpty()) "Identified ${dedupBreaches.size} breach records via discovered email" else "No direct email breach records exposed", countBadge = "${dedupBreaches.size} breaches", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = dedupBreaches.size),
+            PilotAgentStatus("agent_records", "Public Records Agent", "What do the public records say?", "Queried UK Companies House, Official Gazette, Case Law & GLEIF", countBadge = "${publicRecords.size} filings", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = publicRecords.size),
+            PilotAgentStatus("agent_telecom", "Telecom & Telemetry Agent", "Where can they be reached?", "Extracted registered correspondence addresses, postcodes & phones", countBadge = "${dedupLocations.size} locations", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = dedupLocations.size + discoveredPhones.size),
             PilotAgentStatus("agent_media", "Media & Visual Agent", "What do they look like?", "Recovered ${photos.size} profile avatars", countBadge = "${photos.size} photos", isRunning = false, isComplete = true, timeAgo = "just now", findingsCount = photos.size)
         )
 
@@ -970,14 +1168,16 @@ object OsintPilotEngine {
             finishedAt = System.currentTimeMillis(),
             isRunning = false,
             agentStatuses = finalStatuses,
-            resolvedNames = listOf(AttributedValue(name, "Target Query")),
+            resolvedNames = names.distinctBy { it.value.lowercase() },
             resolvedAliases = aliases.distinctBy { it.value.lowercase() },
             linkedEmails = discoveredEmails.distinct(),
             linkedPhones = discoveredPhones.distinct(),
             linkedAccounts = dedupAccounts,
-            locations = locations.distinctBy { it.value.lowercase() },
+            breachRecords = dedupBreaches,
+            totalBreachCount = dedupBreaches.size,
+            locations = dedupLocations,
             recoveredPhotos = photos.distinctBy { it.url },
-            publicRecords = publicRecords,
+            publicRecords = publicRecords.distinctBy { it.value.lowercase() },
             findings = findings,
             rawMarkdownReport = buildMarkdown(initialReport.investigationId, name, "NAME", finalStatuses, findings)
         )

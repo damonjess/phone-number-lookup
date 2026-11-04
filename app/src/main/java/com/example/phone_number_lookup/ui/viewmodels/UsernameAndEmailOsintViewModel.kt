@@ -434,10 +434,7 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
             if (scans.isCurrent(active)) {
                 _uiState.update { it.copy(openWebReport = openWeb) }
                 if (openWeb != null) {
-                    mergeIntoAttribution(
-                        extraPhones = openWeb.extractedPhones,
-                        extraUsernames = openWeb.extractedHandles
-                    )
+                    mergeIntoAttribution(extraPhones = openWeb.extractedPhones)
                 }
             }
         }

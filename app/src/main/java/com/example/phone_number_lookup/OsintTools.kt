@@ -181,53 +181,31 @@ object OsintTools {
     }
 
     fun getBlackbirdEmailScan(email: String): List<OsintDork> {
-        val e = email.trim()
-        val handle = e.substringBefore('@')
-        val encodedEmail = Uri.encode("\"$e\"")
-        val encodedHandle = Uri.encode("\"$handle\"")
-
-        return listOf(
+        val clean = email.trim()
+        val encoded = ScanHttp.encode("\"$clean\"")
+        val handle = clean.substringBefore('@')
+        val socialDorks = SocialMediaEmailScraper.buildInAppSocialSearchDorks(
+            email = clean,
+            handles = listOf(handle)
+        )
+        return socialDorks + listOf(
             OsintDork(
-                title = "Google: Location, Comments & Web Mentions",
-                description = "Searches Google for indexed forum posts, comments, reviews, location signals, and discussions.",
-                url = "https://www.google.com/search?q=$encodedEmail+OR+$encodedHandle+(comment+OR+forum+OR+review+OR+post+OR+location)",
-                toolSource = "Google Dorks"
+                title = "Google: Exact Email Footprint ($clean)",
+                description = "Searches Google for public pages, mailing lists, and documents containing $clean.",
+                url = "https://www.google.com/search?q=$encoded",
+                toolSource = "Email Recon"
             ),
             OsintDork(
-                title = "Google: Mobile & Phone Number Discovery",
-                description = "Searches indexed UK and international mobile phone numbers linked to this email or handle.",
-                url = "https://www.google.com/search?q=$encodedEmail+OR+$encodedHandle+(\"07\"+OR+\"+44\"+OR+mobile+OR+phone+OR+tel)",
-                toolSource = "Google Dorks"
+                title = "Google: Public Paste & Breach Mentions ($clean)",
+                description = "Searches Pastebin, GitHub Gist, and public text dumps for $clean.",
+                url = "https://www.google.com/search?q=$encoded+(site:pastebin.com+OR+site:gist.github.com+OR+site:paste.ee)",
+                toolSource = "Breach / Paste Dork"
             ),
             OsintDork(
-                title = "Google Maps & Local Contributor Reviews",
-                description = "Searches Google Maps and review directories for contributions and public ratings.",
-                url = "https://www.google.com/search?q=site:google.com/maps+$encodedHandle+OR+$encodedEmail",
-                toolSource = "Google Dorks"
-            ),
-            OsintDork(
-                title = "Blackbird: Google Breach & Leak Search",
-                description = "Searches public databases, leaks, and dump files containing this email address.",
-                url = "https://www.google.com/search?q=$encodedEmail",
-                toolSource = "Blackbird OSINT"
-            ),
-            OsintDork(
-                title = "HaveIBeenPwned Breach Dork",
-                description = "Searches HaveIBeenPwned index and public breach logs for exposed records.",
-                url = "https://www.google.com/search?q=site:haveibeenpwned.com+$encodedEmail",
-                toolSource = "Blackbird OSINT"
-            ),
-            OsintDork(
-                title = "Epieos Email OSINT",
-                description = "Reverse lookup for Google account info, profile photo, and registered services.",
-                url = "https://epieos.com/?q=$e&t=email",
-                toolSource = "Blackbird OSINT"
-            ),
-            OsintDork(
-                title = "IntelBase Email Intelligence",
-                description = "Query IntelBase portal for domain records and email linkages.",
-                url = "https://intelbase.is/",
-                toolSource = "IntelBase"
+                title = "Epieos: Reverse Email Lookup Portal",
+                description = "Opens Epieos inside the in-app browser to check Google/Holehe account links.",
+                url = "https://epieos.com/?q=${ScanHttp.encode(clean)}",
+                toolSource = "Epieos"
             )
         )
     }

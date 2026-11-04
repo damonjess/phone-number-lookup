@@ -1,7 +1,5 @@
 package com.example.phone_number_lookup.ui.components
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,10 +28,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.example.phone_number_lookup.ApifyStyleEmailIntel
+import com.example.phone_number_lookup.ApifyStyleSummary
 import com.example.phone_number_lookup.AttributedValue
+import com.example.phone_number_lookup.BreachReport
 import com.example.phone_number_lookup.CommentHit
 import com.example.phone_number_lookup.DeepPhoneOsintReport
 import com.example.phone_number_lookup.DirectoryReportSummary
+import com.example.phone_number_lookup.EmailAttributionReport
+import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EnrichedProfileCard
 import com.example.phone_number_lookup.GoogleCommentReport
 import com.example.phone_number_lookup.PhoneAccountHit
@@ -68,12 +71,22 @@ fun DeepPhoneFootprintSection(
                 Notice("No public registrations or active profiles were detected for this phone number across probed services.", tone = Tone.NEUTRAL)
             } else {
                 if (confirmedAccounts.isNotEmpty()) {
-                    SubHeading("Confirmed Accounts & Platforms")
+                    SubHeading("Confirmed Accounts & Platforms (Tap to view in-app)")
                     androidx.compose.foundation.layout.FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        confirmedAccounts.forEach { Pill(it.platform, Tone.ACCENT) }
+                        confirmedAccounts.forEach { acc ->
+                            Pill(
+                                text = acc.platform,
+                                tone = Tone.ACCENT,
+                                modifier = if (acc.url != null) {
+                                    Modifier.clickable {
+                                        openUrl(context, acc.url)
+                                    }
+                                } else Modifier
+                            )
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                 }
@@ -90,9 +103,7 @@ fun DeepPhoneFootprintSection(
                             .then(
                                 if (hit.url != null) {
                                     Modifier.clickable {
-                                        runCatching {
-                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(hit.url)))
-                                        }
+                                        openUrl(context, hit.url)
                                     }
                                 } else Modifier
                             ),
@@ -223,9 +234,7 @@ fun DeepPhoneFootprintSection(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(page.url)))
-                                }
+                                openUrl(context, page.url)
                             },
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -296,9 +305,7 @@ private fun DirectoryReportBlock(dir: DirectoryReportSummary) {
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.clickable {
-                    runCatching {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(dir.url)))
-                    }
+                    openUrl(context, dir.url)
                 }
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -358,9 +365,7 @@ fun EnrichedProfilesSection(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(card.profileUrl)))
-                            }
+                            openUrl(context, card.profileUrl)
                         }
                 ) {
                     if (!card.avatarUrl.isNullOrBlank()) {
@@ -437,9 +442,7 @@ fun EnrichedProfilesSection(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.clickable {
                                     if (link.startsWith("http")) {
-                                        runCatching {
-                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
-                                        }
+                                        openUrl(context, link)
                                     }
                                 }
                             )
@@ -526,9 +529,7 @@ fun OpenWebMentionsSection(
                             )
                         }
                         WebMentionItemRow(item) {
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.url)))
-                            }
+                            openUrl(context, item.url)
                         }
                     }
                 }
@@ -548,9 +549,7 @@ fun OpenWebMentionsSection(
                             )
                         }
                         WebMentionItemRow(item) {
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.url)))
-                            }
+                            openUrl(context, item.url)
                         }
                     }
                 }
@@ -709,6 +708,153 @@ private fun CommentHitBlock(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             softWrap = true
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ApifyStyleEmailSummaryCard(
+    summary: ApifyStyleSummary,
+    attribution: EmailAttributionReport?,
+    breachReport: BreachReport?,
+    domainReport: EmailDomainReport?,
+    onOpenUrl: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val gradeTone = when (summary.riskGrade) {
+        "A" -> Tone.ACCENT
+        "B" -> Tone.INFO
+        "C" -> Tone.WARNING
+        else -> Tone.DANGER
+    }
+
+    OsintCardContainer(
+        title = "EMAIL OSINT CHANNEL & RISK MATRIX",
+        badge = "GRADE ${summary.riskGrade}",
+        tone = gradeTone,
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            StatTile(
+                value = summary.riskGrade,
+                label = "RISK GRADE",
+                tone = gradeTone,
+                modifier = Modifier.weight(1f)
+            )
+            StatTile(
+                value = "${summary.breachRiskScore}/100",
+                label = "BREACH RISK",
+                tone = if (summary.breachRiskScore >= 40) Tone.DANGER else Tone.INFO,
+                modifier = Modifier.weight(1f)
+            )
+            StatTile(
+                value = summary.accountsFound.toString(),
+                label = "FOUND",
+                tone = Tone.ACCENT,
+                modifier = Modifier.weight(1f)
+            )
+            StatTile(
+                value = summary.accountsUnresolved.toString(),
+                label = "UNKNOWN",
+                tone = Tone.NEUTRAL,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        val directCount = summary.channelRows.count { it.emailLinkVerified }
+        val handleCount = summary.channelRows.size - directCount
+        Text(
+            text = "Active mailbox: ${if (summary.isActiveEmail) "Yes" else "Unverified"} · " +
+                "$directCount direct email account(s) · $handleCount handle follow-up candidate(s) · " +
+                "${summary.accountsChecked} total checked",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            softWrap = true
+        )
+
+        if (summary.channelRows.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            summary.channelRows.take(20).forEachIndexed { idx, row ->
+                if (idx > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 6.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                    )
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (row.profileUrl != null) {
+                                Modifier.clickable { onOpenUrl(row.profileUrl) }
+                            } else Modifier
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = row.channel + (row.username?.let { " (@$it)" } ?: ""),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            softWrap = true
+                        )
+                        Pill(
+                            text = if (row.emailLinkVerified) "DIRECT EMAIL" else "HANDLE CANDIDATE",
+                            tone = if (row.emailLinkVerified) Tone.ACCENT else Tone.INFO
+                        )
+                    }
+                    row.handleOrigin?.let { origin ->
+                        Text(
+                            text = "Origin: $origin · Category: ${row.category}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            softWrap = true
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            AppButton(
+                text = "Copy CSV Table",
+                onClick = {
+                    val csv = ApifyStyleEmailIntel.toCsv(summary)
+                    copyToClipboard(context, "Email OSINT CSV", csv)
+                },
+                subdued = true,
+                modifier = Modifier.weight(1f)
+            )
+            AppButton(
+                text = "Share JSON",
+                onClick = {
+                    val json = ApifyStyleEmailIntel.toFullResultsJson(
+                        summary = summary,
+                        attribution = attribution,
+                        breachReport = breachReport,
+                        domainReport = domainReport
+                    )
+                    ApifyStyleEmailIntel.shareText(context, "FULL_RESULTS - ${summary.email}", json)
+                },
+                subdued = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 

@@ -37,22 +37,26 @@ object PythonOsintBridge {
         val module = py.getModule("upstream_osint")
         val effectiveLimit = if (limit <= 0) 0 else limit
 
-        val payloads: List<String> = when (mode) {
-            PythonToolMode.SHERLOCK_PY -> listOf(
-                module.callAttr("run_sherlock_python", username, effectiveLimit).toString()
-            )
-            PythonToolMode.TOOKIE_PY -> listOf(
-                module.callAttr("run_tookie_python", username, effectiveLimit).toString()
-            )
-            PythonToolMode.BLACKBIRD_PY -> listOf(
-                module.callAttr("run_blackbird_python", username, false, effectiveLimit).toString()
-            )
-            PythonToolMode.ALL_PYTHON -> {
-                val raw = module.callAttr("run_all_python", username, effectiveLimit).toString()
-                val results = org.json.JSONArray(raw)
-                (0 until results.length()).map { results.getJSONObject(it).toString() }
+        val payloads: List<String> = runCatching {
+            kotlinx.coroutines.withTimeout(30_000L) {
+                when (mode) {
+                    PythonToolMode.SHERLOCK_PY -> listOf(
+                        module.callAttr("run_sherlock_python", username, effectiveLimit).toString()
+                    )
+                    PythonToolMode.TOOKIE_PY -> listOf(
+                        module.callAttr("run_tookie_python", username, effectiveLimit).toString()
+                    )
+                    PythonToolMode.BLACKBIRD_PY -> listOf(
+                        module.callAttr("run_blackbird_python", username, false, effectiveLimit).toString()
+                    )
+                    PythonToolMode.ALL_PYTHON -> {
+                        val raw = module.callAttr("run_all_python", username, effectiveLimit).toString()
+                        val results = org.json.JSONArray(raw)
+                        (0 until results.length()).map { results.getJSONObject(it).toString() }
+                    }
+                }
             }
-        }
+        }.getOrDefault(emptyList())
 
         mergeUsernamePayloads(username, payloads)
     }
@@ -64,7 +68,11 @@ object PythonOsintBridge {
         ensureStarted(context)
         val py = Python.getInstance()
         val module = py.getModule("upstream_osint")
-        val raw = module.callAttr("run_blackbird_python", email, true, 0).toString()
+        val raw = runCatching {
+            kotlinx.coroutines.withTimeout(20_000L) {
+                module.callAttr("run_blackbird_python", email, true, 0).toString()
+            }
+        }.getOrNull() ?: "{}"
 
         runCatching {
             val root = JSONObject(raw)
@@ -141,7 +149,9 @@ object PythonOsintBridge {
         ensureStarted(context)
         val module = Python.getInstance().getModule("upstream_osint")
         runCatching {
-            val root = JSONObject(module.callAttr("run_holehe_email", email, 8).toString())
+            val root = kotlinx.coroutines.withTimeout(25_000L) {
+                JSONObject(module.callAttr("run_holehe_email", email, 8).toString())
+            }
             val hitsArr = root.optJSONArray("hits")
             val hits = mutableListOf<RegistrationHit>()
             if (hitsArr != null) {

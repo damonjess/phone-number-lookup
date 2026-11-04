@@ -33,11 +33,25 @@ object DeepProfileScraper {
     private val EMAIL_REGEX = Regex("""[a-zA-Z0-9._%+-]{2,64}@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,12}""")
     private val SOCIAL_LINK_REGEX = Regex("""https?://(?:www\.)?(?:github\.com|x\.com|twitter\.com|linkedin\.com/in|instagram\.com|t\.me|youtube\.com/@|tiktok\.com/@|bsky\.app/profile|mastodon\.social/@)[a-zA-Z0-9_./@-]+""", RegexOption.IGNORE_CASE)
 
-    /**
-     * Queries 22+ public JSON/XML/oEmbed APIs AND automatically runs CuratedUsernameChecks
-     * when confirmedHits is empty, so consumer socials (TikTok, YouTube, Steam, Telegram,
-     * SoundCloud, Twitch, Pinterest, Linktree, Duolingo, Roblox, etc.) are always discovered.
-     */
+    // Platform-owned social handles that must NEVER be extracted as a user's personal links
+    private val PLATFORM_BOILERPLATE_HANDLES = setOf(
+        "discord", "twitch", "soundcloud", "tiktok", "youtube", "reddit", "github",
+        "duolingo", "snapchat", "pinterest", "linktree", "roblox", "steam", "vimeo",
+        "dailymotion", "medium", "strava", "chess", "lichess", "docker", "gitlab",
+        "share", "intent", "sharer", "login", "signup", "privacy", "terms", "explore"
+    )
+
+    // Generic soft-404 descriptions returned by platforms when an account does not exist or has no bio
+    private val GENERIC_SITE_BIOS = listOf(
+        "twitch is the world's leading video platform",
+        "learn a language for free",
+        "play ",
+        " and discover followers on soundcloud",
+        "listen to songs, albums",
+        "join the conversation",
+        "couldn't find this account"
+    )
+
     suspend fun scrapeUsernameDossier(
         username: String,
         confirmedHits: List<UsernameHit> = emptyList()
@@ -56,6 +70,9 @@ object DeepProfileScraper {
                 async { fetchDuolingoUser(clean) },
                 async { fetchGravatarUser(clean) },
                 async { fetchRobloxUser(clean) },
+                async { fetchHuggingFaceUser(clean) },
+                async { fetchRubyGemsUser(clean) },
+                async { fetchCratesIoUser(clean) },
                 async { fetchVimeoUser(clean) },
                 async { fetchDailymotionUser(clean) },
                 async { fetchScratchUser(clean) },
@@ -73,8 +90,6 @@ object DeepProfileScraper {
                 async { fetchStackOverflow(clean) }
             )
 
-            // If no confirmedHits were supplied (e.g. from Pilot or Email second-hop),
-            // run CuratedUsernameChecks.PROBES so Pinterest, Linktree, Twitch, Strava, Medium, Letterboxd, etc. are checked!
             val effectiveHits = if (confirmedHits.isNotEmpty()) {
                 confirmedHits
             } else {
@@ -112,17 +127,11 @@ object DeepProfileScraper {
                         it.profileUrl.startsWith("http") &&
                         it.site.lowercase() !in coveredPlatforms
                 }
-                .take(16)
+                .take(14)
                 .map { hit ->
                     async {
                         htmlSemaphore.withPermit {
                             scrapeHtmlProfileMetadata(hit.site, clean, hit.profileUrl)
-                                ?: EnrichedProfileCard(
-                                    platform = hit.site,
-                                    handle = clean,
-                                    profileUrl = hit.profileUrl,
-                                    bio = "Confirmed public profile on ${hit.site} (${hit.category})"
-                                )
                         }
                     }
                 }
@@ -130,6 +139,35 @@ object DeepProfileScraper {
             (apiResults + htmlJobs.awaitAll().filterNotNull())
                 .distinctBy { "${it.platform.lowercase()}|${it.profileUrl.lowercase().trimEnd('/')}" }
         }
+    }
+
+    /**
+     * Cleans a scraped display name and returns ONLY genuine human names (rejecting page titles
+     * like "Twitch", "Duolingo - Learn a language...", "Damon Kirby on Snapchat", or bare usernames).
+     */
+    internal fun cleanHumanDisplayName(raw: String?, handle: String, platform: String): String? {
+        if (raw.isNullOrBlank()) return null
+        val cleaned = raw.trim()
+            .replace(Regex("""\s*[-|•·]\s*(?:Twitch|Duolingo|Snapchat|SoundCloud|TikTok|YouTube|Reddit|GitHub|Instagram|Twitter|X).*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s+on\s+(?:Snapchat|TikTok|Instagram|Twitter|X|Twitch|SoundCloud).*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*\(@[^)]+\)"""), "")
+            .trim()
+
+        val lower = cleaned.lowercase()
+        if (lower.isBlank() ||
+            lower == handle.lowercase() ||
+            lower == platform.lowercase() ||
+            lower in PLATFORM_BOILERPLATE_HANDLES ||
+            lower.contains("learn a language") ||
+            lower.contains("stream ") ||
+            lower.contains("world's leading") ||
+            lower.contains("creator profile") ||
+            lower.contains("http") ||
+            '@' in lower
+        ) {
+            return null
+        }
+        return cleaned.takeIf { it.length in 3..50 }
     }
 
     private fun fetchTikTokOembed(u: String): EnrichedProfileCard? {
@@ -143,13 +181,13 @@ object DeepProfileScraper {
         return runCatching {
             val root = JSONObject(resp.body)
             val authorName = root.optString("author_name").takeIf { it.isNotBlank() } ?: return null
-            val title = root.optString("title").takeIf { it.isNotBlank() }
+            val title = root.optString("title").takeIf { it.isNotBlank() && !it.endsWith("Creator Profile", true) }
             val thumb = root.optString("thumbnail_url").takeIf { it.startsWith("http") }
             EnrichedProfileCard(
                 platform = "TikTok",
                 handle = u,
                 profileUrl = profileUrl,
-                displayName = authorName,
+                displayName = cleanHumanDisplayName(authorName, u, "TikTok"),
                 bio = title,
                 avatarUrl = thumb
             )
@@ -173,7 +211,7 @@ object DeepProfileScraper {
                 platform = "YouTube",
                 handle = u,
                 profileUrl = authorUrl,
-                displayName = authorName,
+                displayName = cleanHumanDisplayName(authorName, u, "YouTube"),
                 bio = root.optString("title").takeIf { it.isNotBlank() },
                 avatarUrl = thumb
             )
@@ -191,14 +229,15 @@ object DeepProfileScraper {
         return runCatching {
             val root = JSONObject(resp.body)
             val author = root.optString("author_name").takeIf { it.isNotBlank() } ?: return null
-            val desc = root.optString("description").takeIf { it.isNotBlank() }
+            val rawDesc = root.optString("description").takeIf { it.isNotBlank() }
+            val cleanDesc = rawDesc?.takeUnless { d -> GENERIC_SITE_BIOS.any { d.lowercase().contains(it) } }
             val thumb = root.optString("thumbnail_url").takeIf { it.startsWith("http") }
             EnrichedProfileCard(
                 platform = "SoundCloud",
                 handle = u,
                 profileUrl = profileUrl,
-                displayName = author,
-                bio = desc,
+                displayName = cleanHumanDisplayName(author, u, "SoundCloud"),
+                bio = cleanDesc,
                 avatarUrl = thumb
             )
         }.getOrNull()
@@ -222,7 +261,7 @@ object DeepProfileScraper {
             platform = "Telegram",
             handle = u,
             profileUrl = url,
-            displayName = title,
+            displayName = cleanHumanDisplayName(title, u, "Telegram"),
             bio = desc,
             discoveredEmails = extractEmails(desc.orEmpty()),
             discoveredPhones = EmailAttributionEngine.extractPhoneNumbersFromText(desc.orEmpty(), "Telegram").map { it.value },
@@ -250,7 +289,7 @@ object DeepProfileScraper {
             platform = "Steam",
             handle = u,
             profileUrl = "https://steamcommunity.com/id/$u",
-            displayName = realName ?: steamId,
+            displayName = cleanHumanDisplayName(realName ?: steamId, u, "Steam"),
             bio = summary?.take(260),
             location = location,
             avatarUrl = avatar,
@@ -268,6 +307,7 @@ object DeepProfileScraper {
         return runCatching {
             val user = JSONObject(resp.body).optJSONArray("users")?.optJSONObject(0) ?: return null
             val username = user.optString("username").takeIf { it.isNotBlank() } ?: return null
+            if (!username.equals(u, ignoreCase = true)) return null
             val name = user.optString("name").takeIf { it.isNotBlank() && it != "null" }
             val streak = user.optInt("streak", 0)
             val totalXp = user.optInt("totalXp", 0)
@@ -276,7 +316,7 @@ object DeepProfileScraper {
                 platform = "Duolingo",
                 handle = username,
                 profileUrl = "https://www.duolingo.com/profile/$username",
-                displayName = name,
+                displayName = cleanHumanDisplayName(name, username, "Duolingo"),
                 createdDate = if (createdSec > 0) formatEpochSeconds(createdSec) else null,
                 statsSummary = "$totalXp XP • $streak day streak"
             )
@@ -301,7 +341,7 @@ object DeepProfileScraper {
                 platform = "Gravatar",
                 handle = pref,
                 profileUrl = entry.optString("profileUrl", "https://gravatar.com/$pref"),
-                displayName = display,
+                displayName = cleanHumanDisplayName(display, pref, "Gravatar"),
                 bio = about,
                 location = loc,
                 avatarUrl = thumb
@@ -328,8 +368,81 @@ object DeepProfileScraper {
                 platform = "Roblox",
                 handle = name,
                 profileUrl = "https://www.roblox.com/users/$id/profile",
-                displayName = display,
+                displayName = cleanHumanDisplayName(display, name, "Roblox"),
                 statsSummary = "Roblox User ID: $id"
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchHuggingFaceUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get(
+            "https://huggingface.co/api/users/${ScanHttp.encode(u)}/overview",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val root = JSONObject(resp.body)
+            val user = root.optString("user").ifBlank { u }
+            val fullname = root.optString("fullname").takeIf { it.isNotBlank() && it != "null" }
+            val bio = root.optString("details").takeIf { it.isNotBlank() && it != "null" }
+            val avatar = root.optString("avatarUrl").takeIf { it.startsWith("http") }
+            val models = root.optInt("numModels", 0)
+            val datasets = root.optInt("numDatasets", 0)
+            val spaces = root.optInt("numSpaces", 0)
+            if (fullname == null && bio == null && models == 0 && datasets == 0 && spaces == 0) return null
+            EnrichedProfileCard(
+                platform = "HuggingFace",
+                handle = user,
+                profileUrl = "https://huggingface.co/$user",
+                displayName = cleanHumanDisplayName(fullname, user, "HuggingFace"),
+                bio = bio,
+                avatarUrl = avatar,
+                statsSummary = "$models models • $datasets datasets • $spaces spaces"
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchRubyGemsUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get(
+            "https://rubygems.org/api/v1/owners/${ScanHttp.encode(u)}/gems.json",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank() || !resp.body.trim().startsWith("[")) return null
+        return runCatching {
+            val arr = org.json.JSONArray(resp.body)
+            val gemNames = (0 until minOf(arr.length(), 6)).mapNotNull { i ->
+                arr.optJSONObject(i)?.optString("name")?.takeIf { it.isNotBlank() }
+            }
+            EnrichedProfileCard(
+                platform = "RubyGems",
+                handle = u,
+                profileUrl = "https://rubygems.org/profiles/$u",
+                bio = if (gemNames.isNotEmpty()) "Gems: ${gemNames.joinToString(", ")}" else "Registered RubyGems profile",
+                statsSummary = "${arr.length()} published gem(s)"
+            )
+        }.getOrNull()
+    }
+
+    private fun fetchCratesIoUser(u: String): EnrichedProfileCard? {
+        val resp = ScanHttp.get(
+            "https://crates.io/api/v1/users/${ScanHttp.encode(u)}",
+            timeoutMs = 8_000,
+            headers = mapOf("Accept" to "application/json")
+        )
+        if (!resp.isOk || resp.body.isBlank()) return null
+        return runCatching {
+            val user = JSONObject(resp.body).optJSONObject("user") ?: return null
+            val login = user.optString("login").takeIf { it.isNotBlank() } ?: return null
+            val name = user.optString("name").takeIf { it.isNotBlank() && it != "null" }
+            val avatar = user.optString("avatar").takeIf { it.startsWith("http") }
+            EnrichedProfileCard(
+                platform = "Crates.io (Rust)",
+                handle = login,
+                profileUrl = user.optString("url", "https://crates.io/users/$login"),
+                displayName = cleanHumanDisplayName(name, login, "Crates.io"),
+                avatarUrl = avatar
             )
         }.getOrNull()
     }
@@ -348,7 +461,7 @@ object DeepProfileScraper {
                 platform = "Vimeo",
                 handle = u,
                 profileUrl = root.optString("profile_url", "https://vimeo.com/$u"),
-                displayName = name,
+                displayName = cleanHumanDisplayName(name, u, "Vimeo"),
                 bio = bio,
                 location = loc,
                 avatarUrl = thumb,
@@ -373,7 +486,7 @@ object DeepProfileScraper {
                 platform = "Dailymotion",
                 handle = root.optString("username", u),
                 profileUrl = "https://www.dailymotion.com/$u",
-                displayName = screen,
+                displayName = cleanHumanDisplayName(screen, u, "Dailymotion"),
                 bio = desc,
                 avatarUrl = root.optString("avatar_120_url").takeIf { it.startsWith("http") },
                 createdDate = if (created > 0) formatEpochSeconds(created) else null
@@ -413,7 +526,6 @@ object DeepProfileScraper {
                 platform = "Minecraft (Mojang)",
                 handle = name,
                 profileUrl = "https://namemc.com/profile/$name",
-                displayName = name,
                 avatarUrl = "https://mc-heads.net/avatar/$id/100",
                 statsSummary = "UUID: $id"
             )
@@ -433,7 +545,7 @@ object DeepProfileScraper {
             platform = "GitHub",
             handle = gh.login,
             profileUrl = gh.htmlUrl,
-            displayName = gh.name,
+            displayName = cleanHumanDisplayName(gh.name, gh.login, "GitHub"),
             bio = gh.bio,
             location = gh.location,
             externalLinks = listOfNotNull(gh.blog, gh.twitterUsername?.let { "https://x.com/$it" }),
@@ -469,7 +581,7 @@ object DeepProfileScraper {
                 platform = "Reddit",
                 handle = name,
                 profileUrl = "https://www.reddit.com/user/$name",
-                displayName = displayName,
+                displayName = cleanHumanDisplayName(displayName, name, "Reddit"),
                 bio = bio,
                 discoveredEmails = extractEmails(bio.orEmpty()),
                 discoveredPhones = EmailAttributionEngine.extractPhoneNumbersFromText(bio.orEmpty(), "Reddit").map { it.value },
@@ -496,7 +608,7 @@ object DeepProfileScraper {
                 platform = "Bluesky",
                 handle = handle,
                 profileUrl = "https://bsky.app/profile/$handle",
-                displayName = root.optString("displayName").takeIf { it.isNotBlank() },
+                displayName = cleanHumanDisplayName(root.optString("displayName"), u, "Bluesky"),
                 bio = desc,
                 externalLinks = extractSocialLinks(desc.orEmpty()),
                 discoveredEmails = extractEmails(desc.orEmpty()),
@@ -532,7 +644,7 @@ object DeepProfileScraper {
                 platform = "Mastodon",
                 handle = acct,
                 profileUrl = root.optString("url", "https://mastodon.social/@$acct"),
-                displayName = root.optString("display_name").takeIf { it.isNotBlank() },
+                displayName = cleanHumanDisplayName(root.optString("display_name"), acct, "Mastodon"),
                 bio = bio,
                 externalLinks = links,
                 discoveredEmails = extractEmails(bio.orEmpty()),
@@ -568,7 +680,7 @@ object DeepProfileScraper {
                 platform = "Lichess",
                 handle = id,
                 profileUrl = root.optString("url", "https://lichess.org/@/$id"),
-                displayName = realName,
+                displayName = cleanHumanDisplayName(realName, id, "Lichess"),
                 bio = bio,
                 location = location,
                 externalLinks = links,
@@ -592,7 +704,7 @@ object DeepProfileScraper {
                 platform = "Chess.com",
                 handle = username,
                 profileUrl = root.optString("url", "https://www.chess.com/member/$username"),
-                displayName = root.optString("name").takeIf { it.isNotBlank() },
+                displayName = cleanHumanDisplayName(root.optString("name"), username, "Chess.com"),
                 location = root.optString("location").takeIf { it.isNotBlank() },
                 avatarUrl = root.optString("avatar").takeIf { it.startsWith("http") },
                 createdDate = if (joined > 0) formatEpochSeconds(joined) else null,
@@ -620,7 +732,7 @@ object DeepProfileScraper {
                 platform = "DEV Community",
                 handle = username,
                 profileUrl = "https://dev.to/$username",
-                displayName = root.optString("name").takeIf { it.isNotBlank() && it != "null" },
+                displayName = cleanHumanDisplayName(root.optString("name"), username, "DEV Community"),
                 bio = root.optString("summary").takeIf { it.isNotBlank() && it != "null" },
                 location = root.optString("location").takeIf { it.isNotBlank() && it != "null" },
                 externalLinks = links,
@@ -670,7 +782,7 @@ object DeepProfileScraper {
                 platform = "Docker Hub",
                 handle = username,
                 profileUrl = "https://hub.docker.com/u/$username",
-                displayName = root.optString("full_name").takeIf { it.isNotBlank() },
+                displayName = cleanHumanDisplayName(root.optString("full_name"), username, "Docker Hub"),
                 location = root.optString("location").takeIf { it.isNotBlank() },
                 externalLinks = listOfNotNull(root.optString("profile_url").takeIf { it.isNotBlank() }),
                 createdDate = root.optString("date_joined").substringBefore('T').takeIf { it.isNotBlank() },
@@ -713,7 +825,7 @@ object DeepProfileScraper {
                 platform = "npm Registry",
                 handle = u,
                 profileUrl = "https://www.npmjs.com/~$u",
-                displayName = authorName,
+                displayName = cleanHumanDisplayName(authorName, u, "npm Registry"),
                 bio = "Published packages: ${packages.joinToString(", ")}",
                 discoveredEmails = emails.toList(),
                 statsSummary = "${packages.size}+ public npm packages"
@@ -751,11 +863,12 @@ object DeepProfileScraper {
             val exact = (0 until items.length()).mapNotNull { items.optJSONObject(it) }
                 .firstOrNull { it.optString("display_name").equals(u, ignoreCase = true) } ?: return null
             val created = exact.optLong("creation_date", 0L)
+            val disp = exact.optString("display_name", u)
             EnrichedProfileCard(
                 platform = "StackOverflow",
-                handle = exact.optString("display_name", u),
+                handle = disp,
                 profileUrl = exact.optString("link", "https://stackoverflow.com"),
-                displayName = exact.optString("display_name"),
+                displayName = cleanHumanDisplayName(disp, u, "StackOverflow"),
                 location = exact.optString("location").takeIf { it.isNotBlank() },
                 externalLinks = listOfNotNull(exact.optString("website_url").takeIf { it.isNotBlank() }),
                 avatarUrl = exact.optString("profile_image").takeIf { it.startsWith("http") },
@@ -774,23 +887,35 @@ object DeepProfileScraper {
         if (!resp.isOk || resp.body.isBlank()) return null
         val html = resp.body
 
-        val ogTitle = OG_TITLE.find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
-        val ogDesc = OG_DESC.find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
+        val rawOgTitle = OG_TITLE.find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
+        val rawOgDesc = OG_DESC.find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
         val ogImage = OG_IMAGE.find(html)?.groupValues?.get(1)?.takeIf { it.startsWith("http") }
 
-        val emails = (MAILTO_REGEX.findAll(html).map { it.groupValues[1].lowercase() } +
-            extractEmails(ogDesc.orEmpty())).distinct().toList()
-        val phones = EmailAttributionEngine.extractPhoneNumbersFromText(ogDesc.orEmpty(), siteName).map { it.value }
-        val outboundLinks = extractSocialLinks(html).filterNot { it.contains(url, ignoreCase = true) }.take(8)
+        // Reject soft-404 pages (like Twitch's generic homepage meta tags when a user doesn't exist)
+        if (rawOgDesc != null && GENERIC_SITE_BIOS.any { rawOgDesc.lowercase().contains(it) } &&
+            rawOgTitle?.lowercase()?.contains(handle.lowercase()) != true
+        ) {
+            return null
+        }
 
-        if (ogTitle == null && ogDesc == null && emails.isEmpty() && outboundLinks.isEmpty()) return null
+        val cleanName = cleanHumanDisplayName(rawOgTitle, handle, siteName)
+        val cleanBio = rawOgDesc?.takeUnless { d -> GENERIC_SITE_BIOS.any { d.lowercase().contains(it) } }
+
+        val emails = (MAILTO_REGEX.findAll(html).map { it.groupValues[1].lowercase() } +
+            extractEmails(cleanBio.orEmpty())).distinct().toList()
+        val phones = EmailAttributionEngine.extractPhoneNumbersFromText(cleanBio.orEmpty(), siteName).map { it.value }
+        val outboundLinks = extractSocialLinks(html)
+            .filterNot { it.contains(url, ignoreCase = true) }
+            .take(6)
+
+        if (cleanName == null && cleanBio == null && emails.isEmpty() && outboundLinks.isEmpty()) return null
 
         return EnrichedProfileCard(
             platform = siteName,
             handle = handle,
             profileUrl = url,
-            displayName = ogTitle?.take(80),
-            bio = ogDesc?.take(280),
+            displayName = cleanName,
+            bio = cleanBio?.take(280),
             externalLinks = outboundLinks,
             discoveredEmails = emails,
             discoveredPhones = phones,
@@ -808,6 +933,10 @@ object DeepProfileScraper {
     private fun extractSocialLinks(text: String): List<String> =
         SOCIAL_LINK_REGEX.findAll(text)
             .map { it.value.trimEnd('/', '"', '\'', ')', '>') }
+            .filterNot { link ->
+                val tail = link.substringAfterLast('/').substringBefore('?').removePrefix("@").lowercase()
+                tail in PLATFORM_BOILERPLATE_HANDLES
+            }
             .distinct()
             .toList()
 

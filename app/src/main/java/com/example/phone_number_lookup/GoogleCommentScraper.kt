@@ -615,7 +615,9 @@ object GoogleCommentScraper {
         if (sawBlock) {
             val webViewHtml = kotlinx.coroutines.runBlocking {
                 NativeWebScraper.fetchRenderedHtml(
-                    "https://www.google.co.uk/search?q=$encoded&hl=en&gl=uk&num=15"
+                    "https://www.google.co.uk/search?q=$encoded&hl=en&gl=uk&num=15",
+                    waitAfterLoadMs = 1_800L,
+                    timeoutMs = 9_000L
                 )
             }
             if (!webViewHtml.isNullOrBlank() && !isGoogleBlockedHtml(webViewHtml)) {

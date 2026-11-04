@@ -32,10 +32,14 @@ object NativeWebScraper {
     private var appContext: Context? = null
 
     private val scrapeMutex = Mutex()
-    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val _browserRequest = MutableStateFlow<InAppBrowserRequest?>(null)
     val browserRequest: StateFlow<InAppBrowserRequest?> = _browserRequest.asStateFlow()
+
+    // Live callback invoked whenever the user views a page in the In-App Browser so Google results/reviews are captured automatically
+    private val _lastCapturedHtml = MutableStateFlow<Pair<String, String>?>(null)
+    val lastCapturedHtml: StateFlow<Pair<String, String>?> = _lastCapturedHtml.asStateFlow()
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -49,15 +53,21 @@ object NativeWebScraper {
         _browserRequest.value = null
     }
 
+    fun onInAppPageHtmlCaptured(url: String, html: String) {
+        if (html.length > 500) {
+            _lastCapturedHtml.value = url to html
+        }
+    }
+
     /**
-     * Loads [url] in an offscreen Chromium WebView with strict cancellable timeouts and
-     * a 4-second watchdog so pages that never fire `onPageFinished` cannot hang a scan.
+     * Loads [url] in an offscreen Chromium WebView using a Desktop Chrome User-Agent
+     * (so Google serves standard `<h3>` result blocks) with a strict 4.5s watchdog.
      */
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun fetchRenderedHtml(
         url: String,
-        waitAfterLoadMs: Long = 1_200L,
-        timeoutMs: Long = 8_000L
+        waitAfterLoadMs: Long = 1_500L,
+        timeoutMs: Long = 9_000L
     ): String? {
         val ctx = appContext ?: return null
         return withTimeoutOrNull(timeoutMs) {
@@ -69,11 +79,11 @@ object NativeWebScraper {
                         cookieManager.setAcceptCookie(true)
                         cookieManager.setCookie(
                             "https://www.google.com",
-                            "CONSENT=YES+cb.20240116-07-p0.en-GB+FX+999"
+                            "CONSENT=YES+cb.20240116-07-p0.en-GB+FX+999; SOCS=CAISHAgBEhJnd3NfMjAyNDAxMTYtMF9SQzIaAmVuIAEaBgiA_LyuBg"
                         )
                         cookieManager.setCookie(
                             "https://www.google.co.uk",
-                            "CONSENT=YES+cb.20240116-07-p0.en-GB+FX+999"
+                            "CONSENT=YES+cb.20240116-07-p0.en-GB+FX+999; SOCS=CAISHAgBEhJnd3NfMjAyNDAxMTYtMF9SQzIaAmVuIAEaBgiA_LyuBg"
                         )
 
                         val wv = WebView(ctx)
@@ -86,7 +96,7 @@ object NativeWebScraper {
                             loadsImagesAutomatically = false
                             blockNetworkImage = true
                             userAgentString =
-                                "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                         }
 
                         suspendCancellableCoroutine<Unit> { cont ->
@@ -98,11 +108,8 @@ object NativeWebScraper {
                                     cont.resume(Unit)
                                 }
                             }
-                            mainHandler.postDelayed(watchdog, 4_000L)
-
-                            cont.invokeOnCancellation {
-                                mainHandler.removeCallbacks(watchdog)
-                            }
+                            mainHandler.postDelayed(watchdog, 4_500L)
+                            cont.invokeOnCancellation { mainHandler.removeCallbacks(watchdog) }
 
                             wv.webViewClient = object : WebViewClient() {
                                 override fun shouldOverrideUrlLoading(
@@ -132,9 +139,7 @@ object NativeWebScraper {
                                 }
                             }
                             mainHandler.postDelayed(jsWatchdog, 2_000L)
-                            cont.invokeOnCancellation {
-                                mainHandler.removeCallbacks(jsWatchdog)
-                            }
+                            cont.invokeOnCancellation { mainHandler.removeCallbacks(jsWatchdog) }
 
                             wv.evaluateJavascript(
                                 "(function() { return document.documentElement ? document.documentElement.outerHTML : ''; })();"

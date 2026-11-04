@@ -227,7 +227,6 @@ object EmailAttributionEngine {
         val webReport = runCatching { webSearchDef.await() }.getOrNull()
         if (webReport != null) {
             phones += webReport.extractedPhones
-            usernames += webReport.extractedHandles
             locations += webReport.extractedLocations
             webReport.results.forEach { result ->
                 val blob = "${result.title} ${result.snippet}"
@@ -315,8 +314,28 @@ object EmailAttributionEngine {
             }
         }
 
-        // STAGE 2: Run GoogleMetadataExtractor WITH the discovered real names & locations!
+        // STAGE 1B: Major Social Media Search (Facebook, Instagram, LinkedIn, TikTok, X, Threads, YouTube)
         val discoveredRealNames = names.map { it.value }.filter { ' ' in it && it.length >= 5 }.distinct()
+        val socialHits = runCatching {
+            SocialMediaEmailScraper.scanForEmail(
+                email = clean,
+                exactHandles = pivotHandles,
+                fullNames = discoveredRealNames,
+                locationHint = locations.firstOrNull()?.value
+            )
+        }.getOrDefault(emptyList())
+
+        socialHits.forEach { hit ->
+            links += AttributedProfileLink(
+                handle = hit.handleOrTitle,
+                platform = hit.platform,
+                url = hit.url
+            )
+            phones += extractPhoneNumbersFromText(hit.snippet, hit.platform)
+            locations += extractLocationsFromText(hit.snippet, hit.platform)
+        }
+
+        // STAGE 2: Run GoogleMetadataExtractor WITH the discovered real names & locations!
         val discoveredLocations = locations.map { it.value }.distinct()
         val google = runCatching {
             GoogleMetadataExtractor.extract(
@@ -704,12 +723,28 @@ object EmailAttributionEngine {
         if (!resp.isOk || resp.body.isBlank()) return null
         return runCatching {
             val entry = JSONObject(resp.body).optJSONArray("entry")?.optJSONObject(0) ?: return null
-            val displayName = entry.optString("displayName").takeIf { it.isNotBlank() }
+            val formattedName = entry.optJSONObject("name")?.optString("formatted")?.takeIf { it.isNotBlank() }
+            val displayName = formattedName ?: entry.optString("displayName").takeIf { it.isNotBlank() }
             val username = entry.optString("preferredUsername").takeIf { it.isNotBlank() }
             val profileUrl = entry.optString("profileUrl").takeIf { it.isNotBlank() }
             val thumbnail = entry.optString("thumbnailUrl").takeIf { it.isNotBlank() }
             val location = entry.optString("currentLocation").takeIf { it.isNotBlank() }
-            val aboutMe = entry.optString("aboutMe").takeIf { it.isNotBlank() }
+
+            // Extract Job Title & Company from Gravatar organizations[]
+            val orgs = entry.optJSONArray("organizations")
+            val jobSummary = if (orgs != null && orgs.length() > 0) {
+                val firstOrg = orgs.optJSONObject(0)
+                val title = firstOrg?.optString("title")?.takeIf { it.isNotBlank() }
+                val orgName = firstOrg?.optString("name")?.takeIf { it.isNotBlank() }
+                listOfNotNull(title, orgName).joinToString(" at ").takeIf { it.isNotBlank() }
+            } else null
+
+            val rawAbout = entry.optString("aboutMe").takeIf { it.isNotBlank() }
+            val aboutMe = listOfNotNull(
+                jobSummary?.let { "Role: $it" },
+                rawAbout
+            ).joinToString(" • ").takeIf { it.isNotBlank() }
+
             val linked = mutableListOf<AttributedProfileLink>()
             val accounts = entry.optJSONArray("accounts")
             if (accounts != null) {

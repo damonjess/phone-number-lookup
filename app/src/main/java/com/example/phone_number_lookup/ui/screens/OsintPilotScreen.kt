@@ -1,7 +1,5 @@
 package com.example.phone_number_lookup.ui.screens
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -583,9 +581,7 @@ private fun PilotMediaRecoverySection(photos: List<PilotMediaPhoto>) {
                     modifier = Modifier
                         .width(100.dp)
                         .clickable {
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(photo.url)))
-                            }
+                            com.example.phone_number_lookup.ui.components.openUrl(context, photo.url)
                         },
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -603,7 +599,8 @@ private fun PilotMediaRecoverySection(photos: List<PilotMediaPhoto>) {
                         text = photo.source,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        softWrap = true
                     )
                 }
             }
@@ -623,12 +620,22 @@ private fun PilotLinkedAccountsCard(accounts: List<com.example.phone_number_look
         tone = Tone.ACCENT
     ) {
         if (confirmed.isNotEmpty()) {
-            SubHeading("Confirmed Active Registrations")
+            SubHeading("Confirmed Active Registrations (Tap to view in-app)")
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                confirmed.forEach { Pill(it.platform, Tone.ACCENT) }
+                confirmed.forEach { acc ->
+                    Pill(
+                        text = acc.platform,
+                        tone = Tone.ACCENT,
+                        modifier = if (acc.url != null) {
+                            Modifier.clickable {
+                                com.example.phone_number_lookup.ui.components.openUrl(context, acc.url)
+                            }
+                        } else Modifier
+                    )
+                }
             }
             Spacer(Modifier.height(10.dp))
         }
@@ -646,9 +653,7 @@ private fun PilotLinkedAccountsCard(accounts: List<com.example.phone_number_look
                     .then(
                         if (acc.url != null) {
                             Modifier.clickable {
-                                runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(acc.url)))
-                                }
+                                com.example.phone_number_lookup.ui.components.openUrl(context, acc.url)
                             }
                         } else Modifier
                     ),
@@ -663,14 +668,18 @@ private fun PilotLinkedAccountsCard(accounts: List<com.example.phone_number_look
                         text = acc.platform,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        softWrap = true,
+                        modifier = Modifier.weight(1f)
                     )
+                    Spacer(Modifier.width(8.dp))
                     Pill(acc.status, tone = if (acc.confirmed) Tone.ACCENT else Tone.INFO)
                 }
                 Text(
                     text = acc.detail,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    softWrap = true
                 )
             }
         }
@@ -774,7 +783,7 @@ private fun PilotBreachIntelligenceCard(breaches: List<com.example.phone_number_
 private fun PilotPublicRecordsCard(records: List<com.example.phone_number_lookup.AttributedValue>) {
     val context = LocalContext.current
     SectionCard(
-        title = "PUBLIC RECORDS & CORPORATE FILINGS",
+        title = "PUBLIC RECORDS, COMMENTS & CORPORATE FILINGS",
         subtitle = "${records.size} verified public entries",
         tone = Tone.ACCENT
     ) {
@@ -790,9 +799,7 @@ private fun PilotPublicRecordsCard(records: List<com.example.phone_number_lookup
                     .fillMaxWidth()
                     .clickable {
                         if (rec.source.startsWith("http")) {
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(rec.source)))
-                            }
+                            com.example.phone_number_lookup.ui.components.openUrl(context, rec.source)
                         }
                     }
             ) {
@@ -800,12 +807,14 @@ private fun PilotPublicRecordsCard(records: List<com.example.phone_number_lookup
                     text = rec.value,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    softWrap = true
                 )
                 Text(
                     text = "Source: ${rec.source}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    softWrap = true
                 )
             }
         }

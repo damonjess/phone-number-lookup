@@ -247,8 +247,10 @@ object GoogleMetadataExtractor {
                 add("$cleanName $city")
             }
             add(cleanName)
-            add("$cleanName UK")
-        }.distinct().take(5)
+            add("$cleanName Scunthorpe")
+            add("$cleanName Lincolnshire")
+            add("$cleanName Yorkshire")
+        }.distinct().take(6)
 
         val jobs = mapsQueries.map { q ->
             async {
@@ -340,6 +342,13 @@ object GoogleMetadataExtractor {
             )
             if (googleResp.isOk && googleResp.body.isNotBlank()) {
                 GAIA_ID_FROM_CONTRIB_REGEX.find(googleResp.body)?.groupValues?.get(1)?.let { return it }
+            }
+
+            val webViewHtml = kotlinx.coroutines.runBlocking {
+                NativeWebScraper.fetchRenderedHtml(googleUrl)
+            }
+            if (!webViewHtml.isNullOrBlank()) {
+                GAIA_ID_FROM_CONTRIB_REGEX.find(webViewHtml)?.groupValues?.get(1)?.let { return it }
             }
 
             val ddgUrl = "https://html.duckduckgo.com/html/?q=${ScanHttp.encode(dork)}"

@@ -11,6 +11,11 @@ object CuratedUsernameChecks {
     val PROBES: List<SiteProbe> = listOf(
         github(),
         reddit(),
+        instagram(),
+        facebook(),
+        threads(),
+        snapchat(),
+        twitterX(),
         bluesky(),
         tiktok(),
         youtube(),
@@ -38,6 +43,101 @@ object CuratedUsernameChecks {
         letterboxd(),
         pinterest(),
         linktree()
+    )
+
+    private fun instagram() = SiteProbe(
+        name = "Instagram",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.instagram.com/{account}/",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.instagram.com/{account}/",
+        headers = mapOf(
+            "Accept" to "text/html,application/xhtml+xml",
+            "Accept-Language" to "en-GB,en;q=0.9"
+        ),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("(@{account})", "instagram.com/{account}"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("Sorry, this page isn't available", "Page Not Found"),
+        missingUrls = listOf("instagram.com/accounts/login")
+    )
+
+    private fun facebook() = SiteProbe(
+        name = "Facebook",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.facebook.com/{account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.facebook.com/{account}",
+        headers = mapOf(
+            "Accept" to "text/html,application/xhtml+xml",
+            "Accept-Language" to "en-GB,en;q=0.9"
+        ),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("facebook.com/{account}\"", "fb://profile/"),
+        missingCodes = setOf(404),
+        missingStrings = listOf(
+            "This content isn't available right now",
+            "The link you followed may be broken",
+            "Page Not Found"
+        ),
+        missingUrls = listOf("facebook.com/login")
+    )
+
+    private fun threads() = SiteProbe(
+        name = "Threads",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.threads.net/@{account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.threads.net/@{account}",
+        headers = mapOf("Accept" to "text/html,application/xhtml+xml"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("(@{account})", "threads.net/@{account}"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("Sorry, this page isn't available", "Page not found"),
+        missingUrls = emptyList()
+    )
+
+    private fun snapchat() = SiteProbe(
+        name = "Snapchat",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://www.snapchat.com/add/{account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://www.snapchat.com/add/{account}",
+        headers = mapOf("Accept" to "text/html,application/xhtml+xml"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("on Snapchat!", "\"snapcodeImageUrl\""),
+        missingCodes = setOf(404),
+        missingStrings = listOf("Sorry, This Content Was Not Found", "Page Not Found"),
+        missingUrls = emptyList()
+    )
+
+    private fun twitterX() = SiteProbe(
+        name = "X / Twitter",
+        category = "social",
+        source = SRC_CURATED,
+        method = "GET",
+        urlTemplate = "https://syndication.twitter.com/srv/timeline-profile/screen-name/{account}",
+        accountMode = AccountMode.RAW,
+        profileTemplate = "https://x.com/{account}",
+        headers = mapOf("Accept" to "text/html,application/xhtml+xml,application/json"),
+        bodyTemplate = null,
+        foundCodes = setOf(200),
+        foundStrings = listOf("\"screen_name\":\"{account}\"", "twitter.com/{account}"),
+        missingCodes = setOf(404),
+        missingStrings = listOf("This account doesn’t exist", "User is suspended"),
+        missingUrls = emptyList()
     )
 
     private fun github() = SiteProbe(
