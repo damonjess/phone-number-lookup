@@ -7,6 +7,8 @@ data class SiteIssue(
     val reason: ProbeFailure,
     val detail: String = "",
 ) {
+    val url: String get() = profileUrl
+
     /** Worth another automatic attempt. Bot checks and "no clear answer" give the same result again. */
     val retryable: Boolean
         get() = reason == ProbeFailure.NETWORK || reason == ProbeFailure.RATE_LIMITED ||

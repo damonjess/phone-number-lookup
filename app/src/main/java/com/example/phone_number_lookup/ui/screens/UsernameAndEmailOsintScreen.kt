@@ -45,6 +45,7 @@ import com.example.phone_number_lookup.AttributedValue
 import com.example.phone_number_lookup.EmailLinkedAccounts
 import com.example.phone_number_lookup.EmailProfileSummaryBuilder
 import com.example.phone_number_lookup.EmailRegistrationScanner
+import com.example.phone_number_lookup.IdentityEnrichment
 import com.example.phone_number_lookup.IdentityEnrichmentReport
 import com.example.phone_number_lookup.OsintPdfExporter
 import com.example.phone_number_lookup.OsintTools
@@ -53,6 +54,7 @@ import com.example.phone_number_lookup.PythonToolMode
 import com.example.phone_number_lookup.UnifiedEvidenceBuilder
 import com.example.phone_number_lookup.UsernameScanner
 import com.example.phone_number_lookup.ui.components.AppButton
+import com.example.phone_number_lookup.ui.viewmodels.UsernameAndEmailOsintUiState
 import com.example.phone_number_lookup.ui.components.DorkLauncherCard
 import com.example.phone_number_lookup.ui.components.EmailActivityTimelineSection
 import com.example.phone_number_lookup.ui.components.EmailBreachDetailsSection
@@ -336,8 +338,7 @@ fun UsernameAndEmailOsintScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
                     IdentityEnrichmentSection(
-                        report = uiState.identityEnrichment,
-                        isLoading = uiState.isEnrichingIdentity,
+                        uiState = uiState,
                         onOpenUrl = { openUrl(context, it) }
                     )
 
@@ -1029,8 +1030,7 @@ fun UsernameAndEmailOsintScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
                     IdentityEnrichmentSection(
-                        report = uiState.identityEnrichment,
-                        isLoading = uiState.isEnrichingIdentity,
+                        uiState = uiState,
                         onOpenUrl = { openUrl(context, it) }
                     )
 
@@ -1291,78 +1291,114 @@ fun UsernameAndEmailOsintScreen(
 
 @Composable
 private fun IdentityEnrichmentSection(
-    report: IdentityEnrichmentReport?,
-    isLoading: Boolean,
+    uiState: UsernameAndEmailOsintUiState,
     onOpenUrl: (String) -> Unit
 ) {
     val context = LocalContext.current
     var licenseText by remember { mutableStateOf<String?>(null) }
+
+    val enrichment = uiState.enrichment
+    val (enrichmentBadge, enrichmentTone, enrichmentDetail) = when {
+        uiState.isEnriching -> Triple(
+            "Checking",
+            Tone.INFO,
+            "Querying Keybase cryptographic proofs, OpenPGP keyservers, and Wayback archives..."
+        )
+        enrichment != null && enrichment.hasAnyData -> {
+            val count = enrichment.keybaseProofs.size + enrichment.pgpKeys.size + enrichment.waybackSnapshots.size +
+                (if (enrichment.keybaseUsername != null) 1 else 0)
+            Triple(
+                "Results",
+                Tone.ACCENT,
+                "$count enrichment record(s) resolved across Keybase, OpenPGP, and Internet Archive."
+            )
+        }
+        enrichment != null && enrichment.completedCleanly -> Triple(
+            "No results",
+            Tone.NEUTRAL,
+            "Checked Keybase, OpenPGP keyservers, and Internet Archive; no matching records exist for this handle."
+        )
+        else -> Triple(
+            "Unknown",
+            Tone.WARNING,
+            "Enrichment providers could not be reached due to a network timeout."
+        )
+    }
 
     OsintToolSectionCard(
         toolTitle = "Cryptographic Proofs, PGP & Archive History",
         subtitle = "Keybase proofs, public PGP keys and archived captures",
         containerColor = MaterialTheme.colorScheme.secondaryContainer
     ) {
-        when {
-            isLoading -> LoadingRow("Querying Keybase, OpenPGP & Wayback Machine…")
-            report == null || !report.hasData -> Notice(
-                "No Keybase proofs, PGP keys or Wayback snapshots returned for this target.",
-                tone = Tone.NEUTRAL,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = enrichmentDetail,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+                softWrap = true
             )
-            else -> {
-                report.keybaseDisplayName?.let { ResultRow("Keybase Name", it) }
-                report.keybaseBio?.let { ResultRow("Keybase Bio", it) }
-                if (report.keybaseProofs.isNotEmpty()) {
-                    SubHeading("Verified Keybase accounts")
-                    report.keybaseProofs.forEach { proof ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "• ${proof.service}: ${proof.handle}",
-                                style = MaterialTheme.typography.bodySmall,
-                                softWrap = true,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (proof.proofUrl.startsWith("http")) {
-                                TextButton(onClick = { onOpenUrl(proof.proofUrl) }) { Text("Open") }
-                            }
-                        }
-                    }
-                }
-                if (report.pgpRecords.isNotEmpty()) {
-                    SubHeading("OpenPGP public key UIDs")
-                    report.pgpRecords.forEach { pgp ->
+            Spacer(modifier = Modifier.width(8.dp))
+            Pill(text = enrichmentBadge, tone = enrichmentTone)
+        }
+
+        if (enrichment != null && enrichment.hasAnyData) {
+            Spacer(modifier = Modifier.height(8.dp))
+            enrichment.keybaseDisplayName?.let { ResultRow("Keybase Name", it) }
+            enrichment.keybaseBio?.let { ResultRow("Keybase Bio", it) }
+            if (enrichment.keybaseProofs.isNotEmpty()) {
+                SubHeading("Verified Keybase accounts")
+                enrichment.keybaseProofs.forEach { proof ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            "Key ${pgp.keyId}" + (pgp.createdDate?.let { " (created $it)" } ?: ""),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            softWrap = true
+                            text = "• ${proof.service}: ${proof.handle}",
+                            style = MaterialTheme.typography.bodySmall,
+                            softWrap = true,
+                            modifier = Modifier.weight(1f)
                         )
-                        pgp.uids.forEach { uid ->
-                            Text("• $uid", style = MaterialTheme.typography.bodySmall, softWrap = true)
+                        if (proof.proofUrl.startsWith("http")) {
+                            TextButton(onClick = { onOpenUrl(proof.proofUrl) }) { Text("Open") }
                         }
                     }
                 }
-                if (report.waybackSnapshots.isNotEmpty()) {
-                    SubHeading("Wayback archived profiles")
-                    report.waybackSnapshots.forEach { wb ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "• ${wb.targetUrl} (${wb.snapshotCount} captures, ${wb.firstSeen}..${wb.lastSeen})",
-                                style = MaterialTheme.typography.bodySmall,
-                                softWrap = true,
-                                modifier = Modifier.weight(1f)
-                            )
-                            wb.latestArchiveUrl?.let { url ->
-                                TextButton(onClick = { onOpenUrl(url) }) { Text("Archive") }
-                            }
+            }
+            if (enrichment.pgpKeys.isNotEmpty()) {
+                SubHeading("OpenPGP public key UIDs")
+                enrichment.pgpKeys.forEach { pgp ->
+                    Text(
+                        "Key ${pgp.keyId}" + (pgp.createdDate?.let { " (created $it)" } ?: ""),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        softWrap = true
+                    )
+                    pgp.uids.forEach { uid ->
+                        Text("• $uid", style = MaterialTheme.typography.bodySmall, softWrap = true)
+                    }
+                }
+            }
+            if (enrichment.waybackSnapshots.isNotEmpty()) {
+                SubHeading("Wayback archived profiles")
+                enrichment.waybackSnapshots.forEach { wb ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "• ${wb.targetUrl} (${wb.snapshotCount} captures, ${wb.firstSeen}..${wb.lastSeen})",
+                            style = MaterialTheme.typography.bodySmall,
+                            softWrap = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        wb.latestArchiveUrl?.let { url ->
+                            TextButton(onClick = { onOpenUrl(url) }) { Text("Archive") }
                         }
                     }
                 }

@@ -67,6 +67,29 @@ object OsintDatasets {
         "https://raw.githubusercontent.com/Alfredredbird/tookie-osint/main/sites/sites.json"
     const val BLACKBIRD_EMAIL_URL =
         "https://raw.githubusercontent.com/p1ngul1n0/blackbird/main/data/email-data.json"
+
+    // Defunct or permanently unresponsive domains in upstream Sherlock/WhatsMyName lists
+    private val DEAD_UPSTREAM_DOMAINS = setOf(
+        "blip.fm",
+        "bitcoinforum.com",
+        "forum.3dnews.ru",
+        "aminoapps.com",
+        "chaos.social",
+        "hubpages.com",
+        "smashcast.tv",
+        "angel.co",
+        "ello.co",
+        "voat.co",
+        "gab.com"
+    )
+
+    fun isDeadUpstreamProbe(urlTemplate: String): Boolean {
+        val lower = urlTemplate.lowercase()
+        return DEAD_UPSTREAM_DOMAINS.any { domain ->
+            lower.contains("://$domain/") || lower.contains(".$domain/")
+        }
+    }
+
     private fun String.resolveMarker(account: String, target: String): String =
         replace("{account}", account).replace("{username}", account).replace("{}", account).replace("{target}", target)
 
@@ -198,7 +221,7 @@ object OsintDatasets {
                     fromSherlock +
                     fromTookie,
                 byProfile = true
-            )
+            ).filterNot { isDeadUpstreamProbe(it.urlTemplate) }
             if (fromWmn.isNotEmpty() && fromSherlock.isNotEmpty()) {
                 cachedUsername = deduped
             }

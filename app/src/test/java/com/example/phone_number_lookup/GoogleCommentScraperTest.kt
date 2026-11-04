@@ -2,6 +2,8 @@ package com.example.phone_number_lookup
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,12 +42,12 @@ class GoogleCommentScraperTest {
         assertEquals("https://www.reddit.com/r/androiddev/comments/abc123/compose_tips/", items[0].url)
         assertTrue(items[0].snippet.contains("I commented on this thread"))
 
-        val hit0 = GoogleCommentScraper.toCommentHit(items[0], "alex_dev99@gmail.com", "Google Search")
+        val hit0 = GoogleCommentScraper.toCommentHit(items[0], "alex_dev99@gmail.com", "Google Search")!!
         assertEquals("Reddit", hit0.platform)
         assertEquals("14 Mar 2025", hit0.date)
         assertEquals("I commented on this thread using alex_dev99@gmail.com to share the Compose performance fix.", hit0.commentSnippet)
 
-        val hit1 = GoogleCommentScraper.toCommentHit(items[1], "@alex_dev99", "Google Search")
+        val hit1 = GoogleCommentScraper.toCommentHit(items[1], "@alex_dev99", "Google Search")!!
         assertEquals("Disqus", hit1.platform)
         assertEquals("https://disqus.com/by/alex_dev99/", hit1.url)
     }
@@ -68,7 +70,7 @@ class GoogleCommentScraperTest {
         assertEquals("Comment by alex_dev99 on Hacker News", items[0].title)
         assertEquals("https://news.ycombinator.com/item?id=998877", items[0].url)
 
-        val hit = GoogleCommentScraper.toCommentHit(items[0], "alex_dev99@gmail.com", "Google Search")
+        val hit = GoogleCommentScraper.toCommentHit(items[0], "alex_dev99@gmail.com", "Google Search")!!
         assertEquals("HackerNews", hit.platform)
         assertEquals("Oct 3, 2024", hit.date)
         assertTrue(hit.commentSnippet.contains("Great write-up!"))
@@ -160,5 +162,94 @@ class GoogleCommentScraperTest {
         val dorks = GoogleCommentScraper.buildCommentDorkLinks("alex_dev99@gmail.com", "alex_dev99")
         assertEquals(4, dorks.size)
         assertTrue(dorks.all { it.url.startsWith("https://www.google.com/search?q=") })
+    }
+
+    @Test
+    fun buildsDedicatedFacebookEmailQueries() {
+        val email = "alex_dev99@gmail.com"
+        val handle = "alex_dev99"
+
+        val googleFbQueries = GoogleCommentScraper.buildFacebookEmailQueries(email, handle)
+        assertEquals(3, googleFbQueries.size)
+        assertEquals("\"$email\" site:facebook.com", googleFbQueries[0])
+        assertEquals("\"$email\" (site:facebook.com/public OR site:facebook.com/people)", googleFbQueries[1])
+        assertEquals("\"$handle\" site:facebook.com/groups OR site:facebook.com/public", googleFbQueries[2])
+
+        val openWebFbQueries = OpenWebOsintScraper.buildFacebookEmailQueries(email, handle)
+        assertEquals(googleFbQueries, openWebFbQueries)
+    }
+
+    @Test
+    fun classifiesFacebookUrlsAsFacebookPlatform() {
+        val platform1 = GoogleCommentScraper.classifyPlatform("https://www.facebook.com/public/alex_dev99", "Alex Dev - Facebook")
+        assertEquals("Facebook", platform1)
+
+        val platform2 = GoogleCommentScraper.classifyPlatform("https://www.facebook.com/groups/androiddevs/posts/123", "Android Devs Group")
+        assertEquals("Facebook", platform2)
+
+        val item = SearchResultItem(
+            title = "Alex Dev - Facebook Public Profile",
+            snippet = "Contact alex_dev99@gmail.com for collaboration.",
+            url = "https://www.facebook.com/people/Alex-Dev/100012345",
+            source = "Google Search"
+        )
+        val hit = GoogleCommentScraper.toCommentHit(item, "alex_dev99@gmail.com", "Google Search")!!
+        assertEquals("Facebook", hit.platform)
+        assertEquals("Alex Dev - Facebook Public Profile", hit.title)
+    }
+
+    @Test
+    fun filtersOutForeignQAndASpamAndHeavyCjkContent() {
+        val zhihuItem = SearchResultItem(
+            title = "如何在 知乎 上找到相关信息？",
+            snippet = "知乎是一个中文互联网高质量问答社区和创作者聚集的原创内容平台",
+            url = "https://www.zhihu.com/question/123456",
+            source = "Google Search"
+        )
+        assertTrue(GoogleCommentScraper.isLikelySpamOrNoise(zhihuItem.title, zhihuItem.snippet, zhihuItem.url))
+        assertNull(GoogleCommentScraper.toCommentHit(zhihuItem, "alex_dev99", "Google Search"))
+
+        val baiduItem = SearchResultItem(
+            title = "百度知道",
+            snippet = "百度知道是全球最大的中文问答平台，致力于为用户提供解决问题的平台",
+            url = "https://zhidao.baidu.com/question/987654.html",
+            source = "Google Search"
+        )
+        assertTrue(GoogleCommentScraper.isLikelySpamOrNoise(baiduItem.title, baiduItem.snippet, baiduItem.url))
+        assertNull(GoogleCommentScraper.toCommentHit(baiduItem, "alex_dev99", "Google Search"))
+
+        val cjkSpamItem = SearchResultItem(
+            title = "Random Spam Page",
+            snippet = "这是一个充满了垃圾信息的非英语网页内容测试，含有大量中文字符",
+            url = "https://example.com/spam",
+            source = "Google Search"
+        )
+        assertTrue(GoogleCommentScraper.isLikelySpamOrNoise(cjkSpamItem.title, cjkSpamItem.snippet, cjkSpamItem.url))
+        assertNull(GoogleCommentScraper.toCommentHit(cjkSpamItem, "alex_dev99", "Google Search"))
+
+        val validItem = SearchResultItem(
+            title = "Alex Dev on GitHub Discussions",
+            snippet = "Here is my response about Android development best practices.",
+            url = "https://github.com/org/repo/discussions/42",
+            source = "Google Search"
+        )
+        assertFalse(GoogleCommentScraper.isLikelySpamOrNoise(validItem.title, validItem.snippet, validItem.url))
+        val validHit = GoogleCommentScraper.toCommentHit(validItem, "alex_dev99", "Google Search")
+        assertNotNull(validHit)
+        assertEquals("GitHub", validHit!!.platform)
+    }
+
+    @Test
+    fun verifiesFacebookDorksGeneratedCorrectly() {
+        val dorks = OsintTools.getFacebookDorks("alex.dev@gmail.com", "alex_dev")
+        assertEquals(2, dorks.size)
+        assertEquals("Facebook Directory", dorks[0].toolSource)
+        assertTrue(dorks[0].url.contains("facebook.com/public/"))
+        assertEquals("Facebook Dork", dorks[1].toolSource)
+        assertTrue(dorks[1].url.contains("site:facebook.com"))
+
+        val emailDorks = OsintTools.getBlackbirdEmailScan("alex.dev@gmail.com")
+        assertTrue(emailDorks.any { it.toolSource == "Facebook Directory" })
+        assertTrue(emailDorks.any { it.toolSource == "Facebook Dork" })
     }
 }

@@ -180,6 +180,25 @@ object OsintTools {
         )
     }
 
+    fun getFacebookDorks(email: String, handle: String): List<OsintDork> {
+        val nameQuery = handle.replace(Regex("[^a-zA-Z]"), " ").trim()
+        val encEmail = ScanHttp.encode("\"$email\"")
+        return listOf(
+            OsintDork(
+                title = "Facebook Public Directory Search ($nameQuery)",
+                description = "Opens Facebook's public people directory filtered for matching names and handles inside your native in-app browser.",
+                url = "https://www.facebook.com/public/${ScanHttp.encode(nameQuery)}",
+                toolSource = "Facebook Directory"
+            ),
+            OsintDork(
+                title = "Google: Facebook Profiles & Pages ($email)",
+                description = "Searches Google for public Facebook accounts associated with your email address.",
+                url = "https://www.google.com/search?q=$encEmail+site:facebook.com",
+                toolSource = "Facebook Dork"
+            )
+        )
+    }
+
     fun getBlackbirdEmailScan(email: String): List<OsintDork> {
         val clean = email.trim()
         val encoded = ScanHttp.encode("\"$clean\"")
@@ -207,7 +226,7 @@ object OsintTools {
                 url = "https://epieos.com/?q=${ScanHttp.encode(clean)}",
                 toolSource = "Epieos"
             )
-        )
+        ) + getFacebookDorks(clean, handle)
     }
 
     // --- Tookie OSINT / Brib Engine ---

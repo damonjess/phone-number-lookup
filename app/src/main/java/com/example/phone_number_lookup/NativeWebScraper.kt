@@ -32,7 +32,7 @@ object NativeWebScraper {
     private var appContext: Context? = null
 
     private val scrapeMutex = Mutex()
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     private val _browserRequest = MutableStateFlow<InAppBrowserRequest?>(null)
     val browserRequest: StateFlow<InAppBrowserRequest?> = _browserRequest.asStateFlow()
@@ -93,10 +93,10 @@ object NativeWebScraper {
                             javaScriptEnabled = true
                             domStorageEnabled = true
                             databaseEnabled = true
-                            loadsImagesAutomatically = false
-                            blockNetworkImage = true
-                            userAgentString =
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                            loadsImagesAutomatically = true
+                            blockNetworkImage = false
+                            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                         }
 
                         suspendCancellableCoroutine<Unit> { cont ->

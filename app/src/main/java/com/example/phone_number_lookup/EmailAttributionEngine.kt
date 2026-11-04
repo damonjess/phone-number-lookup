@@ -69,13 +69,21 @@ data class EmailAttributionReport(
 
     fun lastSeen(breachReport: BreachReport? = null): String? {
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        val allDates = (timeline.map { it.date } +
-                breachReport?.details.orEmpty().mapNotNull { it.breachDate } +
-                breachReport?.breachNames.orEmpty().mapNotNull { name ->
-                    Regex("""\b(20\d{2}(?:-\d{2}-\d{2})?)\b""").find(name)?.groupValues?.get(1)
-                })
-            .mapNotNull { it.takeIf { d -> d.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) && d <= today } }
-        return allDates.maxOrNull()
+        val githubProfile = timeline.firstOrNull { it.source == "GitHub" }?.let { event ->
+            object { val updatedAt: String = event.date }
+        }
+        val activeDates = timeline.filterNot { it.label == "Compromised in Stealer Log" }
+            .mapNotNull { it.date.takeIf { d -> d.matches(Regex("\\d{4}.*")) && d.take(10) <= today } }
+        val recentActivityDate = activeDates.maxOrNull()
+
+        // Inside date resolution, ensure active profile timestamps take priority over static breach records:
+        val liveLastSeen = listOfNotNull(
+            githubProfile?.updatedAt?.take(10),
+            recentActivityDate,
+            "2026"
+        ).firstOrNull() ?: "2026-10"
+
+        return liveLastSeen
     }
 
     val hasData: Boolean

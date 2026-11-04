@@ -71,6 +71,40 @@ object OpenWebOsintScraper {
     private val BING_WHITESPACE = Regex("""\s+""")
 
     /**
+     * Builds targeted Facebook dork queries to uncover public profiles, pages, 
+     * and group mentions linked to an email or handle.
+     */
+    fun buildFacebookEmailQueries(email: String, handle: String): List<String> = listOf(
+        "\"$email\" site:facebook.com",
+        "\"$email\" (site:facebook.com/public OR site:facebook.com/people)",
+        "\"$handle\" site:facebook.com/groups OR site:facebook.com/public",
+        "\"$handle\" site:facebook.com"
+    ).take(3)
+
+    /**
+     * Executes the Facebook dork queries across multi-engine web search 
+     * and returns validated social hits.
+     */
+    suspend fun scrapeFacebookFootprint(email: String, handle: String): List<SearchResultItem> = withContext(Dispatchers.IO) {
+        val queries = buildFacebookEmailQueries(email, handle)
+        val allHits = mutableListOf<SearchResultItem>()
+
+        for (query in queries) {
+            val brave = runCatching { scrapeBraveHtml(query) }.getOrDefault(emptyList())
+            val bing = runCatching { scrapeBingHtml(query) }.getOrDefault(emptyList())
+            allHits.addAll(brave + bing)
+        }
+
+        allHits
+            .filter { it.url.contains("facebook.com", ignoreCase = true) }
+            .filterNot { isLikelySpamOrNoise(it.title, it.snippet, it.url) }
+            .distinctBy { it.url.lowercase().trimEnd('/') }
+    }
+
+    internal fun isLikelySpamOrNoise(title: String, snippet: String, url: String): Boolean =
+        GoogleCommentScraper.isLikelySpamOrNoise(title, snippet, url)
+
+    /**
      * Runs parallel public scrapes across Google Search, DuckDuckGo, Brave Search, Bing,
      * Reddit JSON, HackerNews Algolia, and GitHub Issues/Commits, then mines the text for entities.
      */
@@ -78,22 +112,32 @@ object OpenWebOsintScraper {
         queries: List<String>,
         targetPhoneE164: String? = null
     ): ScrapedWebReport = withContext(Dispatchers.IO) {
-        val cleanQueries = queries.map { it.trim() }.filter { it.isNotBlank() }.distinct()
-        if (cleanQueries.isEmpty()) return@withContext ScrapedWebReport("")
+        val expandedQueries = buildList {
+            queries.map { it.trim() }.filter { it.isNotBlank() }.forEach { q ->
+                add(q)
+                if ('@' in q && !q.startsWith("\"") && q.contains('.')) {
+                    val handle = q.substringBefore('@').trim()
+                    if (handle.isNotBlank()) {
+                        addAll(buildFacebookEmailQueries(q, handle))
+                    }
+                }
+            }
+        }.distinct()
+        if (expandedQueries.isEmpty()) return@withContext ScrapedWebReport("")
 
-        val primary = cleanQueries.first()
+        val primary = expandedQueries.first()
 
         coroutineScope {
-            val googleDeferred = cleanQueries.take(5).map { q ->
+            val googleDeferred = expandedQueries.take(8).map { q ->
                 async { scrapeGoogleHtml(q) }
             }
-            val ddgDeferred = cleanQueries.take(5).map { q ->
+            val ddgDeferred = expandedQueries.take(8).map { q ->
                 async { scrapeDuckDuckGo(q) }
             }
-            val braveDeferred = cleanQueries.take(3).map { q ->
+            val braveDeferred = expandedQueries.take(6).map { q ->
                 async { scrapeBraveHtml(q) }
             }
-            val bingDeferred = cleanQueries.take(3).map { q ->
+            val bingDeferred = expandedQueries.take(6).map { q ->
                 async { scrapeBingHtml(q) }
             }
             val redditDef = async { scrapeRedditSearch(primary) }
@@ -110,6 +154,7 @@ object OpenWebOsintScraper {
                 redditDef.await() +
                 hnDef.await() +
                 ghIssuesDef.await())
+                .filterNot { isLikelySpamOrNoise(it.title, it.snippet, it.url) }
                 .distinctBy { it.url.lowercase().trimEnd('/') }
 
             val emails = mutableListOf<AttributedValue>()

@@ -26,57 +26,95 @@ data class WaybackSummary(
     val latestArchiveUrl: String?
 )
 
-data class IdentityEnrichmentReport(
+typealias IdentityEnrichmentReport = IdentityEnrichment
+
+data class IdentityEnrichment(
+    val query: String = "",
+    val keybaseUsername: String? = null,
     val keybaseDisplayName: String? = null,
     val keybaseBio: String? = null,
+    val keybaseLocation: String? = null,
+    val keybaseAvatarUrl: String? = null,
     val keybaseProofs: List<KeybaseProof> = emptyList(),
-    val pgpRecords: List<PgpKeyRecord> = emptyList(),
-    val waybackSnapshots: List<WaybackSummary> = emptyList()
+    val pgpKeys: List<PgpKeyRecord> = emptyList(),
+    val waybackSnapshots: List<WaybackSummary> = emptyList(),
+    val providersChecked: Int = 3,
+    val providersFailed: Int = 0
 ) {
-    val hasData: Boolean
-        get() = keybaseProofs.isNotEmpty() || pgpRecords.isNotEmpty() || waybackSnapshots.isNotEmpty() || keybaseDisplayName != null
+    val pgpRecords: List<PgpKeyRecord> get() = pgpKeys
+    val hasData: Boolean get() = hasAnyData
+
+    val hasAnyData: Boolean
+        get() = keybaseUsername != null ||
+            keybaseProofs.isNotEmpty() ||
+            pgpKeys.isNotEmpty() ||
+            waybackSnapshots.isNotEmpty()
+
+    val completedCleanly: Boolean
+        get() = providersChecked > 0 && providersFailed < providersChecked
 }
 
 object IdentityEnricher {
 
-    suspend fun enrich(query: String, isEmail: Boolean): IdentityEnrichmentReport = withContext(Dispatchers.IO) {
+    suspend fun enrich(query: String, isEmail: Boolean): IdentityEnrichment = withContext(Dispatchers.IO) {
         val clean = query.trim().removePrefix("@")
-        if (clean.isBlank()) return@withContext IdentityEnrichmentReport()
+        if (clean.isBlank()) return@withContext IdentityEnrichment(query = query)
+
+        var failedCount = 0
 
         val keybaseDeferred = async {
-            val primary = fetchKeybase(clean, isEmail)
-            if (isEmail && primary.first == null && primary.third.isEmpty()) {
-                val handle = EmailRegistrationScanner.localPart(clean)
-                if (handle != null && handle.length >= 4) {
-                    fetchKeybase(handle, isEmail = false)
+            runCatching {
+                val primary = fetchKeybase(clean, isEmail)
+                if (isEmail && primary.first == null && primary.third.isEmpty()) {
+                    val handle = EmailRegistrationScanner.localPart(clean)
+                    if (handle != null && handle.length >= 4) {
+                        fetchKeybase(handle, isEmail = false)
+                    } else {
+                        primary
+                    }
                 } else {
                     primary
                 }
-            } else {
-                primary
+            }.getOrElse {
+                synchronized(this) { failedCount++ }
+                Triple(null, null, emptyList())
             }
         }
-        val pgpDeferred = async { fetchPgpKeys(clean) }
-        val waybackDeferred = async {
-            if (!isEmail) {
-                fetchWaybackForUsername(clean)
-            } else {
-                val handle = EmailRegistrationScanner.localPart(clean)
-                if (handle != null && handle.length >= 4) {
-                    fetchWaybackForUsername(handle)
-                } else {
+        val pgpDeferred = async {
+            runCatching { fetchPgpKeys(clean) }
+                .getOrElse {
+                    synchronized(this) { failedCount++ }
                     emptyList()
                 }
+        }
+        val waybackDeferred = async {
+            runCatching {
+                if (!isEmail) {
+                    fetchWaybackForUsername(clean)
+                } else {
+                    val handle = EmailRegistrationScanner.localPart(clean)
+                    if (handle != null && handle.length >= 4) {
+                        fetchWaybackForUsername(handle)
+                    } else {
+                        emptyList()
+                    }
+                }
+            }.getOrElse {
+                synchronized(this) { failedCount++ }
+                emptyList()
             }
         }
 
         val (kbName, kbBio, kbProofs) = keybaseDeferred.await()
-        IdentityEnrichmentReport(
+        IdentityEnrichment(
+            query = query,
             keybaseDisplayName = kbName,
             keybaseBio = kbBio,
             keybaseProofs = kbProofs,
-            pgpRecords = pgpDeferred.await(),
-            waybackSnapshots = waybackDeferred.await()
+            pgpKeys = pgpDeferred.await(),
+            waybackSnapshots = waybackDeferred.await(),
+            providersChecked = 3,
+            providersFailed = failedCount
         )
     }
 

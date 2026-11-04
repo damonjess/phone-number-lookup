@@ -604,4 +604,13 @@ class OsintParsingTest {
         assertTrue(locations.any { it.value.contains("DN15 6AA", ignoreCase = true) })
         assertTrue(phones.any { it.value == "07123 456789" })
     }
+
+    @Test
+    fun isDeadUpstreamProbeFiltersDefunctDomains() {
+        assertTrue(OsintDatasets.isDeadUpstreamProbe("https://blip.fm/{account}"))
+        assertTrue(OsintDatasets.isDeadUpstreamProbe("https://sub.gab.com/{account}"))
+        assertTrue(OsintDatasets.isDeadUpstreamProbe("https://ello.co/{account}"))
+        assertFalse(OsintDatasets.isDeadUpstreamProbe("https://github.com/{account}"))
+        assertFalse(OsintDatasets.isDeadUpstreamProbe("https://twitter.com/{account}"))
+    }
 }

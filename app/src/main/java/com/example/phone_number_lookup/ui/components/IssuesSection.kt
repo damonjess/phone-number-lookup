@@ -1,5 +1,7 @@
 package com.example.phone_number_lookup.ui.components
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,6 +20,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.phone_number_lookup.ProbeFailure
@@ -74,29 +77,27 @@ fun IssuesSection(
             )
         }
 
+        val context = LocalContext.current
         SubHeading("Check these yourself")
         shown.forEach { issue ->
-            Surface(
-                onClick = { onOpen(issue.profileUrl) },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (issue.url.startsWith("http")) {
+                            com.example.phone_number_lookup.ui.components.openUrl(context, issue.url)
+                        }
+                    }
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = issue.site,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(Space.sm))
-                    Pill(issue.reason.shortLabel(), tone = issue.reason.pillTone())
-                }
+                Text(
+                    text = issue.site,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Pill(text = issue.reason.shortLabel(), tone = Tone.WARNING)
             }
         }
         if (issues.size > COLLAPSED_COUNT) {

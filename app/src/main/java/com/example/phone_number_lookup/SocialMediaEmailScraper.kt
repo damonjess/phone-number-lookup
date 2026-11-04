@@ -91,11 +91,15 @@ object SocialMediaEmailScraper {
         fullNames: List<String>,
         locationHint: String?
     ): List<Pair<String, String>> = buildList {
+        val primaryHandle = handles.firstOrNull() ?: email.substringBefore('@')
+        GoogleCommentScraper.buildFacebookEmailQueries(email, primaryHandle).forEach { q ->
+            add(q to email)
+        }
+
         // 1. Direct email across Facebook, Instagram, LinkedIn, X/Twitter, TikTok, Threads & YouTube
         add(
             "\"$email\" (site:facebook.com OR site:instagram.com OR site:linkedin.com OR site:x.com OR site:twitter.com OR site:tiktok.com OR site:youtube.com)" to email
         )
-        add("\"$email\" site:facebook.com" to email)
         add("\"$email\" (site:instagram.com OR site:threads.net OR site:pinterest.com)" to email)
 
         // 2. Exact handles across Facebook, Instagram, LinkedIn, TikTok, X & Reddit
@@ -153,6 +157,7 @@ object SocialMediaEmailScraper {
         matchLabel: String,
         strictIds: List<String>
     ): SocialMediaHit? {
+        if (GoogleCommentScraper.isLikelySpamOrNoise(item.title, item.snippet, item.url)) return null
         val platform = detectSocialPlatform(item.url) ?: return null
         val blob = "${item.title} ${item.snippet} ${item.url}"
 

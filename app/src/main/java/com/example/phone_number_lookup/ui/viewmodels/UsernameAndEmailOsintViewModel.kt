@@ -20,6 +20,7 @@ import com.example.phone_number_lookup.GoogleCommentScraper
 import com.example.phone_number_lookup.GoogleMetadataExtractor
 import com.example.phone_number_lookup.GoogleMetadataReport
 import com.example.phone_number_lookup.IdentityEnricher
+import com.example.phone_number_lookup.IdentityEnrichment
 import com.example.phone_number_lookup.IdentityEnrichmentReport
 import com.example.phone_number_lookup.OpenWebOsintScraper
 import com.example.phone_number_lookup.OsintDatasets
@@ -85,7 +86,10 @@ data class UsernameAndEmailOsintUiState(
     val openWebReport: ScrapedWebReport? = null,
     val googleCommentReport: GoogleCommentReport? = null,
     val isCommentScanning: Boolean = false,
-)
+) {
+    val enrichment: IdentityEnrichmentReport? get() = identityEnrichment
+    val isEnriching: Boolean get() = isEnrichingIdentity
+}
 
 class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -245,10 +249,23 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
         }
 
         scans.start(token) { active ->
-            val enrichment = IdentityEnricher.enrich(target, isEmail = false)
-            if (scans.isCurrent(active)) {
-                _uiState.update {
-                    it.copy(identityEnrichment = enrichment, isEnrichingIdentity = false)
+            try {
+                val enrichment = runCatching {
+                    IdentityEnricher.enrich(target, isEmail = false)
+                }.getOrElse {
+                    IdentityEnrichment(query = target, providersChecked = 3, providersFailed = 3)
+                }
+                if (scans.isCurrent(active)) {
+                    _uiState.update {
+                        it.copy(
+                            identityEnrichment = enrichment,
+                            isEnrichingIdentity = false
+                        )
+                    }
+                }
+            } finally {
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(isEnrichingIdentity = false) }
                 }
             }
         }
@@ -418,10 +435,23 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
 
         // 5. Keybase / PGP / Wayback Identity Enrichment
         scans.start(token) { active ->
-            val enrichment = IdentityEnricher.enrich(target, isEmail = true)
-            if (scans.isCurrent(active)) {
-                _uiState.update {
-                    it.copy(identityEnrichment = enrichment, isEnrichingIdentity = false)
+            try {
+                val enrichment = runCatching {
+                    IdentityEnricher.enrich(target, isEmail = true)
+                }.getOrElse {
+                    IdentityEnrichment(query = target, providersChecked = 3, providersFailed = 3)
+                }
+                if (scans.isCurrent(active)) {
+                    _uiState.update {
+                        it.copy(
+                            identityEnrichment = enrichment,
+                            isEnrichingIdentity = false
+                        )
+                    }
+                }
+            } finally {
+                if (scans.isCurrent(active)) {
+                    _uiState.update { it.copy(isEnrichingIdentity = false) }
                 }
             }
         }

@@ -534,6 +534,15 @@ object OsintPilotEngine {
             }.getOrNull()
         }
 
+        val facebookDef = async {
+            val localPart = cleanEmail.substringBefore('@')
+            val discoveredHandles = attribution?.usernamesFound?.map { it.value.removePrefix("@") }?.distinct().orEmpty()
+            val primaryHandle = discoveredHandles.firstOrNull() ?: localPart
+            runCatching {
+                OpenWebOsintScraper.scrapeFacebookFootprint(cleanEmail, primaryHandle)
+            }.getOrDefault(emptyList())
+        }
+
         // Process Attribution
         attribution?.let { att ->
             names.addAll(att.namesFound)
@@ -668,6 +677,24 @@ object OsintPilotEngine {
                 sourceName = social.platform,
                 sourceUrl = social.url,
                 confidence = if (social.verifiedByEmail) ConfidenceLevel.HIGH else ConfidenceLevel.MEDIUM
+            )
+        }
+
+        facebookDef.await().forEach { fb ->
+            accounts += PhoneAccountHit(
+                platform = "Facebook (Public Index)",
+                status = "Web Footprint Match",
+                detail = "${fb.title} — ${fb.snippet}",
+                url = fb.url,
+                confirmed = true
+            )
+            publicRecords += AttributedValue("[Facebook] ${fb.title} — ${fb.snippet}", fb.url)
+            findings += SourcedFinding(
+                category = "Registration",
+                claim = "Facebook public reference: ${fb.title} — ${fb.snippet}",
+                sourceName = "Facebook Web Dork",
+                sourceUrl = fb.url,
+                confidence = ConfidenceLevel.MEDIUM
             )
         }
 
