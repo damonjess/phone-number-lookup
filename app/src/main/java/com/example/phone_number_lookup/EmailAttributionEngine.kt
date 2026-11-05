@@ -345,6 +345,10 @@ object EmailAttributionEngine {
                 platform = hit.platform,
                 url = hit.url
             )
+            // Capture both full phone numbers and masked recovery hints (e.g. "+44*******579")
+            Regex("""(?:\+?\d[\d\s*()-]{6,18}\d)""").findAll(hit.snippet).forEach { m ->
+                phones += AttributedValue(m.value.trim(), "${hit.platform} Recovery Hint")
+            }
             phones += extractPhoneNumbersFromText(hit.snippet, hit.platform)
             locations += extractLocationsFromText(hit.snippet, hit.platform)
         }
@@ -433,6 +437,8 @@ object EmailAttributionEngine {
             google = google
         )
 
+        val unmaskedPhones = resolveAndUnmaskPhones(filteredPhones)
+
         EmailAttributionReport(
             email = clean,
             namesFound = filteredNames,
@@ -443,7 +449,7 @@ object EmailAttributionEngine {
                     it.value.startsWith("UTC-", ignoreCase = true) ||
                     it.value.startsWith("GMT", ignoreCase = true)
             },
-            phonesFound = filteredPhones,
+            phonesFound = unmaskedPhones,
             avatarUrls = avatars.distinct(),
             timeline = cleanTimeline,
             stealerProfile = stealer,
@@ -830,6 +836,44 @@ object EmailAttributionEngine {
         """\b([A-Z][a-z]+(?:[\s-][A-Z][a-z]+)*,\s*(?:England|Scotland|Wales|Northern Ireland|Yorkshire|Humberside|Lincolnshire),\s*(?:United Kingdom|UK))\b""",
         RegexOption.IGNORE_CASE
     )
+
+    /**
+     * Cross-matches masked recovery phone hints (e.g., "+44*******579") against all full phone numbers
+     * discovered across open web, GitHub, Gravatar, and public records. If a full number matches the
+     * visible prefix and trailing digits of a masked hint, the masked entry is upgraded to the full number.
+     */
+    internal fun resolveAndUnmaskPhones(rawPhones: List<AttributedValue>): List<AttributedValue> {
+        val fullPhones = rawPhones.filter { !it.value.contains('*') }
+        val maskedPhones = rawPhones.filter { it.value.contains('*') }
+
+        val resolved = mutableListOf<AttributedValue>()
+        resolved.addAll(fullPhones)
+
+        for (masked in maskedPhones) {
+            val digitsAndStars = masked.value.replace(Regex("[^0-9+*]"), "")
+            val suffixDigits = digitsAndStars.substringAfterLast('*')
+            val prefixDigits = digitsAndStars.substringBefore('*').removePrefix("+")
+
+            val matchingFull = if (suffixDigits.length >= 2) {
+                fullPhones.firstOrNull { full ->
+                    val cleanFull = full.value.replace(Regex("[^0-9]"), "")
+                    cleanFull.endsWith(suffixDigits) &&
+                        (prefixDigits.isEmpty() || cleanFull.startsWith(prefixDigits) || cleanFull.startsWith("0"))
+                }
+            } else null
+
+            if (matchingFull != null) {
+                resolved += AttributedValue(
+                    value = matchingFull.value,
+                    source = "${masked.source} (Unmasked via ${matchingFull.source})"
+                )
+            } else {
+                resolved += masked
+            }
+        }
+
+        return resolved.distinctBy { "${it.value.replace(" ", "")}|${it.source.lowercase()}" }
+    }
 
     internal fun extractPhoneNumbersFromText(text: String, sourceName: String): List<AttributedValue> {
         val out = mutableListOf<AttributedValue>()

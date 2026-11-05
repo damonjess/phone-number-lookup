@@ -70,6 +70,7 @@ import com.example.phone_number_lookup.ui.components.SectionCard
 import com.example.phone_number_lookup.ui.components.Space
 import com.example.phone_number_lookup.ui.components.Tone
 import com.example.phone_number_lookup.ui.components.UnifiedEvidenceCard
+import com.example.phone_number_lookup.ui.components.UnifiedPhoneIntelligenceDashboard
 import com.example.phone_number_lookup.ui.components.VerdictCard
 import com.example.phone_number_lookup.ui.components.openUrl
 import com.example.phone_number_lookup.ui.viewmodels.PhoneLookupViewModel
@@ -312,11 +313,22 @@ fun PhoneLookupScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            DeepPhoneFootprintSection(
-                report = uiState.deepFootprint,
-                isLoading = uiState.isDeepFootprintScanning,
-                modifier = Modifier.padding(vertical = 4.dp)
-            )
+            val phoneReport = uiState.phoneIntelligenceReport
+            if (phoneReport != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                UnifiedPhoneIntelligenceDashboard(
+                    report = phoneReport,
+                    onOpenUrl = { url -> openUrl(context, url) },
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+            } else if (!uiState.isLoading) {
+                // Fallback to existing phone report view
+                DeepPhoneFootprintSection(
+                    report = uiState.deepFootprint,
+                    isLoading = uiState.isDeepFootprintScanning,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+            }
             Spacer(modifier = Modifier.height(16.dp))
 
             val phoniaDorks = OsintTools.getPhoniaTools(normalized)

@@ -311,26 +311,40 @@ object GoogleMetadataExtractor {
         // 1. Check In-App Browser captured HTML first
         NativeWebScraper.lastCapturedHtml.value?.second?.let { html ->
             GAIA_ID_FROM_CONTRIB_REGEX.find(html)?.groupValues?.get(1)?.let { return it }
-            if (html.contains(email, ignoreCase = true)) {
-                STANDALONE_GAIA_REGEX.find(html)?.groupValues?.get(1)?.let { return it }
+        }
+
+        // 2. Load Google Maps Contrib root in headless WebView (shares cookies with In-App Browser).
+        // If the WebView session or page state contains the contributor link, extract the 21-digit Gaia ID!
+        val contribRootHtml = NativeWebScraper.fetchRenderedHtml(
+            url = "https://www.google.com/maps/contrib/?hl=en-GB",
+            waitAfterLoadMs = 2_200L,
+            timeoutMs = 8_500L
+        ).orEmpty()
+
+        if (contribRootHtml.isNotBlank()) {
+            // Only accept the session Gaia ID if the page contains the target email or target name!
+            val matchesTarget = contribRootHtml.contains(email, ignoreCase = true) ||
+                candidateNames.any { it.length >= 4 && contribRootHtml.contains(it, ignoreCase = true) }
+            if (matchesTarget) {
+                GAIA_ID_FROM_CONTRIB_REGEX.find(contribRootHtml)?.groupValues?.get(1)?.let { return it }
+                Regex(""""/maps/contrib/(\d{21})"""").find(contribRootHtml)?.groupValues?.get(1)?.let { return it }
             }
         }
 
-        // 2. Search open web & headless WebView for maps/contrib/{gaiaId}
+        // 3. Search Brave/DuckDuckGo for maps/contrib or Local Guide mentions matching the person's name
+        val primaryName = candidateNames.firstOrNull()
         val dorks = buildList {
-            add("site:google.com/maps/contrib \"$email\"")
-            add("site:google.com/maps/contrib \"$localPart\"")
-            candidateNames.take(2).forEach { name ->
-                add("site:google.com/maps/contrib \"$name\"")
+            if (primaryName != null) {
+                add("site:google.com/maps/contrib \"$primaryName\"")
                 candidateLocations.take(2).forEach { loc ->
-                    add("site:google.com/maps/contrib \"$name\" \"$loc\"")
+                    add("site:google.com/maps/contrib \"$primaryName\" \"$loc\"")
                 }
             }
-        }.distinct().take(5)
+            add("site:google.com/maps/contrib \"$localPart\"")
+        }.distinct().take(4)
 
-        val targetName = candidateNames.firstOrNull()
         for (dork in dorks) {
-            searchOpenWebForContribGaiaId(dork, mustContainName = targetName)?.let { return it }
+            searchOpenWebForContribGaiaId(dork, mustContainName = primaryName)?.let { return it }
         }
         return null
     }
@@ -651,28 +665,19 @@ object GoogleMetadataExtractor {
      * Harvests rendered OSINT DOM from IntelBase / Google Contributor in the background WebView
      * when standard search engines block /maps/contrib/ URLs.
      */
-    private suspend fun harvestLiveWebViewIntel(email: String): ParsedContribData {
-        // 1. Check if the user already opened IntelBase or Google Maps in the In-App Browser
+    private suspend fun harvestLiveWebViewIntel(email: String, expectedName: String? = null): ParsedContribData {
         val cached = NativeWebScraper.lastCapturedHtml.value?.second.orEmpty()
-        if (cached.contains(email, ignoreCase = true) || cached.contains("/maps/contrib/", ignoreCase = true)) {
-            val parsedCached = parseIntelBaseOrContribDom(cached, targetEmail = email)
+        if (cached.isNotBlank()) {
+            val parsedCached = parseIntelBaseOrContribDom(
+                html = cached,
+                targetEmail = email,
+                expectedName = expectedName
+            )
             if (parsedCached.gaiaId != null || parsedCached.reviews.isNotEmpty()) {
                 return parsedCached
             }
         }
-
-        // 2. Otherwise, load the public lookup page in the headless Chromium WebView
-        val rendered = NativeWebScraper.fetchRenderedHtml(
-            url = "https://intelbase.is/?q=${ScanHttp.encode(email)}",
-            waitAfterLoadMs = 3_200L,
-            timeoutMs = 10_000L
-        ).orEmpty()
-
-        return if (rendered.isNotBlank()) {
-            parseIntelBaseOrContribDom(rendered, targetEmail = email)
-        } else {
-            ParsedContribData()
-        }
+        return ParsedContribData()
     }
 
     internal fun parseIntelBaseOrContribDom(

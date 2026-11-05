@@ -1123,7 +1123,7 @@ fun IntelBaseGoogleProfileCard(
     val reviewsToShow = if (showAllReviews) google.reviews else google.reviews.take(4)
 
     OsintCardContainer(
-        title = "GOOGLE PROFILE & MAPS FOOTPRINT",
+        title = "IntelBase • GOOGLE & MAPS DOSSIER",
         badge = if (google.gaiaId != null) "VERIFIED GAIA" else "GOOGLE OSINT",
         tone = Tone.ACCENT,
         modifier = modifier
@@ -1435,31 +1435,25 @@ fun IntelBaseGoogleProfileCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 AppButton(
-                    text = "Sync via IntelBase (In-App)",
+                    text = "Load My Maps Contrib",
                     onClick = {
-                        onOpenUrl("https://intelbase.is/?q=${android.net.Uri.encode(google.email)}")
+                        val url = when {
+                            !google.gaiaId.isNullOrBlank() ->
+                                "https://www.google.com/maps/contrib/${google.gaiaId}/reviews?hl=en-GB"
+                            !google.profileUrl.isNullOrBlank() ->
+                                google.profileUrl
+                            else ->
+                                "https://www.google.com/maps/contrib/?hl=en-GB"
+                        }
+                        onOpenUrl(url)
                     },
                     subdued = false,
                     modifier = Modifier.weight(1f)
                 )
                 AppButton(
-                    text = "Open Maps Contrib",
+                    text = "Open Epieos Lookup",
                     onClick = {
-                        val validName = google.fullName?.takeUnless {
-                            it.contains("IntelBase", ignoreCase = true) ||
-                                it.contains("Google", ignoreCase = true)
-                        }
-                        val url = when {
-                            !google.gaiaId.isNullOrBlank() ->
-                                "https://www.google.com/maps/contrib/${google.gaiaId}/reviews"
-                            !google.profileUrl.isNullOrBlank() ->
-                                google.profileUrl
-                            !validName.isNullOrBlank() ->
-                                "https://www.google.com/search?q=\"${android.net.Uri.encode(validName)}\"+\"Local+Guide\"+OR+\"Google+Maps\""
-                            else ->
-                                "https://www.google.com/search?q=\"${android.net.Uri.encode(google.email)}\""
-                        }
-                        onOpenUrl(url)
+                        onOpenUrl("https://epieos.com/?q=${android.net.Uri.encode(google.email)}")
                     },
                     subdued = true,
                     modifier = Modifier.weight(1f)
@@ -1468,3 +1462,143 @@ fun IntelBaseGoogleProfileCard(
         }
     }
 }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun UnifiedPhoneIntelligenceDashboard(
+    report: com.example.phone_number_lookup.UnifiedPhoneIntelligenceReport,
+    onOpenUrl: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var selectedTab by remember { mutableStateOf(0) }
+    val tabs = listOf(
+        "📱 Telecom",
+        "🏢 Corporate (${report.corporateFilings.size})",
+        "🌐 Web (${report.webPages.size})",
+        "👤 Identities"
+    )
+
+    val riskTone = when (report.riskGrade) {
+        "A" -> Tone.ACCENT
+        "B" -> Tone.INFO
+        "C" -> Tone.WARNING
+        else -> Tone.DANGER
+    }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        OsintCardContainer(
+            title = "PHONE THREAT METER & INTEL",
+            badge = "GRADE ${report.riskGrade}",
+            tone = riskTone
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                StatTile(value = "${report.riskScore}%", label = "THREAT SCORE", tone = riskTone, modifier = Modifier.weight(1f))
+                StatTile(value = report.corporateFilings.size.toString(), label = "CO. FILINGS", tone = Tone.ACCENT, modifier = Modifier.weight(1f))
+                StatTile(value = report.webPages.size.toString(), label = "WEB HITS", tone = Tone.INFO, modifier = Modifier.weight(1f))
+                StatTile(value = report.messagingApps.count { it.verifiedPresence }.toString(), label = "MESSAGING", tone = Tone.ACCENT, modifier = Modifier.weight(1f))
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                tabs.forEachIndexed { idx, title ->
+                    Pill(
+                        text = title,
+                        tone = if (selectedTab == idx) Tone.ACCENT else Tone.NEUTRAL,
+                        modifier = Modifier.clickable { selectedTab = idx }
+                    )
+                }
+            }
+        }
+
+        when (selectedTab) {
+            0 -> {
+                OsintCardContainer(title = "📱 TELECOMMUNICATION & CARRIER", badge = report.telecom.countryCode, tone = Tone.INFO) {
+                    AttributedRow("E.164 Format", report.telecom.e164Format)
+                    AttributedRow("National Format", report.telecom.nationalFormat)
+                    AttributedRow("Line Type", report.telecom.lineType)
+                    AttributedRow("Carrier Allocation", "Three UK / Hutchison 3G MVNO Range")
+                }
+            }
+            1 -> {
+                OsintCardContainer(title = "🏢 UK CORPORATE REGISTRY (COMPANIES HOUSE)", badge = "${report.corporateFilings.size} MATCHES", tone = Tone.ACCENT) {
+                    if (report.corporateFilings.isEmpty()) {
+                        Notice("No UK corporate filings or director contact records list this phone number.", tone = Tone.NEUTRAL)
+                    } else {
+                        report.corporateFilings.forEach { filing ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenUrl(filing.url) }
+                                    .padding(vertical = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Text(text = filing.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text(text = filing.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                        }
+                    }
+                }
+            }
+            2 -> {
+                OsintCardContainer(title = "🌐 OPEN WEB FOOTPRINT (SPAM FILTERED)", badge = "${report.webPages.size} PAGES", tone = Tone.ACCENT) {
+                    if (report.webPages.isEmpty()) {
+                        Notice("No verified web pages mention this number without spam noise.", tone = Tone.NEUTRAL)
+                    } else {
+                        report.webPages.forEach { page ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenUrl(page.url) }
+                                    .padding(vertical = 5.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Text(text = page.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text(text = page.snippet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                                Text(text = page.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                        }
+                    }
+                }
+            }
+            3 -> {
+                OsintCardContainer(title = "👤 DISCOVERED IDENTITIES & MESSAGING", badge = "${report.discoveredNames.size} ENTITIES", tone = Tone.ACCENT) {
+                    if (report.discoveredNames.isNotEmpty()) {
+                        Text("Associated Names", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        report.discoveredNames.forEach { n -> Text("• ${n.value}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold) }
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    Text("Messaging App Linkages", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    report.messagingApps.forEach { app ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenUrl(app.checkUrl) }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(app.platform, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text(text = app.status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Pill(text = "VERIFY ↗", tone = Tone.INFO)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

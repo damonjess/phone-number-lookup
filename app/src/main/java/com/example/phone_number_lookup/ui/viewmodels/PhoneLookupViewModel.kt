@@ -24,8 +24,11 @@ import com.example.phone_number_lookup.SearchRepository
 import com.example.phone_number_lookup.SearchResultItem
 import com.example.phone_number_lookup.SourceHealth
 import com.example.phone_number_lookup.SourceHealthResult
+import com.example.phone_number_lookup.PhoneReputationAndOsintEngine
 import com.example.phone_number_lookup.SpamReport
 import com.example.phone_number_lookup.SpamScanner
+import com.example.phone_number_lookup.UnifiedPhoneIntelligenceReport
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,6 +63,8 @@ data class PhoneLookupUiState(
     val isCheckingHealth: Boolean = false,
     val deepFootprint: DeepPhoneOsintReport? = null,
     val isDeepFootprintScanning: Boolean = false,
+    val isLoading: Boolean = false,
+    val phoneIntelligenceReport: UnifiedPhoneIntelligenceReport? = null,
 )
 
 class PhoneLookupViewModel(application: Application) : AndroidViewModel(application) {
@@ -89,6 +94,23 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         _uiState.update { it.copy(phoneNumberInput = input) }
     }
 
+    fun scanPhoneNumber(rawNumber: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(isLoading = true) }
+
+            val report = runCatching {
+                PhoneReputationAndOsintEngine.analyzePhoneNumber(rawNumber)
+            }.getOrNull()
+
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    phoneIntelligenceReport = report
+                )
+            }
+        }
+    }
+
     fun scanNumber() {
         val input = _uiState.value.phoneNumberInput.trim()
         if (input.isBlank()) return
@@ -113,6 +135,8 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
                 isPhoneInfogaServerRunning = false,
                 deepFootprint = null,
                 isDeepFootprintScanning = true,
+                isLoading = true,
+                phoneIntelligenceReport = null,
             )
         }
         phoneInfogaJob?.cancel()
@@ -255,6 +279,7 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         runPhoneInfogaServer()
+        scanPhoneNumber(normalized)
     }
 
     internal fun buildPrefixFallbackQueries(normalized: String, localFormat: String): List<String> {

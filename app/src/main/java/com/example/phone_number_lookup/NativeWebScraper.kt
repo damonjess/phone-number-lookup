@@ -64,35 +64,48 @@ object NativeWebScraper {
      * so async React/Google Maps results are captured after they finish rendering.
      */
     fun attachInteractiveHarvester(webView: WebView, loadedUrl: String) {
-        // 1. If IntelBase was opened with ?q=..., auto-fill the React input and click submit!
-        if (loadedUrl.contains("intelbase.is", ignoreCase = true) && loadedUrl.contains("q=")) {
-            val queryParam = android.net.Uri.parse(loadedUrl).getQueryParameter("q").orEmpty()
-            if (queryParam.isNotBlank()) {
-                val escaped = queryParam.replace("'", "\\'")
-                val autoFillJs = """
-                    (function() {
-                        var input = document.querySelector('input[placeholder*="email" i], input[type="text"], input[type="search"]');
-                        if (input && !input.value) {
-                            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                            nativeInputValueSetter.call(input, '$escaped');
+        if (loadedUrl.contains("intelbase.is", ignoreCase = true)) {
+            val queryParam = runCatching {
+                android.net.Uri.parse(loadedUrl).getQueryParameter("q").orEmpty()
+            }.getOrDefault("")
+
+            val escaped = queryParam.replace("'", "\\'")
+            val intelBaseJs = """
+                (function() {
+                    // 1. Strip any blur filter or Sign-up modal overlay
+                    var style = document.createElement('style');
+                    style.innerHTML = '* { filter: none !important; -webkit-filter: none !important; backdrop-filter: none !important; } [role="dialog"], [class*="modal" i], [class*="overlay" i] { display: none !important; } body { overflow: auto !important; }';
+                    document.head.appendChild(style);
+
+                    // 2. Fill the search input and click ONLY the search icon button next to the input
+                    if ('$escaped'.length > 3) {
+                        var input = document.querySelector('input[placeholder*="email" i], input[placeholder*="username" i]');
+                        if (input && input.value !== '$escaped') {
+                            var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                            setter.call(input, '$escaped');
                             input.dispatchEvent(new Event('input', { bubbles: true }));
                             input.dispatchEvent(new Event('change', { bubbles: true }));
                             setTimeout(function() {
-                                var btn = input.parentElement ? input.parentElement.querySelector('button') : document.querySelector('button[type="submit"]');
-                                if (btn) btn.click();
-                                else input.form && input.form.submit();
-                            }, 350);
+                                var searchBtn = input.nextElementSibling || (input.parentElement && input.parentElement.querySelector('button'));
+                                if (searchBtn && !searchBtn.innerText.toLowerCase().includes('sign')) {
+                                    searchBtn.click();
+                                } else {
+                                    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                                    if (input.form) input.form. dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                                }
+                            }, 400);
                         }
-                    })();
-                """.trimIndent()
-                mainHandler.postDelayed({
-                    runCatching { webView.evaluateJavascript(autoFillJs, null) }
-                }, 800L)
-            }
+                    }
+                })();
+            """.trimIndent()
+
+            mainHandler.postDelayed({
+                runCatching { webView.evaluateJavascript(intelBaseJs, null) }
+            }, 900L)
         }
 
-        // 2. Capture the rendered DOM at 1.5s, 4.0s, and 7.0s so async SPA cards are harvested
-        listOf(1_500L, 4_000L, 7_000L).forEach { delayMs ->
+        // Capture rendered DOM at 1.8s, 4.2s, and 7.5s so Google Maps Contrib & SPA cards are harvested
+        listOf(1_800L, 4_200L, 7_500L).forEach { delayMs ->
             mainHandler.postDelayed({
                 runCatching {
                     webView.evaluateJavascript(

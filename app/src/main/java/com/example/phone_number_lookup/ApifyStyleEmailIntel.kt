@@ -64,9 +64,13 @@ object ApifyStyleEmailIntel {
         val localPart = cleanEmail.substringBefore('@')
         handleOrigins.putIfAbsent(localPart, "Email local-part ($localPart@)")
 
-        // 1. Direct email account findings (_type = "email_account", email_link_verified = true)
+        // 1. Direct email account findings (including Curated probes AND Holehe/Blackbird upstream matches)
         registrations
-            .filter { it.verificationStatus == "Registered response" }
+            .filter {
+                it.verificationStatus.contains("Registered", ignoreCase = true) ||
+                    it.verificationStatus.contains("Upstream match", ignoreCase = true) ||
+                    it.verificationStatus.contains("Matched", ignoreCase = true)
+            }
             .forEach { reg ->
                 val key = reg.site.lowercase().trim()
                 val url = OsintDatasets.cleanProfileUrl(reg.site, reg.profileUrl)
@@ -79,12 +83,37 @@ object ApifyStyleEmailIntel {
                     type = "email_account",
                     username = null,
                     profileUrl = url,
-                    handleOrigin = "Direct email probe",
+                    handleOrigin = if (reg.source.isNotBlank()) "Direct email probe (${reg.source})" else "Direct email probe",
                     emailLinkVerified = true
                 )
             }
 
-        // 2. Attribution direct profile links (Gravatar, GitHub commit author, Keybase, Duolingo)
+        // 1B. Promote known service breaches (e.g. MyFitnessPal, Strava, Canva, Adobe, Facebook) into Registrations
+        breachReport?.details?.forEach { breach ->
+            val bName = breach.name.trim()
+            val key = bName.lowercase()
+            val isGenericDump = key.contains("comb") ||
+                key.contains("naz") ||
+                key.contains("alien") ||
+                key.contains("stealer") ||
+                key.contains("collection") ||
+                key.contains("pastebin")
+            if (bName.isNotBlank() && !isGenericDump && !rows.containsKey(key)) {
+                rows[key] = OsintChannelRow(
+                    email = cleanEmail,
+                    channel = bName,
+                    category = "breach-confirmed account",
+                    found = true,
+                    type = "email_account",
+                    username = null,
+                    profileUrl = breach.domain?.takeIf { it.isNotBlank() }?.let { "https://$it" },
+                    handleOrigin = "Confirmed via historical breach record (${breach.breachDate ?: "verified"})",
+                    emailLinkVerified = true
+                )
+            }
+        }
+
+        // 2. Attribution direct profile links (Gravatar, GitHub, Keybase, Duolingo, Google, Facebook, Instagram, LinkedIn)
         attribution?.profileLinks?.forEach { link ->
             val key = link.platform.lowercase().trim()
             val existing = rows[key]
@@ -93,7 +122,10 @@ object ApifyStyleEmailIntel {
                 link.platform.contains("GitHub", true) ||
                 link.platform.contains("Duolingo", true) ||
                 link.platform.contains("Keybase", true) ||
-                link.platform.contains("Google", true)
+                link.platform.contains("Google", true) ||
+                link.platform.contains("Facebook", true) ||
+                link.platform.contains("Instagram", true) ||
+                link.platform.contains("LinkedIn", true)
 
             if (existing == null || existing.username == null) {
                 rows[key] = OsintChannelRow(
@@ -102,7 +134,7 @@ object ApifyStyleEmailIntel {
                     category = "identity",
                     found = true,
                     type = if (isDirectEmail) "email_account" else "handle_presence",
-                    username = link.handle.takeIf { it.isNotBlank() },
+                    username = link.handle.takeIf { it.isNotBlank() && !it.contains(' ') },
                     profileUrl = cleanUrl.takeIf { it.startsWith("http") },
                     handleOrigin = if (isDirectEmail) "Direct email identity resolution"
                     else "Handle follow-up (${handleOrigins[link.handle.removePrefix("@").lowercase()] ?: "verified handle"})",
