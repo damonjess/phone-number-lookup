@@ -479,6 +479,22 @@ fun UsernameAndEmailOsintScreen(
                         onOpenUrl = { openUrl(context, it) },
                         modifier = Modifier.padding(vertical = 6.dp)
                     )
+                    com.example.phone_number_lookup.ui.components.IntelBaseLocationsCard(
+                        attribution = uiState.attributionReport,
+                        onOpenUrl = { openUrl(context, it) },
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                    com.example.phone_number_lookup.ui.components.IntelBaseActivityTimelineCard(
+                        attribution = uiState.attributionReport,
+                        breachReport = uiState.breachReport,
+                        enrichedProfiles = uiState.enrichedProfiles,
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                    com.example.phone_number_lookup.ui.components.IntelBaseGoogleProfileCard(
+                        google = uiState.attributionReport?.googleMetadata ?: uiState.googleMetadata,
+                        onOpenUrl = { openUrl(context, it) },
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     EmailIdentitySummarySection(
                         attribution = uiState.attributionReport,

@@ -74,11 +74,10 @@ object FreePublicRecordsAndBreachIntel {
                 } ?: ExposedPiiSummary()
             }
 
-            // 2. Real-Time Public Records (UK Companies House, The Gazette, UK Case Law, GLEIF)
-            val recordsQuery = candidateName ?: username ?: email?.substringBefore('@')
+            // Only query corporate registries if a genuine multi-word candidate name is present
             val companiesHouseDef = async {
-                if (!recordsQuery.isNullOrBlank() && recordsQuery.length >= 4) {
-                    withTimeoutOrNull(10_000L) { searchUkCompaniesHouseOfficers(recordsQuery) }.orEmpty()
+                if (!candidateName.isNullOrBlank() && candidateName.length >= 4) {
+                    withTimeoutOrNull(10_000L) { searchUkCompaniesHouseOfficers(candidateName) }.orEmpty()
                 } else emptyList()
             }
             val gazetteDef = async {
@@ -92,8 +91,8 @@ object FreePublicRecordsAndBreachIntel {
                 } else emptyList()
             }
             val gleifDef = async {
-                if (!recordsQuery.isNullOrBlank() && recordsQuery.length >= 4) {
-                    withTimeoutOrNull(8_000L) { searchGleifCorporateRegistry(recordsQuery) }.orEmpty()
+                if (!candidateName.isNullOrBlank() && candidateName.length >= 4) {
+                    withTimeoutOrNull(8_000L) { searchGleifCorporateRegistry(candidateName) }.orEmpty()
                 } else emptyList()
             }
 
@@ -470,9 +469,10 @@ object FreePublicRecordsAndBreachIntel {
                     aBase.length >= 4 && aBase == bBase ->
                         matches += AliasCorrelationMatch(a, b, "Shared base pseudonym \"$aBase\" across handles", 88)
                     aBase.length >= 4 && bBase.length >= 4 && (aBase.contains(bBase) || bBase.contains(aBase)) ->
-                        matches += AliasCorrelationMatch(a, b, "Overlapping root token (${minOf(aBase, bBase, compareBy { it.length })})", 80)
-                    !aDigits.isNullOrBlank() && aDigits == bDigits && aDigits.length >= 2 ->
-                        matches += AliasCorrelationMatch(a, b, "Shared numeric/year suffix \"$aDigits\"", 75)
+                        matches += AliasCorrelationMatch(a, b, "Overlapping root token", 80)
+                    !aDigits.isNullOrBlank() && aDigits == bDigits && aDigits.length >= 2 &&
+                        aBase.length >= 3 && bBase.length >= 3 && aBase.take(3) == bBase.take(3) ->
+                        matches += AliasCorrelationMatch(a, b, "Shared prefix & numeric suffix \"$aDigits\"", 75)
                 }
             }
         }

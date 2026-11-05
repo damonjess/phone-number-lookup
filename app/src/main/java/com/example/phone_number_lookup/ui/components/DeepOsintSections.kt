@@ -20,10 +20,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,10 +44,12 @@ import com.example.phone_number_lookup.DirectoryReportSummary
 import com.example.phone_number_lookup.EmailAttributionReport
 import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EnrichedProfileCard
+import com.example.phone_number_lookup.GoogleAccountMetadata
 import com.example.phone_number_lookup.GoogleCommentReport
 import com.example.phone_number_lookup.PhoneAccountHit
 import com.example.phone_number_lookup.ScrapedWebReport
 import com.example.phone_number_lookup.SearchResultItem
+import com.example.phone_number_lookup.TimelineEvent
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -594,9 +602,11 @@ private fun WebMentionItemRow(item: SearchResultItem, onClick: () -> Unit) {
         }
         Text(
             text = item.url,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline,
-            maxLines = 1,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
     }
@@ -704,9 +714,12 @@ private fun CommentHitBlock(
 
         Text(
             text = hit.url,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            softWrap = true
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -746,7 +759,7 @@ fun ApifyStyleEmailSummaryCard(
                 modifier = Modifier.weight(1f)
             )
             StatTile(
-                value = "${summary.breachRiskScore}/100",
+                value = "${summary.breachRiskScore}%",
                 label = "BREACH RISK",
                 tone = if (summary.breachRiskScore >= 40) Tone.DANGER else Tone.INFO,
                 modifier = Modifier.weight(1f)
@@ -917,6 +930,541 @@ private fun OsintCardContainer(
                 Pill(badge, tone = tone)
             }
             content()
+        }
+    }
+}
+
+/**
+ * 1. IntelBase-style Locations Card:
+ * Displays all resolved cities + Google Maps review street addresses with right-aligned source badges.
+ */
+@Composable
+fun IntelBaseLocationsCard(
+    attribution: EmailAttributionReport?,
+    onOpenUrl: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val allLocations = remember(attribution) {
+        val list = mutableListOf<AttributedValue>()
+        attribution?.locationsFound?.forEach { loc ->
+            val cleanSource = when {
+                loc.source.contains("LinkedIn", true) -> "LinkedIn"
+                loc.source.contains("Strava", true) -> "Strava"
+                loc.source.contains("GitHub", true) -> "GitHub"
+                loc.source.contains("Google", true) -> "Google"
+                else -> loc.source
+            }
+            list += AttributedValue(loc.value, cleanSource)
+        }
+        attribution?.googleMetadata?.reviews?.forEach { rev ->
+            if (rev.address.isNotBlank() && rev.address != "Google Maps") {
+                val fullAddr = if (rev.address.contains("UK", true) || rev.address.contains("United Kingdom", true)) {
+                    rev.address
+                } else {
+                    "${rev.address}, United Kingdom"
+                }
+                list += AttributedValue(fullAddr, "Google")
+            }
+        }
+        list.distinctBy { it.value.lowercase().trim() }
+    }
+
+    if (allLocations.isEmpty()) return
+
+    var showAll by remember { mutableStateOf(false) }
+    val visible = if (showAll) allLocations else allLocations.take(6)
+
+    OsintCardContainer(
+        title = "LOCATIONS",
+        badge = "${allLocations.size} FOUND",
+        tone = Tone.ACCENT,
+        modifier = modifier
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            visible.forEach { loc ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onOpenUrl("https://www.google.com/maps/search/?api=1&query=${android.net.Uri.encode(loc.value)}")
+                        }
+                        .padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = loc.value,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        softWrap = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Pill(
+                        text = loc.source,
+                        tone = if (loc.source == "Google") Tone.ACCENT else Tone.INFO
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+            }
+
+            if (allLocations.size > 6) {
+                Text(
+                    text = if (showAll) "Show less" else "Show ${allLocations.size - 6} more",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clickable { showAll = !showAll }
+                        .padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 2. IntelBase-style Activity Timeline Card:
+ * Displays chronological activity pills (Google Last Seen, GitHub Updated/Created, Strava, MyFitnessPal, Breaches).
+ */
+@Composable
+fun IntelBaseActivityTimelineCard(
+    attribution: EmailAttributionReport?,
+    breachReport: BreachReport?,
+    enrichedProfiles: List<EnrichedProfileCard> = emptyList(),
+    modifier: Modifier = Modifier
+) {
+    val events = remember(attribution, breachReport, enrichedProfiles) {
+        val list = mutableListOf<TimelineEvent>()
+        attribution?.googleMetadata?.lastUpdated?.takeIf { it.isNotBlank() }?.let { date ->
+            list += TimelineEvent(date, "Last Seen Date", "Google")
+        }
+        attribution?.timeline?.forEach { ev ->
+            list += ev
+        }
+        enrichedProfiles.forEach { card ->
+            card.createdDate?.takeIf { it.isNotBlank() }?.let { created ->
+                list += TimelineEvent(created, "Created At", card.platform)
+            }
+        }
+        breachReport?.details?.forEach { b ->
+            b.breachDate?.takeIf { it.isNotBlank() }?.let { d ->
+                list += TimelineEvent(d, b.name, "Data Breach")
+            }
+        }
+        list.distinctBy { "${it.date}|${it.source.lowercase()}" }
+            .sortedByDescending { it.date }
+    }
+
+    if (events.isEmpty()) return
+
+    var expanded by remember { mutableStateOf(false) }
+    val shown = if (expanded) events else events.take(8)
+
+    OsintCardContainer(
+        title = "ACTIVITY TIMELINE",
+        badge = "${events.size} EVENTS",
+        tone = Tone.INFO,
+        modifier = modifier
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            shown.forEach { ev ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = ev.date,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "${ev.label} · ${ev.source}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+            }
+            if (events.size > 8) {
+                Text(
+                    text = if (expanded) "Hide full timeline" else "View all (${events.size})",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { expanded = !expanded }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 3. IntelBase-style Google Profile, Star-Rated Reviews, Photo Coordinates & Centroid Estimate Card.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun IntelBaseGoogleProfileCard(
+    google: GoogleAccountMetadata?,
+    onOpenUrl: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (google == null) return
+
+    var showAllReviews by remember { mutableStateOf(false) }
+    val reviewsToShow = if (showAllReviews) google.reviews else google.reviews.take(4)
+
+    OsintCardContainer(
+        title = "GOOGLE PROFILE & MAPS FOOTPRINT",
+        badge = if (google.gaiaId != null) "VERIFIED GAIA" else "GOOGLE OSINT",
+        tone = Tone.ACCENT,
+        modifier = modifier
+    ) {
+        // Profile Header (Full Name + Avatar + Profile URL + Gaia ID + Enterprise + Last Seen)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                google.fullName?.let { name ->
+                    Text(
+                        text = "Full name",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                val profileUrl = google.profileUrl
+                    ?: google.gaiaId?.let { "https://www.google.com/maps/contrib/$it" }
+                if (profileUrl != null) {
+                    Text(
+                        text = "Profile URL",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = profileUrl,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { onOpenUrl(profileUrl) }
+                    )
+                }
+            }
+
+            if (!google.avatarUrl.isNullOrBlank()) {
+                Spacer(Modifier.width(12.dp))
+                AsyncImage(
+                    model = google.avatarUrl,
+                    contentDescription = google.fullName ?: "Google Avatar",
+                    modifier = Modifier
+                        .size(76.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { onOpenUrl(google.avatarUrl) },
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            google.gaiaId?.let { id ->
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("ID", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(id, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Enterprise User", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (google.enterpriseUser) "Yes" else "No", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        google.lastUpdated?.let { lastSeen ->
+            Spacer(Modifier.height(4.dp))
+            Text("Last Seen Date", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(lastSeen, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        }
+
+        if (google.activeGoogleApps.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Text("Active Google Apps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                google.activeGoogleApps.forEach { appName ->
+                    Pill(text = appName, tone = Tone.ACCENT)
+                }
+            }
+        }
+
+        // Maps Activity Stat Pills
+        Spacer(Modifier.height(8.dp))
+        Text("Maps Activity", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val revCount = google.totalReviewsCount ?: google.reviews.count { it.commentText.isNotBlank() }
+            val ratCount = google.totalRatingsCount ?: google.reviews.size
+            val phoCount = google.totalPhotosCount ?: google.photos.size
+            Pill(text = "$revCount Reviews", tone = Tone.INFO)
+            Pill(text = "$ratCount Ratings", tone = Tone.ACCENT)
+            Pill(text = "$phoCount Photos", tone = Tone.INFO)
+            google.totalAnswersCount?.let { Pill(text = "$it Answers", tone = Tone.NEUTRAL) }
+            google.totalQaCount?.let { Pill(text = "$it Q&A", tone = Tone.NEUTRAL) }
+        }
+
+        // Star-Rated Reviews List
+        if (google.reviews.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Reviews · showing ${reviewsToShow.size} of ${google.reviews.size}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (google.reviews.size > 4) {
+                    Text(
+                        text = if (showAllReviews) "Show less" else "View all (${google.reviews.size})",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { showAllReviews = !showAllReviews }
+                    )
+                }
+            }
+
+            reviewsToShow.forEach { rev ->
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val targetUrl = rev.reviewUrl.ifBlank {
+                                "https://www.google.com/maps/search/?api=1&query=${android.net.Uri.encode("${rev.title} ${rev.address}")}"
+                            }
+                            onOpenUrl(targetUrl)
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = rev.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        val starsStr = "★".repeat(rev.stars.coerceIn(1, 5)) + "☆".repeat((5 - rev.stars).coerceIn(0, 4))
+                        Text(
+                            text = starsStr,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = androidx.compose.ui.graphics.Color(0xFFF59E0B)
+                        )
+                    }
+
+                    if (rev.address.isNotBlank()) {
+                        Text(
+                            text = rev.address,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (rev.commentText.isNotBlank()) {
+                        Text(
+                            text = rev.commentText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = rev.dateLabel.ifBlank { rev.timestampIso },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (rev.latitude != null && rev.longitude != null) {
+                            Text(
+                                text = "◎ ${rev.latitude}, ${rev.longitude}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+            }
+        }
+
+        // Contributed Photos with Coordinates
+        if (google.photos.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Contributed Photos (${google.photos.size})",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(6.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                google.photos.take(8).forEach { photo ->
+                    Column(
+                        modifier = Modifier
+                            .width(105.dp)
+                            .clickable { onOpenUrl(photo.pageUrl.ifBlank { photo.url }) }
+                    ) {
+                        AsyncImage(
+                            model = photo.url,
+                            contentDescription = photo.placeName,
+                            modifier = Modifier
+                                .size(105.dp)
+                                .clip(RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Text(
+                            text = photo.placeName,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (photo.latitude != null && photo.longitude != null) {
+                            Text(
+                                text = "${photo.latitude}, ${photo.longitude}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Location Estimate (Centroid & Spread Radius in km)
+        google.locationEstimate?.let { est ->
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Location Estimate · from ${est.totalCoordinates} coordinates",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Open in Maps ↗",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onOpenUrl(est.mapsUrl) }
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "◎ Centroid: ${est.centroidLat}, ${est.centroidLng}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = "✥ Spread: ${est.spreadKm}km radius",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "📍 ${est.reviewCoordCount} from reviews, ${est.photoCoordCount} from photos",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (google.reviews.isEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Notice(
+                text = "Google Maps hid contributor reviews from unauthenticated background HTTP. Tap below to load live in the In-App Browser and auto-capture reviews & coordinates.",
+                tone = Tone.INFO
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AppButton(
+                    text = "Sync via IntelBase (In-App)",
+                    onClick = {
+                        onOpenUrl("https://intelbase.is/?q=${android.net.Uri.encode(google.email)}")
+                    },
+                    subdued = false,
+                    modifier = Modifier.weight(1f)
+                )
+                AppButton(
+                    text = "Open Maps Contrib",
+                    onClick = {
+                        val validName = google.fullName?.takeUnless {
+                            it.contains("IntelBase", ignoreCase = true) ||
+                                it.contains("Google", ignoreCase = true)
+                        }
+                        val url = when {
+                            !google.gaiaId.isNullOrBlank() ->
+                                "https://www.google.com/maps/contrib/${google.gaiaId}/reviews"
+                            !google.profileUrl.isNullOrBlank() ->
+                                google.profileUrl
+                            !validName.isNullOrBlank() ->
+                                "https://www.google.com/search?q=\"${android.net.Uri.encode(validName)}\"+\"Local+Guide\"+OR+\"Google+Maps\""
+                            else ->
+                                "https://www.google.com/search?q=\"${android.net.Uri.encode(google.email)}\""
+                        }
+                        onOpenUrl(url)
+                    },
+                    subdued = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 }

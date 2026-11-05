@@ -60,6 +60,54 @@ object NativeWebScraper {
     }
 
     /**
+     * Attaches auto-fill for OSINT portals (IntelBase/Epieos) and multi-stage DOM harvesting
+     * so async React/Google Maps results are captured after they finish rendering.
+     */
+    fun attachInteractiveHarvester(webView: WebView, loadedUrl: String) {
+        // 1. If IntelBase was opened with ?q=..., auto-fill the React input and click submit!
+        if (loadedUrl.contains("intelbase.is", ignoreCase = true) && loadedUrl.contains("q=")) {
+            val queryParam = android.net.Uri.parse(loadedUrl).getQueryParameter("q").orEmpty()
+            if (queryParam.isNotBlank()) {
+                val escaped = queryParam.replace("'", "\\'")
+                val autoFillJs = """
+                    (function() {
+                        var input = document.querySelector('input[placeholder*="email" i], input[type="text"], input[type="search"]');
+                        if (input && !input.value) {
+                            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                            nativeInputValueSetter.call(input, '$escaped');
+                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                            setTimeout(function() {
+                                var btn = input.parentElement ? input.parentElement.querySelector('button') : document.querySelector('button[type="submit"]');
+                                if (btn) btn.click();
+                                else input.form && input.form.submit();
+                            }, 350);
+                        }
+                    })();
+                """.trimIndent()
+                mainHandler.postDelayed({
+                    runCatching { webView.evaluateJavascript(autoFillJs, null) }
+                }, 800L)
+            }
+        }
+
+        // 2. Capture the rendered DOM at 1.5s, 4.0s, and 7.0s so async SPA cards are harvested
+        listOf(1_500L, 4_000L, 7_000L).forEach { delayMs ->
+            mainHandler.postDelayed({
+                runCatching {
+                    webView.evaluateJavascript(
+                        "(function() { return document.documentElement ? document.documentElement.outerHTML : ''; })();"
+                    ) { raw ->
+                        decodeJsString(raw)?.let { html ->
+                            onInAppPageHtmlCaptured(webView.url ?: loadedUrl, html)
+                        }
+                    }
+                }
+            }, delayMs)
+        }
+    }
+
+    /**
      * Loads [url] in an offscreen Chromium WebView using a Desktop Chrome User-Agent
      * (so Google serves standard `<h3>` result blocks) with a strict 4.5s watchdog.
      */

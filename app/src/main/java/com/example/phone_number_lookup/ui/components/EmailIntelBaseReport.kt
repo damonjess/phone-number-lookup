@@ -1104,10 +1104,14 @@ private fun IntelBaseDetailRow(label: String, value: String) {
 }
 
 private fun formatIntelBaseDate(raw: String): String {
-    val clean = raw.trim().take(10)
-    return runCatching {
-        val sdfIn = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        val sdfOut = SimpleDateFormat("d MMM yyyy", Locale.US)
-        sdfOut.format(sdfIn.parse(clean) as Date)
-    }.getOrNull() ?: raw
+    val clean = raw.trim()
+    if (Regex("""^\d{4}-\d{2}-\d{2}""").containsMatchIn(clean)) {
+        val datePart = clean.take(10)
+        return runCatching {
+            val sdfIn = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val sdfOut = SimpleDateFormat("d MMM yyyy", Locale.US)
+            sdfOut.format(sdfIn.parse(datePart) as Date)
+        }.getOrDefault(raw)
+    }
+    return raw
 }

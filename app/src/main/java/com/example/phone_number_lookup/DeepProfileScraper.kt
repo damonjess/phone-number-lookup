@@ -132,6 +132,12 @@ object DeepProfileScraper {
                     async {
                         htmlSemaphore.withPermit {
                             scrapeHtmlProfileMetadata(hit.site, clean, hit.profileUrl)
+                                ?: EnrichedProfileCard(
+                                    platform = hit.site,
+                                    handle = clean,
+                                    profileUrl = hit.profileUrl,
+                                    bio = "Confirmed public profile on ${hit.site} (${hit.category})"
+                                )
                         }
                     }
                 }

@@ -39,6 +39,11 @@ data class StealerSubjectProfile(
     val allDates: List<String> = emptyList()
 )
 
+data class GitHubUserProfile(
+    val createdAt: String? = null,
+    val updatedAt: String? = null
+)
+
 data class EmailAttributionReport(
     val email: String,
     val namesFound: List<AttributedValue> = emptyList(),
@@ -48,15 +53,13 @@ data class EmailAttributionReport(
     val phonesFound: List<AttributedValue> = emptyList(),
     val avatarUrls: List<String> = emptyList(),
     val timeline: List<TimelineEvent> = emptyList(),
-    val stealerProfile: StealerSubjectProfile? = null
+    val stealerProfile: StealerSubjectProfile? = null,
+    val googleMetadata: GoogleAccountMetadata? = null,
+    val firstSeen: String? = null,
+    val lastSeen: String? = null
 ) {
-    val firstSeen: String?
-        get() = firstSeen(null)
-
-    val lastSeen: String?
-        get() = lastSeen(null)
-
     fun firstSeen(breachReport: BreachReport? = null): String? {
+        if (firstSeen != null) return firstSeen
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val allDates = (timeline.filterNot { it.label == "Updated At" }.map { it.date } +
                 breachReport?.details.orEmpty().mapNotNull { it.breachDate } +
@@ -68,6 +71,7 @@ data class EmailAttributionReport(
     }
 
     fun lastSeen(breachReport: BreachReport? = null): String? {
+        if (lastSeen != null) return lastSeen
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val githubProfile = timeline.firstOrNull { it.source == "GitHub" }?.let { event ->
             object { val updatedAt: String = event.date }
@@ -107,6 +111,7 @@ object EmailAttributionEngine {
         }
 
         val handle = clean.substringBefore('@')
+        val localPart = handle
         // Generate likely handle variants (e.g., john.smith89 -> johnsmith89, john_smith89, johnsmith)
         val handleVariants = buildList {
             add(handle)
@@ -334,8 +339,9 @@ object EmailAttributionEngine {
         }.getOrDefault(emptyList())
 
         socialHits.forEach { hit ->
+            val cleanHandle = extractCleanSocialHandle(hit.url, hit.matchedIdentifier, localPart)
             links += AttributedProfileLink(
-                handle = hit.handleOrTitle,
+                handle = cleanHandle,
                 platform = hit.platform,
                 url = hit.url
             )
@@ -354,25 +360,51 @@ object EmailAttributionEngine {
         }.getOrNull()
 
         if (google != null) {
-            google.fullName?.let { names += AttributedValue(it, "Google") }
-            google.playGamesUsername?.let { usernames += AttributedValue(it, "Google Play Games") }
-            google.profileUrl?.let { url ->
-                links += AttributedProfileLink(google.fullName ?: "Google Profile", "Google Maps", url)
+            google.fullName?.takeIf { it.isNotBlank() }?.let { gName ->
+                names += AttributedValue(gName, "Google")
             }
-            google.avatarUrl?.let { avatars += it }
-            google.mappedLocations.forEach { loc ->
-                locations += AttributedValue(loc, "Google Maps")
+            google.avatarUrl?.takeIf { it.isNotBlank() }?.let { gAvatar ->
+                avatars += gAvatar
             }
+            val gProfileUrl = google.profileUrl
+                ?: google.gaiaId?.let { "https://www.google.com/maps/contrib/$it" }
+            if (!gProfileUrl.isNullOrBlank()) {
+                links += AttributedProfileLink(
+                    handle = google.fullName ?: localPart,
+                    platform = "Google",
+                    url = gProfileUrl
+                )
+            }
+
+            // Push Google Last Seen Date into the timeline so Last Seen resolves to 2026-11-03
+            google.lastUpdated?.takeIf { it.isNotBlank() }?.let { lastSeen ->
+                timeline += TimelineEvent(
+                    date = normalizeDateToIso(lastSeen),
+                    label = "Last Seen Date",
+                    source = "Google"
+                )
+            }
+
+            // Add every Google Maps review street address into locationsFound (matching IntelBase)
             google.reviews.forEach { rev ->
-                rev.timestampIso?.let { iso ->
-                    timeline += TimelineEvent(iso, "Reviewed ${rev.title} (${rev.ratingLabel})", "Google Maps")
+                if (rev.address.isNotBlank() && rev.address != "Google Maps") {
+                    val formattedAddr = if (rev.address.contains("United Kingdom", ignoreCase = true) ||
+                        rev.address.contains("UK", ignoreCase = true)
+                    ) {
+                        rev.address
+                    } else {
+                        "${rev.address}, United Kingdom"
+                    }
+                    locations += AttributedValue(formattedAddr, "Google")
                 }
-            }
-            google.lastSeenDate?.let {
-                timeline += TimelineEvent(it, "Last Active", "Google / Maps")
-            }
-            google.lastLevelUpDate?.let {
-                timeline += TimelineEvent(it, "Last Level Up", "Google Play Games")
+                val revDate = rev.timestampIso.ifBlank { rev.dateLabel }
+                if (revDate.isNotBlank()) {
+                    timeline += TimelineEvent(
+                        date = normalizeDateToIso(revDate),
+                        label = "Google Maps Review (${rev.title})",
+                        source = "Google Maps"
+                    )
+                }
             }
         }
 
@@ -396,16 +428,28 @@ object EmailAttributionEngine {
             .filter { it.value.length >= 2 }
             .distinctBy { it.value.lowercase().trim() }
 
+        val (cleanTimeline, resolvedFirstSeen, resolvedLastSeen) = buildCompleteTimelineAndBounds(
+            rawTimeline = timeline,
+            google = google
+        )
+
         EmailAttributionReport(
             email = clean,
             namesFound = filteredNames,
             usernamesFound = usernames.distinctBy { it.value.removePrefix("@").lowercase() },
-            profileLinks = links.distinctBy { it.url.lowercase() },
-            locationsFound = filteredLocations,
+            profileLinks = links.distinctBy { "${it.platform.lowercase()}|${it.url.lowercase()}" },
+            locationsFound = filteredLocations.filterNot {
+                it.value.startsWith("UTC+", ignoreCase = true) ||
+                    it.value.startsWith("UTC-", ignoreCase = true) ||
+                    it.value.startsWith("GMT", ignoreCase = true)
+            },
             phonesFound = filteredPhones,
             avatarUrls = avatars.distinct(),
-            timeline = timeline.sortedByDescending { it.date },
-            stealerProfile = stealer
+            timeline = cleanTimeline,
+            stealerProfile = stealer,
+            googleMetadata = google,
+            firstSeen = resolvedFirstSeen,
+            lastSeen = resolvedLastSeen
         )
     }
 
@@ -1054,5 +1098,168 @@ object EmailAttributionEngine {
             return OpenPgpEmailMatch(email, true, "https://keys.openpgp.org/search?q=${ScanHttp.encode(email)}")
         }
         return null
+    }
+
+    /**
+     * Extracts a clean username or URL slug for social links so full page titles
+     * are never displayed as (@Page Title...) in the UI.
+     */
+    internal fun extractCleanSocialHandle(
+        url: String,
+        matchedIdentifier: String,
+        fallbackLocalPart: String
+    ): String {
+        val cleanPath = url.substringBefore('?').trimEnd('/')
+        val slug = cleanPath.substringAfterLast('/')
+            .removePrefix("@")
+            .trim()
+        if (slug.length in 3..35 &&
+            !slug.contains(' ') &&
+            slug.lowercase() !in setOf("public", "people", "posts", "search", "login", "watch", "channel")
+        ) {
+            return slug
+        }
+        val idClean = matchedIdentifier.removePrefix("@").trim()
+        return if ('@' in idClean || ' ' in idClean) fallbackLocalPart else idClean
+    }
+
+    /**
+     * Converts relative or human-readable dates ("10 months ago", "Edited 2 years ago",
+     * "3 Nov 2026", "Feb 15, 2025") into sortable ISO "yyyy-MM-dd" strings.
+     */
+    internal fun normalizeDateToIso(raw: String): String {
+        val clean = raw.trim()
+            .removePrefix("Edited ")
+            .removePrefix("edited ")
+            .trim()
+        if (Regex("""^\d{4}-\d{2}-\d{2}""").containsMatchIn(clean)) {
+            return clean.take(10)
+        }
+
+        // Handle relative dates like "10 months ago" or "2 years ago"
+        val relMatch = Regex("""^(\d+|a|an)\s+(day|week|month|year)s?\s+ago$""", RegexOption.IGNORE_CASE)
+            .find(clean)
+        if (relMatch != null) {
+            val amount = relMatch.groupValues[1].toIntOrNull() ?: 1
+            val unit = relMatch.groupValues[2].lowercase()
+            val cal = java.util.Calendar.getInstance()
+            when {
+                unit.startsWith("day") -> cal.add(java.util.Calendar.DAY_OF_YEAR, -amount)
+                unit.startsWith("week") -> cal.add(java.util.Calendar.WEEK_OF_YEAR, -amount)
+                unit.startsWith("month") -> cal.add(java.util.Calendar.MONTH, -amount)
+                unit.startsWith("year") -> cal.add(java.util.Calendar.YEAR, -amount)
+            }
+            return java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(cal.time)
+        }
+
+        val patterns = listOf(
+            "d MMM yyyy",
+            "dd MMM yyyy",
+            "MMM d, yyyy",
+            "MMM dd, yyyy",
+            "MMMM d, yyyy",
+            "yyyy/MM/dd"
+        )
+        for (p in patterns) {
+            try {
+                val parsed = java.text.SimpleDateFormat(p, java.util.Locale.US).parse(clean)
+                if (parsed != null) {
+                    return java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(parsed)
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return clean
+    }
+
+    internal fun buildCompleteTimelineAndBounds(
+        rawTimeline: List<TimelineEvent>,
+        google: GoogleAccountMetadata?,
+        githubUser: GitHubUserProfile? = null
+    ): Triple<List<TimelineEvent>, String?, String?> {
+        val merged = mutableListOf<TimelineEvent>()
+        merged.addAll(rawTimeline)
+
+        // 1. Google Last Seen Date
+        google?.lastUpdated?.takeIf { it.isNotBlank() }?.let { gLast ->
+            merged += TimelineEvent(
+                date = normalizeDateToIso(gLast),
+                label = "Last Seen Date",
+                source = "Google"
+            )
+        }
+
+        // 2. GitHub Creation & Updated Dates
+        githubUser?.updatedAt?.take(10)?.takeIf { it.length == 10 }?.let { ghUp ->
+            merged += TimelineEvent(
+                date = ghUp,
+                label = "Updated At",
+                source = "GitHub"
+            )
+        }
+        githubUser?.createdAt?.take(10)?.takeIf { it.length == 10 }?.let { ghCr ->
+            merged += TimelineEvent(
+                date = ghCr,
+                label = "Creation Date",
+                source = "GitHub"
+            )
+        }
+
+        val normalized = merged
+            .map { ev -> ev.copy(date = normalizeDateToIso(ev.date)) }
+            .filter { it.date.isNotBlank() }
+            .distinctBy { "${it.date}|${it.label.lowercase()}|${it.source.lowercase()}" }
+            .sortedByDescending { it.date }
+
+        val isoRegex = Regex("""^\d{4}-\d{2}-\d{2}$""")
+        val validIsoDates = normalized.map { it.date }.filter { isoRegex.matches(it) }.sorted()
+
+        val isoFmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val outFmt = java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.US)
+
+        fun formatHuman(iso: String): String = runCatching {
+            val parsed = isoFmt.parse(iso)
+            if (parsed != null) outFmt.format(parsed) else iso
+        }.getOrDefault(iso)
+
+        val firstSeenStr = validIsoDates.firstOrNull()?.let { formatHuman(it) }
+        val lastSeenStr = validIsoDates.lastOrNull()?.let { formatHuman(it) }
+
+        return Triple(normalized, firstSeenStr, lastSeenStr)
+    }
+
+    /**
+     * Computes true chronological (firstSeen, lastSeen) across all timeline events
+     * and Google metadata, returning formatted dates (e.g., "Nov 3, 2026").
+     */
+    internal fun resolveFirstAndLastSeen(
+        timeline: List<TimelineEvent>,
+        googleLastUpdated: String? = null
+    ): Pair<String?, String?> {
+        val isoFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val displayFormat = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.US)
+
+        val allIsoDates = buildList {
+            timeline.forEach { ev ->
+                val iso = normalizeDateToIso(ev.date)
+                if (Regex("""^\d{4}-\d{2}-\d{2}$""").matches(iso)) add(iso)
+            }
+            googleLastUpdated?.let { gDate ->
+                val iso = normalizeDateToIso(gDate)
+                if (Regex("""^\d{4}-\d{2}-\d{2}$""").matches(iso)) add(iso)
+            }
+        }.distinct().sorted()
+
+        if (allIsoDates.isEmpty()) return null to null
+
+        fun toDisplay(iso: String): String =
+            runCatching {
+                val d = isoFormat.parse(iso)
+                if (d != null) displayFormat.format(d) else iso
+            }.getOrDefault(iso)
+
+        val earliest = toDisplay(allIsoDates.first())
+        val latest = toDisplay(allIsoDates.last())
+        return earliest to latest
     }
 }

@@ -148,8 +148,17 @@ private fun InAppOsintBrowserDialog(
     var isLoading by remember(request.url) { mutableStateOf(true) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
+    val dismissAndHarvest = {
+        webViewRef?.evaluateJavascript("(function() { return document.documentElement ? document.documentElement.outerHTML : ''; })();") { raw ->
+            NativeWebScraper.decodeJsString(raw)?.let { html ->
+                NativeWebScraper.onInAppPageHtmlCaptured(webViewRef?.url ?: currentUrl, html)
+            }
+        }
+        onDismiss()
+    }
+
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = dismissAndHarvest,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
@@ -172,7 +181,7 @@ private fun InAppOsintBrowserDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            IconButton(onClick = onDismiss) {
+                            IconButton(onClick = dismissAndHarvest) {
                                 Icon(Icons.Filled.Close, contentDescription = "Close in-app view")
                             }
                             Column(
@@ -260,6 +269,9 @@ private fun InAppOsintBrowserDialog(
                                     isLoading = false
                                     if (!url.isNullOrBlank()) currentUrl = url
                                     CookieManager.getInstance().flush()
+                                    if (view != null && url != null) {
+                                        NativeWebScraper.attachInteractiveHarvester(view, url)
+                                    }
                                 }
                             }
                             loadUrl(request.url)

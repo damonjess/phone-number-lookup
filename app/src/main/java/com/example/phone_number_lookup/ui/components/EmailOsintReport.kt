@@ -572,9 +572,13 @@ private fun EmailProfileSummary.tone(): Tone = when (risk) {
 
 private fun shortDate(raw: String?): String? {
     val value = raw?.takeIf { it.isNotBlank() } ?: return null
+    if (Regex("""^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}$""").matches(value) ||
+        Regex("""^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}$""").matches(value)) {
+        return value
+    }
     val day = value.take(10)
     return runCatching {
         SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
             .format(SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(day) as Date)
-    }.getOrNull() ?: day
+    }.getOrNull() ?: value
 }

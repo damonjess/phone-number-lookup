@@ -403,12 +403,17 @@ object GoogleCommentScraper {
     }
 
     internal fun matchesExactTargetIdentifier(hit: CommentHit, exactIds: List<String>): Boolean {
-        val blob = "${hit.title} ${hit.commentSnippet} ${hit.url} ${hit.authorMatch}"
+        // CRITICAL: Never include hit.authorMatch in blob!
+        // Search engines like Bing return unrelated fallback pages when a query has 0 hits;
+        // checking only title + commentSnippet + url guarantees the page itself mentions the target.
+        val actualPageContent = "${hit.title} ${hit.commentSnippet} ${hit.url}"
+        if (isLikelySpamOrNoise(hit.title, hit.commentSnippet, hit.url)) return false
+
         return exactIds.any { id ->
             if (id.isBlank()) false
-            else if ('@' in id) blob.contains(id, ignoreCase = true)
-            else Regex("""(?<![a-zA-Z0-9])${Regex.escape(id)}(?![a-zA-Z0-9])""", RegexOption.IGNORE_CASE)
-                .containsMatchIn(blob)
+            else if ('@' in id) actualPageContent.contains(id, ignoreCase = true)
+            else Regex("""(?<![a-zA-Z0-9_])${Regex.escape(id)}(?![a-zA-Z0-9_])""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(actualPageContent)
         }
     }
 
@@ -1142,19 +1147,37 @@ object GoogleCommentScraper {
         val lowerUrl = url.lowercase()
         val blob = "$title $snippet".lowercase()
 
-        // Drop Chinese Q&A platforms
-        if (lowerUrl.contains("zhihu.com") || lowerUrl.contains("baike.baidu.com") || lowerUrl.contains("zhidao.baidu.com")) {
+        // 1. Drop Bing's generic Facebook People Directory fallbacks ("facebook.com/public/...")
+        if (lowerUrl.contains("facebook.com/public/") ||
+            lowerUrl.contains("facebook.com/directory/") ||
+            blob.contains("view the profiles of people named") ||
+            title.lowercase().endsWith("profiles - facebook")
+        ) {
             return true
         }
 
-        // Drop people-search aggregators that mix unrelated names onto email lookup pages
-        if (lowerUrl.contains("zoominfo.com") || lowerUrl.contains("contactout.com") || 
-            lowerUrl.contains("rocketreach.co") || lowerUrl.contains("theorg.com") ||
-            blob.contains("physician and management consultant") || blob.contains("mckinsey & company")) {
+        // 2. Drop generic Google/PlayStation help threads matched only by the word "gmail.com" or "google.com"
+        if (blob.contains("no-reply@accounts.google.com") ||
+            blob.contains("is this playstation email real") ||
+            lowerUrl.contains("support.google.com")
+        ) {
             return true
         }
 
-        // Drop snippets filled with non-Latin CJK characters
+        // 3. Drop Chinese Q&A platforms and people-search aggregators
+        if (lowerUrl.contains("zhihu.com") ||
+            lowerUrl.contains("baidu.com") ||
+            lowerUrl.contains("zoominfo.com") ||
+            lowerUrl.contains("contactout.com") ||
+            lowerUrl.contains("rocketreach.co") ||
+            lowerUrl.contains("theorg.com") ||
+            lowerUrl.contains("192.com/atoz/") ||
+            lowerUrl.contains("myheritage.com/names/")
+        ) {
+            return true
+        }
+
+        // 4. Drop snippets filled with CJK characters
         val cjkCount = blob.count { it.code in 0x4E00..0x9FFF }
         if (cjkCount > 8) return true
 

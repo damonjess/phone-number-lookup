@@ -32,12 +32,14 @@ import com.example.phone_number_lookup.ScrapedWebReport
 import com.example.phone_number_lookup.SiteIssue
 import com.example.phone_number_lookup.UsernameHit
 import com.example.phone_number_lookup.UsernameScanner
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 data class UsernameAndEmailOsintUiState(
     val subTabState: Int = 0, // 0: Username, 1: Email, 2: Domain & Network
@@ -97,6 +99,55 @@ class UsernameAndEmailOsintViewModel(application: Application) : AndroidViewMode
     val uiState: StateFlow<UsernameAndEmailOsintUiState> = _uiState.asStateFlow()
 
     private val scans = ScanCoordinator(viewModelScope)
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            com.example.phone_number_lookup.NativeWebScraper.lastCapturedHtml.collect { pair ->
+                val (_, html) = pair ?: return@collect
+                val currentAttr = _uiState.value.attributionReport ?: return@collect
+                val parsed = com.example.phone_number_lookup.GoogleMetadataExtractor.parseIntelBaseOrContribDom(
+                    html = html,
+                    targetEmail = currentAttr.email,
+                    expectedName = currentAttr.namesFound.firstOrNull()?.value
+                )
+                if (parsed.gaiaId != null || parsed.reviews.isNotEmpty() || parsed.photos.isNotEmpty()) {
+                    val existingGoogle = currentAttr.googleMetadata
+                        ?: com.example.phone_number_lookup.GoogleAccountMetadata(email = currentAttr.email)
+                    val updatedGoogle = com.example.phone_number_lookup.GoogleMetadataExtractor.finalizeMetadata(
+                        existingGoogle.copy(
+                            gaiaId = parsed.gaiaId ?: existingGoogle.gaiaId,
+                            fullName = parsed.fullName ?: existingGoogle.fullName,
+                            avatarUrl = parsed.avatarUrl ?: existingGoogle.avatarUrl,
+                            profileUrl = parsed.profileUrl ?: existingGoogle.profileUrl,
+                            lastUpdated = parsed.lastSeenDate ?: existingGoogle.lastUpdated,
+                            totalReviewsCount = parsed.reviewsCount ?: existingGoogle.totalReviewsCount,
+                            totalRatingsCount = parsed.ratingsCount ?: existingGoogle.totalRatingsCount,
+                            totalPhotosCount = parsed.photosCount ?: existingGoogle.totalPhotosCount,
+                            totalAnswersCount = parsed.answersCount ?: existingGoogle.totalAnswersCount,
+                            totalQaCount = parsed.qaCount ?: existingGoogle.totalQaCount,
+                            reviews = (parsed.reviews + existingGoogle.reviews).distinctBy { it.title.lowercase() },
+                            photos = (parsed.photos + existingGoogle.photos).distinctBy { it.url.substringBefore('=') }
+                        )
+                    )
+                    val extraLocations = updatedGoogle.reviews.mapNotNull { rev ->
+                        if (rev.address.isNotBlank() && rev.address != "Google Maps") {
+                            com.example.phone_number_lookup.AttributedValue("${rev.address}, United Kingdom", "Google")
+                        } else null
+                    }
+                    _uiState.update { state ->
+                        state.copy(
+                            attributionReport = currentAttr.copy(
+                                googleMetadata = updatedGoogle,
+                                locationsFound = (currentAttr.locationsFound + extraLocations)
+                                    .distinctBy { it.value.lowercase().trim() }
+                            ),
+                            googleMetadata = updatedGoogle
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     fun onSubTabChanged(tabIndex: Int) {
         scans.cancelAll()
