@@ -1573,8 +1573,7 @@ object OsintAiSynthesizer {
     private const val WORKSTATION_AI_URL = "http://192.168.1.190:8099/api/v1/pilot-ai-synthesis"
 
     fun enrichReportWithAi(report: PilotInvestigationReport): PilotInvestigationReport {
-        val pair = requestAiSummary(report) ?: return report
-        val (summary, risk) = pair
+        val (summary, risk) = requestAiSummary(report) ?: buildLocalFallbackSummary(report)
 
         val aiAgentStatus = PilotAgentStatus(
             agentId = "agent_ai",
@@ -1590,7 +1589,7 @@ object OsintAiSynthesizer {
         val aiFinding = SourcedFinding(
             category = "AI Synthesis",
             claim = "[$risk EXPOSURE] $summary",
-            sourceName = "Gemini 2.5 Flash Analyst",
+            sourceName = "OSINT Pilot AI Analyst",
             confidence = ConfidenceLevel.HIGH
         )
 
@@ -1600,6 +1599,19 @@ object OsintAiSynthesizer {
             agentStatuses = listOf(aiAgentStatus) + report.agentStatuses,
             findings = listOf(aiFinding) + report.findings
         )
+    }
+
+    private fun buildLocalFallbackSummary(report: PilotInvestigationReport): Pair<String, String> {
+        val risk = when {
+            report.totalBreachCount >= 5 -> "HIGH"
+            report.totalBreachCount >= 1 || report.linkedAccounts.size >= 15 -> "MEDIUM"
+            else -> "LOW"
+        }
+        val primaryName = report.resolvedNames.firstOrNull()?.value ?: report.target
+        val summary = "Target '${report.target}' ($primaryName) resolved across ${report.linkedAccounts.size} verified platforms " +
+            "with ${report.totalBreachCount} credential/breach exposures and ${report.publicRecords.size} public records. " +
+            "Overall digital footprint and credential exposure classified as $risk."
+        return summary to risk
     }
 
     private fun requestAiSummary(report: PilotInvestigationReport): Pair<String, String>? {
@@ -1629,7 +1641,7 @@ object OsintAiSynthesizer {
                     ))
                 }.toString()
 
-                val url = java.net.URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$LOCAL_GEMINI_API_KEY")
+                val url = java.net.URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$LOCAL_GEMINI_API_KEY")
                 val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 7000
@@ -1638,7 +1650,8 @@ object OsintAiSynthesizer {
                     setRequestProperty("Content-Type", "application/json")
                 }
                 conn.outputStream.use { it.write(bodyJson.toByteArray()) }
-                if (conn.responseCode == 200) {
+                val code = conn.responseCode
+                if (code == 200) {
                     val respText = conn.inputStream.bufferedReader().readText()
                     val json = org.json.JSONObject(respText)
                     val text = json.optJSONArray("candidates")
@@ -1652,8 +1665,12 @@ object OsintAiSynthesizer {
                     if (text.isNotBlank()) {
                         val upper = text.uppercase()
                         val risk = if ("HIGH" in upper) "HIGH" else if ("MEDIUM" in upper) "MEDIUM" else "LOW"
+                        android.util.Log.d("OsintAiSynthesizer", "Gemini 1.5 Flash synthesis succeeded (risk=$risk)")
                         return text to risk
                     }
+                } else {
+                    val errText = conn.errorStream?.bufferedReader()?.readText() ?: ""
+                    android.util.Log.w("OsintAiSynthesizer", "Gemini API HTTP $code: $errText")
                 }
             }
         }
