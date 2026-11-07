@@ -54,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.phone_number_lookup.ConfidenceLevel
+import com.example.phone_number_lookup.OsintProfileValidator
 import com.example.phone_number_lookup.PilotAgentStatus
 import com.example.phone_number_lookup.PilotInvestigationReport
 import com.example.phone_number_lookup.PilotMediaPhoto
@@ -612,11 +614,28 @@ private fun PilotMediaRecoverySection(photos: List<PilotMediaPhoto>) {
 @Composable
 private fun PilotLinkedAccountsCard(accounts: List<com.example.phone_number_lookup.PhoneAccountHit>) {
     val context = LocalContext.current
-    val confirmed = accounts.filter { it.confirmed }
+    val validAccounts = remember(accounts) {
+        accounts.filter { hit ->
+            val label = hit.platform
+            val inlineHandle = label.substringAfter("(@", "").substringBefore(")", "").ifBlank { null }
+            OsintProfileValidator.hasValidProfilePath(hit.url) &&
+            OsintProfileValidator.isValidPlatformUsername(label, inlineHandle, hit.url) &&
+            !OsintProfileValidator.isBoilerplateOrMismatchedDossier(
+                siteOrTitle = label,
+                handle = inlineHandle,
+                scrapedName = null,
+                scrapedBio = null,
+                details = hit.detail
+            )
+        }
+    }
+    if (validAccounts.isEmpty()) return
+
+    val confirmed = validAccounts.filter { it.confirmed }
 
     SectionCard(
         title = "WHAT THEY ARE SIGNED UP TO (LINKED ACCOUNTS)",
-        subtitle = "${accounts.size} platform profiles discovered · ${confirmed.size} confirmed",
+        subtitle = "${validAccounts.size} platform profiles discovered · ${confirmed.size} confirmed",
         tone = Tone.ACCENT
     ) {
         if (confirmed.isNotEmpty()) {
@@ -640,7 +659,7 @@ private fun PilotLinkedAccountsCard(accounts: List<com.example.phone_number_look
             Spacer(Modifier.height(10.dp))
         }
 
-        accounts.forEachIndexed { idx, acc ->
+        validAccounts.forEachIndexed { idx, acc ->
             if (idx > 0) {
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 6.dp),

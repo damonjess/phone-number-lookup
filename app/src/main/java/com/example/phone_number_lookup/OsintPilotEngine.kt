@@ -89,7 +89,9 @@ data class PilotInvestigationReport(
     val recoveredPhotos: List<PilotMediaPhoto> = emptyList(),
     // Unified Sourced Findings
     val findings: List<SourcedFinding> = emptyList(),
-    val rawMarkdownReport: String = ""
+    val rawMarkdownReport: String = "",
+    val aiSummary: String? = null,
+    val aiRiskLevel: String? = null
 )
 
 object OsintPilotEngine {
@@ -137,13 +139,17 @@ object OsintPilotEngine {
         )
         onUpdate(currentReport)
 
-        when (detected) {
+        val rawReport = when (detected) {
             PilotTargetType.PHONE -> investigatePhone(cleanQuery, context, currentReport, onUpdate)
             PilotTargetType.EMAIL -> investigateEmail(cleanQuery, context, currentReport, onUpdate)
             PilotTargetType.USERNAME -> investigateUsername(cleanQuery, context, currentReport, onUpdate)
             PilotTargetType.NAME -> investigateName(cleanQuery, context, currentReport, onUpdate)
             PilotTargetType.AUTO -> investigatePhone(cleanQuery, context, currentReport, onUpdate)
         }
+
+        val aiEnrichedReport = OsintAiSynthesizer.enrichReportWithAi(rawReport)
+        onUpdate(aiEnrichedReport)
+        aiEnrichedReport
     }
 
     private suspend fun investigatePhone(
@@ -609,7 +615,20 @@ object OsintPilotEngine {
         }
 
         // Process 300+ Site Username Handle Correlations
-        handleUsernameHits.forEach { hit ->
+        val validatedHandleHits = handleUsernameHits.filter { hit ->
+            val cleanUrl = OsintDatasets.cleanProfileUrl(hit.site, hit.profileUrl)
+            val handle = hit.queriedName.ifBlank { localPart }
+            OsintProfileValidator.hasValidProfilePath(cleanUrl) &&
+            OsintProfileValidator.isValidPlatformUsername(hit.site, handle, cleanUrl) &&
+            !OsintProfileValidator.isBoilerplateOrMismatchedDossier(
+                siteOrTitle = hit.site,
+                handle = handle,
+                scrapedName = null,
+                scrapedBio = null,
+                details = hit.evidence
+            )
+        }
+        validatedHandleHits.forEach { hit ->
             val cleanUrl = OsintDatasets.cleanProfileUrl(hit.site, hit.profileUrl)
             val isConfirmed = hit.verificationStatus == "Matched"
             accounts += PhoneAccountHit(
@@ -629,7 +648,18 @@ object OsintPilotEngine {
         }
 
         // Process Deep Profile Dossiers (TikTok, YouTube, Reddit, Steam, Telegram, SoundCloud, GitHub, etc.)
-        deepDossiersDef.await().forEach { card ->
+        val validatedDeepDossiers = deepDossiersDef.await().filter { card ->
+            OsintProfileValidator.hasValidProfilePath(card.profileUrl) &&
+            OsintProfileValidator.isValidPlatformUsername(card.platform, card.handle, card.profileUrl) &&
+            !OsintProfileValidator.isBoilerplateOrMismatchedDossier(
+                siteOrTitle = card.platform,
+                handle = card.handle,
+                scrapedName = card.displayName,
+                scrapedBio = card.bio,
+                details = null
+            )
+        }
+        validatedDeepDossiers.forEach { card ->
             val cleanUrl = OsintDatasets.cleanProfileUrl(card.platform, card.profileUrl)
             val detailParts = buildList {
                 card.displayName?.let { add("Name: $it") }
@@ -892,7 +922,46 @@ object OsintPilotEngine {
             }
         }
 
-        confirmedHits.forEach { hit ->
+        val rawDossiers = dossiersDef.await()
+
+        // Identify platforms where deep scraping proved the profile is a soft-404 or prefix mismatch (e.g. Duolingo deeznutz867)
+        val rejectedDossierPlatforms = rawDossiers.filter { card ->
+            !OsintProfileValidator.hasValidProfilePath(card.profileUrl) ||
+            !OsintProfileValidator.isValidPlatformUsername(card.platform, card.handle, card.profileUrl) ||
+            OsintProfileValidator.isBoilerplateOrMismatchedDossier(
+                siteOrTitle = card.platform,
+                handle = card.handle,
+                scrapedName = card.displayName,
+                scrapedBio = card.bio,
+                details = null
+            )
+        }.map { OsintProfileValidator.canonicalPlatformKey(it.platform, it.profileUrl) }.toSet()
+
+        val validatedDossiers = rawDossiers.filter { card ->
+            OsintProfileValidator.canonicalPlatformKey(card.platform, card.profileUrl) !in rejectedDossierPlatforms
+        }
+
+        val validatedConfirmedHits = confirmedHits.filter { hit ->
+            val cleanUrl = OsintDatasets.cleanProfileUrl(hit.site, hit.profileUrl)
+            val platformKey = OsintProfileValidator.canonicalPlatformKey(hit.site, cleanUrl)
+            // Drop Duolingo SPA soft-404s unless confirmed by an exact-match dossier
+            val isUnverifiedDuolingo = platformKey == "duolingo" &&
+                validatedDossiers.none { OsintProfileValidator.canonicalPlatformKey(it.platform, it.profileUrl) == "duolingo" }
+
+            !isUnverifiedDuolingo &&
+            platformKey !in rejectedDossierPlatforms &&
+            OsintProfileValidator.hasValidProfilePath(cleanUrl) &&
+            OsintProfileValidator.isValidPlatformUsername(hit.site, clean, cleanUrl) &&
+            !OsintProfileValidator.isBoilerplateOrMismatchedDossier(
+                siteOrTitle = hit.site,
+                handle = clean,
+                scrapedName = null,
+                scrapedBio = null,
+                details = hit.evidence
+            )
+        }
+
+        validatedConfirmedHits.forEach { hit ->
             val cleanUrl = OsintDatasets.cleanProfileUrl(hit.site, hit.profileUrl)
             accounts += PhoneAccountHit(
                 platform = hit.site,
@@ -910,10 +979,11 @@ object OsintPilotEngine {
             )
         }
 
-        dossiersDef.await().forEach { card ->
+        validatedDossiers.forEach { card ->
             val cleanUrl = OsintDatasets.cleanProfileUrl(card.platform, card.profileUrl)
+            val cleanedName = OsintProfileValidator.cleanDisplayName(card.displayName, card.platform)
             val detailParts = buildList {
-                card.displayName?.let { add("Name: $it") }
+                cleanedName?.let { add("Name: $it") }
                 card.statsSummary?.let { add(it) }
                 card.createdDate?.let { add("Joined: $it") }
                 card.location?.let { add("Location: $it") }
@@ -928,7 +998,7 @@ object OsintPilotEngine {
                 url = cleanUrl,
                 confirmed = true
             )
-            card.displayName?.let {
+            cleanedName?.let {
                 names += AttributedValue(it, card.platform)
                 findings += SourcedFinding(category = "Identity", claim = "Display Name on ${card.platform}: $it", sourceName = card.platform, sourceUrl = cleanUrl, confidence = ConfidenceLevel.HIGH)
             }
@@ -967,11 +1037,15 @@ object OsintPilotEngine {
             }
         }
 
-        // 5. Run Free Public Records, Breach PII, HudsonRock Username Stealer & Alias Correlation
+        // Only query corporate registries (Companies House) if a resolved name looks like a real human name, not a spaced handle ("Deez Nutz")
+        val verifiedPersonName = names
+            .map { it.value }
+            .firstOrNull { OsintProfileValidator.isPlausibleRealPersonName(it, clean) }
+
         val deepPublicRecords = FreePublicRecordsAndBreachIntel.enrichTarget(
             email = discoveredEmails.firstOrNull(),
             username = clean,
-            fullName = names.firstOrNull { ' ' in it.value }?.value,
+            fullName = verifiedPersonName,
             discoveredHandles = aliases.map { it.value.removePrefix("@") },
             existingLocations = locations
         )
@@ -1253,16 +1327,37 @@ object OsintPilotEngine {
 
     /**
      * Merges accounts by platform + URL while preferring entries with richer details (e.g. Enriched Dossier).
+     * Filters out false positives, invalid username formats, root redirects, and generic boilerplate dossiers.
      */
     private fun deduplicateAccounts(accounts: List<PhoneAccountHit>): List<PhoneAccountHit> {
+        val validatedAccounts = accounts.filter { hit ->
+            val inlineHandle = hit.platform.substringAfter("(@", "").substringBefore(")", "").ifBlank { null }
+            OsintProfileValidator.hasValidProfilePath(hit.url) &&
+            OsintProfileValidator.isValidPlatformUsername(
+                siteOrTitle = hit.platform,
+                username = inlineHandle,
+                url = hit.url
+            ) &&
+            !OsintProfileValidator.isBoilerplateOrMismatchedDossier(
+                siteOrTitle = hit.platform,
+                handle = inlineHandle,
+                scrapedName = null,
+                scrapedBio = null,
+                details = hit.detail
+            )
+        }
         val map = LinkedHashMap<String, PhoneAccountHit>()
-        for (acc in accounts) {
-            val basePlatform = acc.platform.substringBefore(" (@").trim().lowercase()
-            val urlKey = acc.url?.lowercase()?.trimEnd('/').orEmpty()
-            val key = if (urlKey.isNotBlank() && urlKey != "https://$basePlatform.com") "$basePlatform|$urlKey" else basePlatform
+        for (acc in validatedAccounts) {
+            val key = OsintProfileValidator.canonicalPlatformKey(acc.platform, acc.url)
             val existing = map[key]
-            if (existing == null || acc.detail.length > existing.detail.length) {
+            if (existing == null) {
                 map[key] = acc
+            } else {
+                val preferNew = (acc.status == "Enriched Dossier" && existing.status != "Enriched Dossier") ||
+                    (acc.status == existing.status && acc.detail.length > existing.detail.length)
+                if (preferNew) {
+                    map[key] = acc
+                }
             }
         }
         return map.values.sortedWith(
@@ -1315,3 +1410,288 @@ object OsintPilotEngine {
         appendLine("*Report certified and compiled by OSINT Pilot*")
     }
 }
+
+object OsintProfileValidator {
+
+    private val GENERIC_BOILERPLATE_MARKERS = listOf(
+        "calendly connects and simplifies",
+        "your personal flight logbook",
+        "keeping track on where and how you have flown",
+        "log in to see",
+        "page not found",
+        "sign up for free",
+        "couldn't find this page",
+        "the link you followed may be broken",
+        "error 404",
+        "sorry, the page you were looking for doesn't exist",
+        "try going to duolingo.com"
+    )
+
+    fun canonicalPlatformKey(siteOrTitle: String, url: String?): String {
+        val raw = siteOrTitle
+            .substringBefore(" (@")
+            .substringBefore(" (via ")
+            .substringBefore(" (")
+            .trim()
+            .lowercase()
+            .removePrefix("www.")
+            .removePrefix("m.")
+            .removePrefix("my.")
+
+        return when {
+            raw in listOf("twitter", "twitter.com", "x", "x.com") -> "x_twitter"
+            raw.startsWith("twitch") -> "twitch"
+            raw.startsWith("chess") -> "chess.com"
+            raw.startsWith("mastodon") -> "mastodon"
+            raw.startsWith("duolingo") -> "duolingo"
+            raw.startsWith("bluesky") || raw.contains("bsky") -> "bluesky"
+            raw.startsWith("telegram") || raw == "t.me" -> "telegram"
+            raw.startsWith("soundcloud") -> "soundcloud"
+            raw.startsWith("snapchat") -> "snapchat"
+            raw.startsWith("lichess") -> "lichess"
+            raw.isNotBlank() -> raw.removeSuffix(".com").removeSuffix(".org").removeSuffix(".tv")
+            else -> url?.lowercase()?.substringAfter("://")?.substringBefore("/")?.removePrefix("www.").orEmpty()
+        }
+    }
+
+    fun cleanDisplayName(rawName: String?, platform: String): String? {
+        if (rawName.isNullOrBlank()) return null
+        val cleaned = rawName
+            .replace(Regex("""(?i)^steam community\s*::\s*"""), "")
+            .replace(Regex("""(?i)\s*[—\-|•]\s*(dev community profile|strava athlete profile|linktree|duolingo|tiktok|soundcloud).*$"""), "")
+            .replace(Regex("""(?i)\s*\|\s*linktree$"""), "")
+            .trim()
+        if (cleaned.length <= 2) return null
+        return cleaned
+    }
+
+    fun isPlausibleRealPersonName(candidate: String, targetUsername: String): Boolean {
+        val trimmed = candidate.trim()
+        if (' ' !in trimmed) return false
+        // Reject if it contains digits or gaming/punctuation symbols
+        if (trimmed.any { it.isDigit() || it in listOf(':', '|', '(', ')', '[', ']', '@', '_', '/') }) return false
+
+        val words = trimmed.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        if (words.size !in 2..3) return false
+        if (words.any { it.length < 2 }) return false
+
+        // Reject if the spaced name is just the letters of the username itself (e.g. "Deez Nutz" vs "deeznutz86")
+        val collapsedName = trimmed.lowercase().filter { it.isLetter() }
+        val handleLetters = targetUsername.lowercase().filter { it.isLetter() }
+        if (collapsedName == handleLetters || handleLetters.startsWith(collapsedName)) {
+            return false
+        }
+        return true
+    }
+
+    fun isValidPlatformUsername(siteOrTitle: String, username: String?, url: String?): Boolean {
+        val lowerSite = siteOrTitle.lowercase()
+        val candidate = username?.trim()?.removePrefix("@")
+            ?: extractHandleFromUrl(url)
+            ?: return true
+
+        if (candidate.isBlank()) return false
+
+        return when {
+            lowerSite.contains("strava") -> !candidate.contains(".") && !candidate.contains(" ")
+            lowerSite.contains("flightradar") -> Regex("^[a-zA-Z0-9_]{3,20}$").matches(candidate)
+            lowerSite.contains("calendly") || lowerSite.contains("calendy") -> {
+                !candidate.contains(".") && Regex("^[a-zA-Z0-9_-]{3,60}$").matches(candidate)
+            }
+            else -> true
+        }
+    }
+
+    fun hasValidProfilePath(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val clean = url.trim().lowercase().removeSuffix("/")
+        val pathAfterDomain = clean.substringAfter("://", "").substringAfter("/", "")
+        if (pathAfterDomain.isBlank()) return false
+        if (clean.contains("strava.com/athletes/") && pathAfterDomain.substringAfterLast("/").contains(".")) {
+            return false
+        }
+        return true
+    }
+
+    fun isBoilerplateOrMismatchedDossier(
+        siteOrTitle: String,
+        handle: String?,
+        scrapedName: String?,
+        scrapedBio: String?,
+        details: String?
+    ): Boolean {
+        val combined = listOfNotNull(scrapedName, scrapedBio, details)
+            .joinToString(" ")
+            .lowercase()
+
+        if (GENERIC_BOILERPLATE_MARKERS.any { combined.contains(it) }) {
+            return true
+        }
+
+        val lowerSite = siteOrTitle.lowercase()
+        val cleanHandle = handle?.trim()?.removePrefix("@")?.lowercase().orEmpty()
+
+        // Guard against Duolingo prefix search returning a different user (e.g. "deeznutz867" for "deeznutz86")
+        if (lowerSite.contains("duolingo") && cleanHandle.isNotBlank()) {
+            val checkName = scrapedName?.trim()?.lowercase().orEmpty()
+            if (checkName.isNotBlank() && checkName != cleanHandle && checkName.startsWith(cleanHandle)) {
+                return true
+            }
+            if (details != null && details.lowercase().contains("name: ${cleanHandle}") &&
+                !details.lowercase().contains("name: $cleanHandle •") &&
+                Regex("""name:\s*${Regex.escape(cleanHandle)}[a-z0-9_]+""").containsMatchIn(details.lowercase())
+            ) {
+                return true
+            }
+        }
+
+        if (lowerSite.contains("strava") && cleanHandle.contains(".")) {
+            return true
+        }
+        if (lowerSite.contains("strava") && !scrapedName.isNullOrBlank() && cleanHandle.isNotBlank()) {
+            val athleteName = scrapedName.substringBefore("|").trim().lowercase()
+            val handleTokens = cleanHandle.split(".", "_", "-").filter { it.length >= 3 }
+            if (handleTokens.size >= 2 && athleteName.contains(" ") && !athleteName.contains(handleTokens.last())) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun extractHandleFromUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val path = url.trim().removeSuffix("/").substringAfter("://", "").substringAfter("/", "")
+        if (path.isBlank()) return null
+        return path.substringAfterLast("/").takeIf { it.isNotBlank() }
+    }
+}
+
+object OsintAiSynthesizer {
+    // Reads Gemini key securely from secrets.properties via BuildConfig (never committed to Git)
+    private val LOCAL_GEMINI_API_KEY = BuildConfig.GEMINI_API_KEY
+    private const val WORKSTATION_AI_URL = "http://192.168.1.190:8099/api/v1/pilot-ai-synthesis"
+
+    fun enrichReportWithAi(report: PilotInvestigationReport): PilotInvestigationReport {
+        val pair = requestAiSummary(report) ?: return report
+        val (summary, risk) = pair
+
+        val aiAgentStatus = PilotAgentStatus(
+            agentId = "agent_ai",
+            agentName = "Gemini AI Analyst",
+            question = "What is the overall intelligence verdict?",
+            statusText = summary,
+            countBadge = "AI: $risk",
+            isRunning = false,
+            isComplete = true,
+            timeAgo = "just now",
+            findingsCount = 1
+        )
+        val aiFinding = SourcedFinding(
+            category = "AI Synthesis",
+            claim = "[$risk EXPOSURE] $summary",
+            sourceName = "Gemini 2.5 Flash Analyst",
+            confidence = ConfidenceLevel.HIGH
+        )
+
+        return report.copy(
+            aiSummary = summary,
+            aiRiskLevel = risk,
+            agentStatuses = listOf(aiAgentStatus) + report.agentStatuses,
+            findings = listOf(aiFinding) + report.findings
+        )
+    }
+
+    private fun requestAiSummary(report: PilotInvestigationReport): Pair<String, String>? {
+        val namesStr = report.resolvedNames.take(5).joinToString(", ") { "${it.value} (${it.source})" }.ifBlank { "None" }
+        val accountsStr = report.linkedAccounts.take(15).joinToString(", ") { it.platform }.ifBlank { "None" }
+        val breachesStr = report.breachRecords.take(8).joinToString(", ") { it.name }.ifBlank { "None" }
+        val locationsStr = report.locations.take(5).joinToString(", ") { it.value }.ifBlank { "None" }
+        val topFindingsStr = report.findings.take(10).joinToString("; ") { "${it.sourceName}: ${it.claim}" }
+
+        // 1. Try direct Gemini API if LOCAL_GEMINI_API_KEY is set
+        if (LOCAL_GEMINI_API_KEY.isNotBlank()) {
+            runCatching {
+                val prompt = "You are an OSINT analyst. Write a concise 2-to-3 sentence intelligence summary of this target " +
+                    "based strictly on the verified findings below, then state a risk/exposure level (LOW, MEDIUM, or HIGH).\n" +
+                    "Target: ${report.target} (${report.detectedType})\n" +
+                    "Resolved Names: $namesStr\n" +
+                    "Confirmed Accounts (${report.linkedAccounts.size}): $accountsStr\n" +
+                    "Breaches (${report.totalBreachCount}): $breachesStr\n" +
+                    "Locations: $locationsStr\n" +
+                    "Findings: $topFindingsStr"
+
+                val bodyJson = org.json.JSONObject().apply {
+                    put("contents", org.json.JSONArray().put(
+                        org.json.JSONObject().put("parts", org.json.JSONArray().put(
+                            org.json.JSONObject().put("text", prompt)
+                        ))
+                    ))
+                }.toString()
+
+                val url = java.net.URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$LOCAL_GEMINI_API_KEY")
+                val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 7000
+                    readTimeout = 7000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                conn.outputStream.use { it.write(bodyJson.toByteArray()) }
+                if (conn.responseCode == 200) {
+                    val respText = conn.inputStream.bufferedReader().readText()
+                    val json = org.json.JSONObject(respText)
+                    val text = json.optJSONArray("candidates")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("content")
+                        ?.optJSONArray("parts")
+                        ?.optJSONObject(0)
+                        ?.optString("text", "")
+                        ?.trim()
+                        .orEmpty()
+                    if (text.isNotBlank()) {
+                        val upper = text.uppercase()
+                        val risk = if ("HIGH" in upper) "HIGH" else if ("MEDIUM" in upper) "MEDIUM" else "LOW"
+                        return text to risk
+                    }
+                }
+            }
+        }
+
+        // 2. Otherwise query the Linux Mint Workstation Bridge (192.168.1.190:8099)
+        return runCatching {
+            val payload = org.json.JSONObject().apply {
+                put("target", report.target)
+                put("target_type", report.detectedType.name)
+                put("names", namesStr)
+                put("account_count", report.linkedAccounts.size)
+                put("accounts", accountsStr)
+                put("breach_count", report.totalBreachCount)
+                put("breaches", breachesStr)
+                put("locations", locationsStr)
+                put("top_findings", topFindingsStr)
+            }.toString()
+
+            val url = java.net.URL(WORKSTATION_AI_URL)
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 5000
+                readTimeout = 8000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
+            conn.outputStream.use { it.write(payload.toByteArray()) }
+            if (conn.responseCode == 200) {
+                val respText = conn.inputStream.bufferedReader().readText()
+                val json = org.json.JSONObject(respText)
+                if (json.optBoolean("enabled", false)) {
+                    val summary = json.optString("summary", "").trim()
+                    val risk = json.optString("risk_level", "LOW").trim()
+                    if (summary.isNotBlank()) return summary to risk
+                }
+            }
+            null
+        }.getOrNull()
+    }
+}
+

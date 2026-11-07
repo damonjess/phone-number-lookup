@@ -344,7 +344,11 @@ def run_tookie_python(username, max_sites=150):
         hits, issues = [], []
         with contextlib.redirect_stdout(io.StringIO()):
             with ThreadPoolExecutor(max_workers=12) as pool:
-                futures = {pool.submit(scan_site, entry, username, False, False, agents, True): entry for entry in sites}
+                filtered_sites = [
+                    e for e in sites
+                    if not (("flightradar24.com" in e.get("site", "") or "strava.com" in e.get("site", "")) and "." in username)
+                ]
+                futures = {pool.submit(scan_site, entry, username, False, False, agents, True): entry for entry in filtered_sites}
                 for future in as_completed(futures):
                     entry = futures[future]
                     try:

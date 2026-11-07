@@ -89,6 +89,16 @@ object UsernameScanner {
 
         val results = sites.map { site ->
             async {
+                if (!isValidSiteUsername(site.name, name)) {
+                    onEach()
+                    return@async ProbeResult(
+                        site = site,
+                        verdict = ProbeVerdict.NOT_FOUND,
+                        profileUrl = OsintDatasets.cleanProfileUrl(site.name, site.profileTemplate.replace("{account}", name)),
+                        statusCode = 200,
+                        evidence = "Filtered out: invalid username format for ${site.name}"
+                    )
+                }
                 // Space out requests to the same website first, then take a concurrency slot.
                 HostGate.run(HostGate.hostKey(site.urlTemplate)) {
                     semaphore.withPermit {
@@ -274,6 +284,9 @@ object UsernameScanner {
             val probe = OsintDatasets.findUsernameProbe(issue.site, issue.profileUrl, username)
             if (probe == null) {
                 newIssues += issue
+                continue
+            }
+            if (!isValidSiteUsername(probe.name, username)) {
                 continue
             }
             val result = OsintDatasets.evaluate(probe, username, timeoutMs = 12_000)

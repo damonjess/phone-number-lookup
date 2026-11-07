@@ -15,7 +15,11 @@ data class PhoneAccountHit(
     val detail: String,
     val url: String? = null,
     val confirmed: Boolean = true
-)
+) {
+    val details: String get() = detail
+    val username: String?
+        get() = platform.substringAfter("(@", "").substringBefore(")", "").ifBlank { null }
+}
 
 data class DirectoryReportSummary(
     val source: String,

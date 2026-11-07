@@ -282,6 +282,20 @@ def tookie_scan_site(session: requests.Session, site_entry: dict, username: str)
     except Exception as ex:
         return ("ISSUE", site_label, url, 0, str(ex), nsfw)
 
+    resp_path = resp.url.path if hasattr(resp.url, "path") else urllib.parse.urlparse(resp.url).path
+
+    if "flightradar24.com" in url or "flightradar24.com" in getattr(resp, "url", ""):
+        if "." in username or "Your personal flight logbook" in resp.text or resp_path in ("", "/"):
+            return ("NOT_FOUND", site_label, url, resp.status_code, "", nsfw)
+
+    if "strava.com" in url or "strava.com" in getattr(resp, "url", ""):
+        if "." in username or "Log in to see" in resp.text:
+            return ("NOT_FOUND", site_label, url, resp.status_code, "", nsfw)
+
+    if "calendly.com" in url or "calendly.com" in getattr(resp, "url", ""):
+        if "Calendly connects and simplifies all of the work" in resp.text:
+            return ("NOT_FOUND", site_label, url, resp.status_code, "", nsfw)
+
     if tookie_is_found(resp, error_msg):
         return ("FOUND", site_label, url, resp.status_code, "Tookie is_found() matched in Python", nsfw)
     elif resp.status_code in (404, 410) or (error_msg and error_msg.lower() in resp.text[:250000].lower()):

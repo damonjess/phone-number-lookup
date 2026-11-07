@@ -22,7 +22,10 @@ data class EnrichedProfileCard(
     val avatarUrl: String? = null,
     val createdDate: String? = null,
     val statsSummary: String? = null
-)
+) {
+    val url: String get() = profileUrl
+    val username: String get() = handle
+}
 
 object DeepProfileScraper {
 
@@ -96,9 +99,12 @@ object DeepProfileScraper {
                 val probeSem = Semaphore(6)
                 CuratedUsernameChecks.PROBES.map { probe ->
                     async {
+                        if (!isValidSiteUsername(probe.name, clean)) return@async null
                         probeSem.withPermit {
                             val res = OsintDatasets.evaluate(probe, clean, timeoutMs = 8_000)
-                            if (res.verdict == ProbeVerdict.FOUND) {
+                            if (res.verdict == ProbeVerdict.FOUND &&
+                                !isFalsePositiveProfilePage(probe.name, clean, res.finalUrl.ifBlank { res.profileUrl }, null, null)
+                            ) {
                                 UsernameHit(
                                     site = probe.name,
                                     category = probe.category,
@@ -125,19 +131,29 @@ object DeepProfileScraper {
                 .filter {
                     it.verificationStatus == "Matched" &&
                         it.profileUrl.startsWith("http") &&
-                        it.site.lowercase() !in coveredPlatforms
+                        it.site.lowercase() !in coveredPlatforms &&
+                        isValidSiteUsername(it.site, clean) &&
+                        !isFalsePositiveProfilePage(it.site, clean, it.finalUrl.ifBlank { it.profileUrl }, null, null)
                 }
                 .take(14)
                 .map { hit ->
                     async {
                         htmlSemaphore.withPermit {
-                            scrapeHtmlProfileMetadata(hit.site, clean, hit.profileUrl)
-                                ?: EnrichedProfileCard(
+                            val scraped = scrapeHtmlProfileMetadata(hit.site, clean, hit.profileUrl)
+                            if (scraped != null) {
+                                scraped
+                            } else if (!isValidSiteUsername(hit.site, clean) ||
+                                isFalsePositiveProfilePage(hit.site, clean, hit.finalUrl.ifBlank { hit.profileUrl }, null, null)
+                            ) {
+                                null
+                            } else {
+                                EnrichedProfileCard(
                                     platform = hit.site,
                                     handle = clean,
                                     profileUrl = hit.profileUrl,
                                     bio = "Confirmed public profile on ${hit.site} (${hit.category})"
                                 )
+                            }
                         }
                     }
                 }
@@ -893,13 +909,21 @@ object DeepProfileScraper {
         handle: String,
         url: String
     ): EnrichedProfileCard? {
+        if (!isValidSiteUsername(siteName, handle)) return null
+
         val resp = ScanHttp.get(url, timeoutMs = 8_000, maxBodyChars = 250_000)
         if (!resp.isOk || resp.body.isBlank()) return null
         val html = resp.body
+        val finalUrl = resp.finalUrl.ifBlank { url }
 
         val rawOgTitle = OG_TITLE.find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
         val rawOgDesc = OG_DESC.find(html)?.groupValues?.get(1)?.let { BreachCatalog.plainText(it) }?.takeIf { it.isNotBlank() }
         val ogImage = OG_IMAGE.find(html)?.groupValues?.get(1)?.takeIf { it.startsWith("http") }
+
+        val titleForCheck = rawOgTitle ?: extractPageTitle(html)
+        if (isFalsePositiveProfilePage(siteName, handle, finalUrl, titleForCheck, rawOgDesc ?: html)) {
+            return null
+        }
 
         // Reject soft-404 pages (like Twitch's generic homepage meta tags when a user doesn't exist)
         if (rawOgDesc != null && GENERIC_SITE_BIOS.any { rawOgDesc.lowercase().contains(it) } &&

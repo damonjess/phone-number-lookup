@@ -79,7 +79,20 @@ data class UnifiedPhoneIntelligenceReport(
     val sourceHealth: List<SourceHealthItem>,
     val maskedPivotReport: MaskedPivotReport = MaskedPivotReport(),
     val fastApiResult: FastApiPhoneResult? = null,
-    val telegramPhotoBase64: String? = null
+    val telegramPhotoBase64: String? = null,
+    val breachChecked: Boolean = fastApiResult?.breachChecked ?: false,
+    val breachCount: Int = fastApiResult?.breachCount ?: 0,
+    val breaches: List<String> = fastApiResult?.breaches ?: emptyList(),
+    val hlrChecked: Boolean = fastApiResult?.hlrChecked ?: false,
+    val hlrLiveStatus: String? = fastApiResult?.hlrLiveStatus,
+    val hlrCurrentNetwork: String? = fastApiResult?.hlrCurrentNetwork,
+    val hlrIsPorted: Boolean = fastApiResult?.hlrIsPorted ?: false,
+    val hlrIsRoaming: Boolean = fastApiResult?.hlrIsRoaming ?: false,
+    val signalDeepLink: String? = fastApiResult?.signalDeepLink,
+    val viberDeepLink: String? = fastApiResult?.viberDeepLink,
+    val aiEnabled: Boolean = fastApiResult?.aiEnabled ?: false,
+    val aiSummary: String? = fastApiResult?.aiSummary,
+    val aiRiskLevel: String? = fastApiResult?.aiRiskLevel
 )
 
 object PhoneReputationAndOsintEngine {
@@ -274,6 +287,31 @@ object PhoneReputationAndOsintEngine {
                 }
             }
 
+            fastApi.signalDeepLink?.let { link ->
+                if (finalMessagingApps.none { it.platform.equals("Signal", ignoreCase = true) }) {
+                    finalMessagingApps.add(
+                        MessagingAppLinkage(
+                            platform = "Signal",
+                            status = "Direct Chat Scheme Ready",
+                            checkUrl = link,
+                            verifiedPresence = false
+                        )
+                    )
+                }
+            }
+            fastApi.viberDeepLink?.let { link ->
+                if (finalMessagingApps.none { it.platform.equals("Viber", ignoreCase = true) }) {
+                    finalMessagingApps.add(
+                        MessagingAppLinkage(
+                            platform = "Viber",
+                            status = "Direct Chat Scheme Ready",
+                            checkUrl = link,
+                            verifiedPresence = false
+                        )
+                    )
+                }
+            }
+
             val (riskScore, riskGrade) = computeThreatScore(telecom, mergedReputation)
 
             val pivotReport = MaskedEmailPivotEngine.runPivot(
@@ -310,7 +348,20 @@ object PhoneReputationAndOsintEngine {
                 sourceHealth = sourceHealth.toList(),
                 maskedPivotReport = pivotReport,
                 fastApiResult = fastApi,
-                telegramPhotoBase64 = fastApi.tgPhotoBase64
+                telegramPhotoBase64 = fastApi.tgPhotoBase64,
+                breachChecked = fastApi.breachChecked,
+                breachCount = fastApi.breachCount,
+                breaches = fastApi.breaches,
+                hlrChecked = fastApi.hlrChecked,
+                hlrLiveStatus = fastApi.hlrLiveStatus,
+                hlrCurrentNetwork = fastApi.hlrCurrentNetwork,
+                hlrIsPorted = fastApi.hlrIsPorted,
+                hlrIsRoaming = fastApi.hlrIsRoaming,
+                signalDeepLink = fastApi.signalDeepLink,
+                viberDeepLink = fastApi.viberDeepLink,
+                aiEnabled = fastApi.aiEnabled,
+                aiSummary = fastApi.aiSummary,
+                aiRiskLevel = fastApi.aiRiskLevel
             )
         }
     }

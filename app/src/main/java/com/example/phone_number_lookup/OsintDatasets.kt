@@ -97,6 +97,15 @@ object OsintDatasets {
         val target = transformAccount(account, probe.accountMode)
         val url = probe.urlTemplate.replace("{account}", ScanHttp.encode(target))
         val profileUrl = cleanProfileUrl(probe.name, probe.profileTemplate.replace("{account}", account))
+
+        // Pre-check: filter out invalid site-specific username formats
+        if (!isValidSiteUsername(probe.name, account)) {
+            return ProbeResult(
+                probe, ProbeVerdict.NOT_FOUND, profileUrl, 200, "",
+                "Filtered out: invalid username format for ${probe.name}"
+            )
+        }
+
         val body = probe.bodyTemplate?.replace("{account}", target)
 
         val response = if (probe.method.equals("POST", ignoreCase = true)) {
@@ -147,12 +156,16 @@ object OsintDatasets {
             resolvedFoundStrings.any { it.isNotEmpty() && text.contains(it, ignoreCase = true) }
 
         val found = codeMatches && stringMatches
+        val pageTitle = extractPageTitle(text)
+        val isFalsePositive = found && isFalsePositiveProfilePage(probe.name, account, finalUrl, pageTitle, text)
 
         val verdict = when {
+            isFalsePositive -> ProbeVerdict.NOT_FOUND
             found -> ProbeVerdict.FOUND
             else -> ProbeVerdict.UNKNOWN
         }
         val evidence = when {
+            isFalsePositive -> "Filtered out: soft-404 / homepage redirect detected"
             found && resolvedFoundStrings.isNotEmpty() -> "Matched a site-specific positive marker"
             found && hasFoundSignals -> "Matched expected HTTP ${response.code} status"
             found -> "HTTP ${response.code} response; this site has no positive marker"

@@ -322,6 +322,30 @@ fun PhoneLookupScreen(
             val phoneReport = uiState.phoneIntelligenceReport
             if (phoneReport != null) {
                 Spacer(modifier = Modifier.height(12.dp))
+                // 1. AI Threat Synthesis Card (renders at the top of the scan report when enabled)
+                if (!phoneReport.aiSummary.isNullOrBlank()) {
+                    OsintToolSectionCard(
+                        toolTitle = "// AI Threat Synthesis [${phoneReport.aiRiskLevel ?: "INFO"}]",
+                        subtitle = "Synthesized threat intelligence from Gemini",
+                        containerColor = when (phoneReport.aiRiskLevel?.uppercase()) {
+                            "HIGH" -> MaterialTheme.colorScheme.errorContainer
+                            "MEDIUM" -> MaterialTheme.colorScheme.tertiaryContainer
+                            else -> MaterialTheme.colorScheme.secondaryContainer
+                        }
+                    ) {
+                        Text(
+                            text = "// AI Threat Synthesis [${phoneReport.aiRiskLevel ?: "INFO"}]",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = phoneReport.aiSummary,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
                 UnifiedPhoneIntelligenceDashboard(
                     report = phoneReport,
                     onOpenUrl = { url -> openUrl(context, url) },
@@ -497,6 +521,23 @@ fun PhoneLookupScreen(
                 }
                 carrierHint?.let {
                     ResultRow("Ofcom Range Block", it)
+                }
+                phoneReport?.let { report ->
+                    val hlrLine = if (report.hlrChecked) {
+                        "HLR Status: ${report.hlrLiveStatus ?: "Unknown"} • Network: ${report.hlrCurrentNetwork ?: "N/A"} • Ported: ${if (report.hlrIsPorted) "Yes" else "No"}"
+                    } else {
+                        "HLR Status: ${report.hlrLiveStatus ?: "Offline / Unconfigured"}"
+                    }
+                    ResultRow("Live HLR", hlrLine)
+
+                    val breachLine = if (report.breachCount > 0) {
+                        "Breaches Found (${report.breachCount}): ${report.breaches.joinToString(", ")}"
+                    } else if (report.breachChecked) {
+                        "Breach Check: Clean (0 exposures found)"
+                    } else {
+                        "Breach Check: No local DB or HIBP key configured"
+                    }
+                    ResultRow("Breach Check", breachLine)
                 }
                 Text(
                     "Type, range block and time zone are estimates from public numbering data; they do not prove the current carrier or caller location.",
@@ -873,6 +914,18 @@ fun PhoneLookupScreen(
                                 if (app.checkUrl.isNotBlank()) {
                                     TextButton(onClick = { openUrl(context, app.checkUrl) }) {
                                         Text("Open ${app.platform} Link ↗")
+                                    }
+                                }
+                                if (app.platform.equals("WhatsApp", ignoreCase = true)) {
+                                    phoneReportData.signalDeepLink?.let { signalLink ->
+                                        TextButton(onClick = { openUrl(context, signalLink) }) {
+                                            Text("Open Signal Link ↗")
+                                        }
+                                    }
+                                    phoneReportData.viberDeepLink?.let { viberLink ->
+                                        TextButton(onClick = { openUrl(context, viberLink) }) {
+                                            Text("Open Viber Link ↗")
+                                        }
                                     }
                                 }
                             }

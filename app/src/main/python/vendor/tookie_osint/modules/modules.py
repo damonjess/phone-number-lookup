@@ -339,6 +339,23 @@ def scan_site(entry, user, debug, skip_headers, user_agents, allsites=False, arg
         code = r.status_code
         found = is_found(code, r.text, error_message, r.url, user)
 
+        # Verify response did not redirect to root domain and check body for false positives
+        username = user
+        resp = r
+        resp_path = resp.url.path if hasattr(resp.url, "path") else urlparse(resp.url).path
+
+        if "flightradar24.com" in url or "flightradar24.com" in resp.url:
+            if "." in username or "Your personal flight logbook" in resp.text or resp_path in ("", "/"):
+                found = False
+
+        if "strava.com" in url or "strava.com" in resp.url:
+            if "." in username or "Log in to see" in resp.text:
+                found = False
+
+        if "calendly.com" in url or "calendly.com" in resp.url:
+            if "Calendly connects and simplifies all of the work" in resp.text:
+                found = False
+
         # Only candidate hits are worth a second request, so the cost is one
         # extra fetch per hit rather than one per site.
         if found and user.lower() != _CONTROL_USER:

@@ -44,6 +44,7 @@ import com.example.phone_number_lookup.DirectoryReportSummary
 import com.example.phone_number_lookup.EmailAttributionReport
 import com.example.phone_number_lookup.EmailDomainReport
 import com.example.phone_number_lookup.EnrichedProfileCard
+import com.example.phone_number_lookup.OsintProfileValidator
 import com.example.phone_number_lookup.GoogleAccountMetadata
 import com.example.phone_number_lookup.GoogleCommentReport
 import com.example.phone_number_lookup.PhoneAccountHit
@@ -350,16 +351,30 @@ fun EnrichedProfilesSection(
     profiles: List<EnrichedProfileCard>,
     modifier: Modifier = Modifier
 ) {
-    if (profiles.isEmpty()) return
+    val validProfiles = remember(profiles) {
+        profiles.filter { profile ->
+            OsintProfileValidator.hasValidProfilePath(profile.url) &&
+            OsintProfileValidator.isValidPlatformUsername(profile.platform, profile.username, profile.url) &&
+            !OsintProfileValidator.isBoilerplateOrMismatchedDossier(
+                siteOrTitle = profile.platform,
+                handle = profile.username,
+                scrapedName = profile.displayName,
+                scrapedBio = profile.bio,
+                details = null
+            )
+        }
+    }
+
+    if (validProfiles.isEmpty()) return
     val context = LocalContext.current
 
     OsintCardContainer(
         title = "DEEP PROFILE DOSSIERS (SCRAPED METADATA)",
-        badge = "${profiles.size}",
+        badge = "${validProfiles.size}",
         tone = Tone.ACCENT,
         modifier = modifier
     ) {
-        profiles.forEachIndexed { index, card ->
+        validProfiles.forEachIndexed { index, card ->
             if (index > 0) {
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 10.dp),
@@ -1528,6 +1543,22 @@ fun UnifiedPhoneIntelligenceDashboard(
                     AttributedRow("National Format", report.telecom.nationalFormat)
                     AttributedRow("Line Type", report.telecom.lineType)
                     AttributedRow("Carrier Allocation", "Three UK / Hutchison 3G MVNO Range")
+
+                    val hlrLine = if (report.hlrChecked) {
+                        "HLR Status: ${report.hlrLiveStatus ?: "Unknown"} • Network: ${report.hlrCurrentNetwork ?: "N/A"} • Ported: ${if (report.hlrIsPorted) "Yes" else "No"}"
+                    } else {
+                        "HLR Status: ${report.hlrLiveStatus ?: "Offline / Unconfigured"}"
+                    }
+                    AttributedRow("Live HLR", hlrLine)
+
+                    val breachLine = if (report.breachCount > 0) {
+                        "Breaches Found (${report.breachCount}): ${report.breaches.joinToString(", ")}"
+                    } else if (report.breachChecked) {
+                        "Breach Check: Clean (0 exposures found)"
+                    } else {
+                        "Breach Check: No local DB or HIBP key configured"
+                    }
+                    AttributedRow("Data Breaches", breachLine)
                 }
             }
             1 -> {

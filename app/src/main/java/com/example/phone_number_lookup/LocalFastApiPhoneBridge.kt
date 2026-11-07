@@ -35,6 +35,19 @@ data class FastApiPhoneResult(
     val tcSpamType: String? = null,
     val tcEmail: String? = null,
     val tcCity: String? = null,
+    val breachChecked: Boolean = false,
+    val breachCount: Int = 0,
+    val breaches: List<String> = emptyList(),
+    val hlrChecked: Boolean = false,
+    val hlrLiveStatus: String? = null,
+    val hlrCurrentNetwork: String? = null,
+    val hlrIsPorted: Boolean = false,
+    val hlrIsRoaming: Boolean = false,
+    val signalDeepLink: String? = null,
+    val viberDeepLink: String? = null,
+    val aiEnabled: Boolean = false,
+    val aiSummary: String? = null,
+    val aiRiskLevel: String? = null,
     val notes: List<String> = emptyList()
 )
 
@@ -72,6 +85,18 @@ object LocalFastApiPhoneBridge {
             val root = JSONObject(resp.body)
             val tg = root.optJSONObject("telegram")
             val tc = root.optJSONObject("truecaller")
+            val breachObj = root.optJSONObject("breach_intel")
+            val breachList = mutableListOf<String>()
+            breachObj?.optJSONArray("breaches")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    breachList.add(arr.optString(i))
+                }
+            }
+
+            val hlrObj = root.optJSONObject("hlr_intel")
+            val msgObj = root.optJSONObject("messaging_intel")
+            val aiObj = root.optJSONObject("ai_synthesis")
+
             val notesArr = root.optJSONArray("notes")
             val notes = buildList {
                 if (notesArr != null) {
@@ -112,6 +137,19 @@ object LocalFastApiPhoneBridge {
                 tcSpamType = tc?.optString("spam_type")?.takeIf { it.isNotBlank() && it != "null" },
                 tcEmail = tc?.optString("email")?.takeIf { it.isNotBlank() && it != "null" },
                 tcCity = tc?.optString("city")?.takeIf { it.isNotBlank() && it != "null" },
+                breachChecked = breachObj?.optBoolean("checked", false) ?: false,
+                breachCount = breachObj?.optInt("breach_count", 0) ?: 0,
+                breaches = breachList,
+                hlrChecked = hlrObj?.optBoolean("checked", false) ?: false,
+                hlrLiveStatus = hlrObj?.optString("live_status", "")?.takeIf { it.isNotBlank() && it != "null" },
+                hlrCurrentNetwork = hlrObj?.optString("current_network", "")?.takeIf { it.isNotBlank() && it != "null" },
+                hlrIsPorted = hlrObj?.optBoolean("is_ported", false) ?: false,
+                hlrIsRoaming = hlrObj?.optBoolean("is_roaming", false) ?: false,
+                signalDeepLink = msgObj?.optString("signal_deep_link", "")?.takeIf { it.isNotBlank() && it != "null" },
+                viberDeepLink = msgObj?.optString("viber_deep_link", "")?.takeIf { it.isNotBlank() && it != "null" },
+                aiEnabled = aiObj?.optBoolean("enabled", false) ?: false,
+                aiSummary = aiObj?.optString("summary", "")?.takeIf { it.isNotBlank() && it != "null" },
+                aiRiskLevel = aiObj?.optString("risk_level", "UNRATED"),
                 notes = notes
             )
         }.getOrDefault(FastApiPhoneResult(serverReachable = false))

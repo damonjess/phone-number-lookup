@@ -228,6 +228,8 @@ object PythonOsintBridge {
                         val site = displaySite(h.optString("site", "Unknown"))
                         val rawUrl = h.optString("profileUrl", "")
                         val cleanUrl = OsintDatasets.cleanProfileUrl(site, rawUrl, username)
+                        if (!isValidSiteUsername(site, username)) continue
+                        if (isFalsePositiveProfilePage(site, username, cleanUrl, null, null)) continue
                         hits += UsernameHit(
                             site = site,
                             category = h.optString("category", "general"),
