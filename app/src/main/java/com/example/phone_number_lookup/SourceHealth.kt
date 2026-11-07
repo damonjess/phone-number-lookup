@@ -52,6 +52,7 @@ object SourceHealth {
             async { timed("DuckDuckGo web search") { checkDuckDuckGo() } },
             async { timed("PhoneInfoga server") { checkPhoneInfoga(phoneInfogaUrl) } },
             async { timed("OVH Telecom API (built-in scanner)") { checkOvh() } },
+            async { timed("Workstation FastAPI Bridge") { checkWorkstationFastApi() } },
             async { timed("Numverify") { checkNumverify(numverifyKey) } },
         ).awaitAll()
     }
@@ -121,6 +122,17 @@ object SourceHealth {
         )
         val state = classifyHttp(response.code, formatOk = response.body.trimStart().startsWith("["))
         return state to describe(state, response.code)
+    }
+
+    private fun checkWorkstationFastApi(): Pair<HealthState, String> {
+        val baseUrl = LocalFastApiPhoneBridge.baseUrl.trim().trimEnd('/')
+        if (baseUrl.isBlank()) return HealthState.NOT_CONFIGURED to "No workstation URL configured."
+        val result = LocalFastApiPhoneBridge.queryWorkstation(UK_TEST, "GB")
+        return if (result.serverReachable) {
+            HealthState.OK to "Reachable at $baseUrl (Telegram: ${if (result.tgRegistered) "Registered" else "Not Registered"})."
+        } else {
+            HealthState.UNREACHABLE to "Could not reach $baseUrl."
+        }
     }
 
     private suspend fun checkNumverify(key: String): Pair<HealthState, String> {

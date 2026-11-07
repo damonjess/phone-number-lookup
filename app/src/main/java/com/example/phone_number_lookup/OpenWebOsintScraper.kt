@@ -105,12 +105,23 @@ object OpenWebOsintScraper {
         GoogleCommentScraper.isLikelySpamOrNoise(title, snippet, url)
 
     /**
+     * Ensures that searching for "merrill87" does NOT match "MsMerrill87", "jmerrill87", or "tori_merrill87".
+     */
+    internal fun containsExactHandleToken(text: String, handle: String): Boolean {
+        val clean = handle.trim().removePrefix("@")
+        if (clean.isBlank()) return false
+        return Regex("""(?<![a-zA-Z0-9_])${Regex.escape(clean)}(?![a-zA-Z0-9_])""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(text)
+    }
+
+    /**
      * Runs parallel public scrapes across Google Search, DuckDuckGo, Brave Search, Bing,
      * Reddit JSON, HackerNews Algolia, and GitHub Issues/Commits, then mines the text for entities.
      */
     suspend fun scrapeAll(
         queries: List<String>,
-        targetPhoneE164: String? = null
+        targetPhoneE164: String? = null,
+        targetHandle: String? = null
     ): ScrapedWebReport = withContext(Dispatchers.IO) {
         val expandedQueries = buildList {
             queries.map { it.trim() }.filter { it.isNotBlank() }.forEach { q ->
@@ -126,6 +137,16 @@ object OpenWebOsintScraper {
         if (expandedQueries.isEmpty()) return@withContext ScrapedWebReport("")
 
         val primary = expandedQueries.first()
+        val effectiveHandle = targetHandle?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }
+            ?: queries.firstOrNull()?.let { q ->
+                val trimmed = q.trim().removeSurrounding("\"")
+                when {
+                    '@' in trimmed && trimmed.contains('.') -> trimmed.substringBefore('@').removePrefix("@")
+                    trimmed.startsWith("@") -> trimmed.removePrefix("@")
+                    !trimmed.contains(' ') && !trimmed.contains('/') && trimmed.length >= 3 && !trimmed.startsWith("+") -> trimmed
+                    else -> null
+                }
+            }
 
         coroutineScope {
             val googleDeferred = expandedQueries.take(8).map { q ->
@@ -147,7 +168,7 @@ object OpenWebOsintScraper {
                 if (targetPhoneE164 != null) scrapeOsmOverpassPhone(targetPhoneE164) else emptyList()
             }
 
-            val allItems = (googleDeferred.awaitAll().flatten() +
+            val rawItems = (googleDeferred.awaitAll().flatten() +
                 ddgDeferred.awaitAll().flatten() +
                 braveDeferred.awaitAll().flatten() +
                 bingDeferred.awaitAll().flatten() +
@@ -156,6 +177,14 @@ object OpenWebOsintScraper {
                 ghIssuesDef.await())
                 .filterNot { isLikelySpamOrNoise(it.title, it.snippet, it.url) }
                 .distinctBy { it.url.lowercase().trimEnd('/') }
+
+            val allItems = if (effectiveHandle.isNullOrBlank()) {
+                rawItems
+            } else {
+                rawItems.filter { item ->
+                    containsExactHandleToken("${item.title} ${item.snippet} ${item.url}", effectiveHandle)
+                }
+            }
 
             val emails = mutableListOf<AttributedValue>()
             val phones = mutableListOf<AttributedValue>()
@@ -182,7 +211,8 @@ object OpenWebOsintScraper {
                     val lower = rawHandle.lowercase()
                     if (rawHandle.length >= 3 &&
                         !lower.contains('.') &&
-                        lower !in IGNORED_HANDLES
+                        lower !in IGNORED_HANDLES &&
+                        (effectiveHandle.isNullOrBlank() || containsExactHandleToken(rawHandle, effectiveHandle))
                     ) {
                         handles += AttributedValue("@$rawHandle", item.source)
                     }

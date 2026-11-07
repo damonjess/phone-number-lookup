@@ -36,4 +36,10 @@ class SourceHealthTest {
         assertTrue(SourceHealth.describe(HealthState.BLOCKED, 429).contains("429"))
         assertTrue(SourceHealth.describe(HealthState.UNREACHABLE, -1).contains("network"))
     }
+
+    @Test
+    fun checkAllIncludesWorkstationFastApiBridge() = kotlinx.coroutines.runBlocking {
+        val results = SourceHealth.checkAll("", "")
+        assertTrue(results.any { it.source == "Workstation FastAPI Bridge" })
+    }
 }

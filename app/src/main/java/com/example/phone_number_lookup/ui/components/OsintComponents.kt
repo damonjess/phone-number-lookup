@@ -371,7 +371,8 @@ fun sanitizeUrlForOpening(url: String): String {
 
 fun openUrl(context: Context, url: String) {
     try {
-        val sanitized = sanitizeUrlForOpening(url)
+        val targetUrl = OsintDatasets.cleanProfileUrl("", url)
+        val sanitized = sanitizeUrlForOpening(targetUrl)
         if (sanitized.startsWith("http://") || sanitized.startsWith("https://")) {
             // Keep all HTTP/HTTPS searches, dorks, and profiles native inside the app!
             com.example.phone_number_lookup.NativeWebScraper.openInApp(sanitized)

@@ -1475,7 +1475,8 @@ fun UnifiedPhoneIntelligenceDashboard(
         "📱 Telecom",
         "🏢 Corporate (${report.corporateFilings.size})",
         "🌐 Web (${report.webPages.size})",
-        "👤 Identities"
+        "💬 Messaging (${report.messagingApps.size})",
+        "👤 Identities (${report.discoveredNames.size})"
     )
 
     val riskTone = when (report.riskGrade) {
@@ -1498,10 +1499,10 @@ fun UnifiedPhoneIntelligenceDashboard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                StatTile(value = "${report.riskScore}%", label = "THREAT SCORE", tone = riskTone, modifier = Modifier.weight(1f))
-                StatTile(value = report.corporateFilings.size.toString(), label = "CO. FILINGS", tone = Tone.ACCENT, modifier = Modifier.weight(1f))
-                StatTile(value = report.webPages.size.toString(), label = "WEB HITS", tone = Tone.INFO, modifier = Modifier.weight(1f))
-                StatTile(value = report.messagingApps.count { it.verifiedPresence }.toString(), label = "MESSAGING", tone = Tone.ACCENT, modifier = Modifier.weight(1f))
+                StatTile(value = "${report.riskScore}%", label = "THREAT SCORE", tone = riskTone, modifier = Modifier.weight(1f).clickable { selectedTab = 0 })
+                StatTile(value = report.corporateFilings.size.toString(), label = "CO. FILINGS", tone = Tone.ACCENT, modifier = Modifier.weight(1f).clickable { selectedTab = 1 })
+                StatTile(value = report.webPages.size.toString(), label = "WEB HITS", tone = Tone.INFO, modifier = Modifier.weight(1f).clickable { selectedTab = 2 })
+                StatTile(value = report.messagingApps.count { it.verifiedPresence }.toString(), label = "MESSAGING", tone = Tone.ACCENT, modifier = Modifier.weight(1f).clickable { selectedTab = 3 })
             }
 
             Spacer(Modifier.height(8.dp))
@@ -1573,6 +1574,76 @@ fun UnifiedPhoneIntelligenceDashboard(
                 }
             }
             3 -> {
+                OsintCardContainer(
+                    title = "💬 MESSAGING & TELEGRAM INTEL",
+                    badge = "${report.messagingApps.count { it.verifiedPresence }} VERIFIED",
+                    tone = Tone.ACCENT
+                ) {
+                    if (report.messagingApps.isEmpty()) {
+                        Notice("No messaging app profiles or linkages evaluated.", tone = Tone.NEUTRAL)
+                    } else {
+                        report.messagingApps.forEach { app ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = app.platform,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Pill(
+                                            text = if (app.verifiedPresence) "VERIFIED" else "UNVERIFIED",
+                                            tone = if (app.verifiedPresence) Tone.ACCENT else Tone.NEUTRAL
+                                        )
+                                    }
+                                    if (app.checkUrl.isNotBlank()) {
+                                        Pill(
+                                            text = "OPEN ↗",
+                                            tone = Tone.INFO,
+                                            modifier = Modifier.clickable { onOpenUrl(app.checkUrl) }
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = app.status,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                app.displayName?.takeIf { it.isNotBlank() }?.let { name ->
+                                    Text(
+                                        text = name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                app.bioOrStatus?.takeIf { it.isNotBlank() && it != app.displayName }?.let { bio ->
+                                    Text(
+                                        text = "Bio: $bio",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                        }
+                    }
+                }
+            }
+            4 -> {
                 OsintCardContainer(title = "👤 DISCOVERED IDENTITIES & MESSAGING", badge = "${report.discoveredNames.size} ENTITIES", tone = Tone.ACCENT) {
                     if (report.discoveredNames.isNotEmpty()) {
                         Text("Associated Names", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
@@ -1594,6 +1665,93 @@ fun UnifiedPhoneIntelligenceDashboard(
                                 Text(text = app.status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Pill(text = "VERIFY ↗", tone = Tone.INFO)
+                        }
+                    }
+
+                    val context = LocalContext.current
+                    var manualMaskInput by remember { mutableStateOf("") }
+                    val liveManualMatches = remember(manualMaskInput, report) {
+                        val clean = manualMaskInput.trim().lowercase()
+                        if ('*' in clean && '@' in clean) {
+                            val pool = com.example.phone_number_lookup.MaskedEmailPivotEngine.generateCandidateLocalParts(
+                                names = report.discoveredNames.map { it.value },
+                                handles = report.discoveredSocials.map { it.handle },
+                                knownEmails = report.discoveredEmails.map { it.value }
+                            )
+                            com.example.phone_number_lookup.MaskedEmailPivotEngine.unmaskHint(
+                                hint = com.example.phone_number_lookup.MaskedEmailHint(clean, "Interactive Unmasker"),
+                                candidateLocalParts = pool,
+                                candidateDomains = listOf(
+                                    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com",
+                                    "hotmail.co.uk", "icloud.com", "yahoo.com", "yahoo.co.uk", "btinternet.com"
+                                )
+                            )
+                        } else emptyList()
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    Spacer(Modifier.height(8.dp))
+
+                    Text(
+                        text = "🔓 Masked Email Unmasker & Recovery Pivot",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Tested ${report.maskedPivotReport.permutationsTested} name/handle permutations. Paste any masked recovery hint (e.g. d******s@gmail.com) to unmask:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(Modifier.height(6.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = manualMaskInput,
+                        onValueChange = { manualMaskInput = it },
+                        placeholder = { Text("e.g. d*******s@gmail.com or da***86@g****.com") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    val allCandidates = (liveManualMatches + report.maskedPivotReport.unmaskedCandidates)
+                        .distinctBy { "${it.maskedHint}|${it.resolvedEmail}" }
+
+                    if (allCandidates.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        allCandidates.take(6).forEach { cand ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        copyToClipboard(context, "Unmasked Email", cand.resolvedEmail)
+                                    }
+                                    .padding(vertical = 5.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${cand.maskedHint}  ➔  ${cand.resolvedEmail}",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Pill(
+                                        text = "${cand.confidenceScore}% MATCH",
+                                        tone = if (cand.confidenceScore >= 85) Tone.ACCENT else Tone.INFO
+                                    )
+                                }
+                                Text(
+                                    text = "Pivot Origin: ${cand.matchedFrom} · ${cand.reasoning}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
                         }
                     }
                 }

@@ -187,7 +187,11 @@ object DeepProfileScraper {
         return runCatching {
             val root = JSONObject(resp.body)
             val authorName = root.optString("author_name").takeIf { it.isNotBlank() } ?: return null
-            val title = root.optString("title").takeIf { it.isNotBlank() && !it.endsWith("Creator Profile", true) }
+            // Reject TikTok's default "用户<digits>" stub placeholder for unconfigured/empty accounts
+            if (Regex("""^用户\d+$""").matches(authorName.trim())) return null
+            val title = root.optString("title").takeIf {
+                it.isNotBlank() && !it.endsWith("Creator Profile", true) && !it.startsWith("用户")
+            }
             val thumb = root.optString("thumbnail_url").takeIf { it.startsWith("http") }
             EnrichedProfileCard(
                 platform = "TikTok",
@@ -910,7 +914,7 @@ object DeepProfileScraper {
         val emails = (MAILTO_REGEX.findAll(html).map { it.groupValues[1].lowercase() } +
             extractEmails(cleanBio.orEmpty())).distinct().toList()
         val phones = EmailAttributionEngine.extractPhoneNumbersFromText(cleanBio.orEmpty(), siteName).map { it.value }
-        val outboundLinks = extractSocialLinks(html)
+        val outboundLinks = extractSocialLinks(html, siteName, url)
             .filterNot { it.contains(url, ignoreCase = true) }
             .take(6)
 
@@ -936,15 +940,32 @@ object DeepProfileScraper {
             .distinct()
             .toList()
 
-    private fun extractSocialLinks(text: String): List<String> =
-        SOCIAL_LINK_REGEX.findAll(text)
+    private fun extractSocialLinks(
+        text: String,
+        sourceSiteName: String = "",
+        sourcePageUrl: String = ""
+    ): List<String> {
+        val normalizedSiteToken = sourceSiteName.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val normalizedHostToken = sourcePageUrl
+            .substringAfter("://", "")
+            .substringBefore('/')
+            .removePrefix("www.")
+            .substringBeforeLast('.')
+            .lowercase()
+            .replace(Regex("[^a-z0-9]"), "")
+
+        return SOCIAL_LINK_REGEX.findAll(text)
             .map { it.value.trimEnd('/', '"', '\'', ')', '>') }
             .filterNot { link ->
                 val tail = link.substringAfterLast('/').substringBefore('?').removePrefix("@").lowercase()
-                tail in PLATFORM_BOILERPLATE_HANDLES
+                val tailAlphaNum = tail.replace(Regex("[^a-z0-9]"), "")
+                tail in PLATFORM_BOILERPLATE_HANDLES ||
+                    (normalizedSiteToken.length >= 4 && tailAlphaNum == normalizedSiteToken) ||
+                    (normalizedHostToken.length >= 4 && tailAlphaNum == normalizedHostToken)
             }
             .distinct()
             .toList()
+    }
 
     private fun formatEpochSeconds(sec: Long): String =
         java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)

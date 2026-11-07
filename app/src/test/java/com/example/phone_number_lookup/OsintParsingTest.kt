@@ -583,14 +583,27 @@ class OsintParsingTest {
     }
 
     @Test
-    fun cleanProfileUrlSanitizesApiEndpointsAndSpotify() {
-        val spotifyApiUrl = "https://spclient.wg.spotify.com/signup/public/v1/account?validate=1&email=test@example.com"
-        val cleanedSpotify = OsintDatasets.cleanProfileUrl("Spotify", spotifyApiUrl)
-        assertEquals("https://open.spotify.com/", cleanedSpotify)
+    fun cleanProfileUrlUnwrapsOembedAndApiEndpoints() {
+        val tiktokOembed = "https://www.tiktok.com/oembed?url=https%3A%2F%2Fwww.tiktok.com%2F%40merrill87"
+        val cleanedTikTok = OsintDatasets.cleanProfileUrl("TikTok", tiktokOembed)
+        assertEquals("https://www.tiktok.com/@merrill87", cleanedTikTok)
 
-        val firefoxApiUrl = "https://api.accounts.firefox.com/v1/account/status"
-        val cleanedFirefox = OsintDatasets.cleanProfileUrl("Mozilla Firefox", firefoxApiUrl)
-        assertEquals("https://accounts.firefox.com/", cleanedFirefox)
+        val redditApiUrl = "https://www.reddit.com/user/merrill87/about.json"
+        val cleanedReddit = OsintDatasets.cleanProfileUrl("Reddit", redditApiUrl)
+        assertEquals("https://www.reddit.com/user/merrill87", cleanedReddit)
+
+        val chessApiUrl = "https://api.chess.com/pub/player/merrill87"
+        val cleanedChess = OsintDatasets.cleanProfileUrl("Chess.com", chessApiUrl)
+        assertEquals("https://www.chess.com/member/merrill87", cleanedChess)
+    }
+
+    @Test
+    fun containsExactHandleTokenFiltersSubstringMatches() {
+        assertFalse(OpenWebOsintScraper.containsExactHandleToken("Carissa Merrill (@MsMerrill87)", "merrill87"))
+        assertFalse(OpenWebOsintScraper.containsExactHandleToken("https://twitter.com/jmerrill87", "merrill87"))
+        assertFalse(OpenWebOsintScraper.containsExactHandleToken("tori_merrill87", "merrill87"))
+        assertTrue(OpenWebOsintScraper.containsExactHandleToken("https://twitter.com/merrill87", "merrill87"))
+        assertTrue(OpenWebOsintScraper.containsExactHandleToken("Contact @merrill87 on Telegram", "merrill87"))
     }
 
     @Test

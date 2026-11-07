@@ -1,6 +1,12 @@
 package com.example.phone_number_lookup.ui.screens
 
+import android.graphics.BitmapFactory
+import android.util.Base64
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -795,6 +801,79 @@ fun PhoneLookupScreen(
                             if (rep.hasReports) {
                                 TextButton(onClick = { openUrl(context, rep.url) }) {
                                     Text("Open ${rep.source} ↗")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            val phoneReportData = uiState.phoneIntelligenceReport
+            if (phoneReportData != null) {
+                val avatarBitmap = remember(phoneReportData.telegramPhotoBase64) {
+                    phoneReportData.telegramPhotoBase64?.let { b64 ->
+                        runCatching {
+                            val bytes = Base64.decode(b64, Base64.DEFAULT)
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                        }.getOrNull()
+                    }
+                }
+
+                OsintToolSectionCard(
+                    toolTitle = "Messaging & Telegram Intel",
+                    subtitle = "Dynamic data extracted via Workstation FastAPI Bridge & messaging intelligence",
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    if (phoneReportData.messagingApps.isEmpty()) {
+                        Text("No messaging app profiles or linkages evaluated.", style = MaterialTheme.typography.bodyMedium)
+                    } else {
+                        phoneReportData.messagingApps.forEach { app ->
+                            val isTelegram = app.platform.equals("Telegram", ignoreCase = true)
+                            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(app.platform, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                    if (app.verifiedPresence) {
+                                        Pill("VERIFIED", tone = com.example.phone_number_lookup.ui.components.Tone.ACCENT)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isTelegram && avatarBitmap != null) {
+                                        Image(
+                                            bitmap = avatarBitmap,
+                                            contentDescription = "Telegram profile photo",
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Status: ${app.status}", style = MaterialTheme.typography.bodyMedium)
+                                        app.displayName?.takeIf { it.isNotBlank() }?.let {
+                                            Text(if (it.startsWith("Profile: ")) it else "Profile: $it", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        app.bioOrStatus?.takeIf { it.isNotBlank() }?.let {
+                                            Text("Bio: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+
+                                if (app.checkUrl.isNotBlank()) {
+                                    TextButton(onClick = { openUrl(context, app.checkUrl) }) {
+                                        Text("Open ${app.platform} Link ↗")
+                                    }
                                 }
                             }
                         }

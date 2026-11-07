@@ -52,7 +52,8 @@ data class MessagingAppLinkage(
     val displayName: String? = null,
     val bioOrStatus: String? = null,
     val checkUrl: String,
-    val verifiedPresence: Boolean
+    val verifiedPresence: Boolean,
+    val avatarBase64: String? = null
 )
 
 data class SourceHealthItem(
@@ -75,7 +76,10 @@ data class UnifiedPhoneIntelligenceReport(
     val discoveredAddresses: List<AttributedValue>,
     val discoveredSocials: List<AttributedProfileLink>,
     val messagingApps: List<MessagingAppLinkage>,
-    val sourceHealth: List<SourceHealthItem>
+    val sourceHealth: List<SourceHealthItem>,
+    val maskedPivotReport: MaskedPivotReport = MaskedPivotReport(),
+    val fastApiResult: FastApiPhoneResult? = null,
+    val telegramPhotoBase64: String? = null
 )
 
 object PhoneReputationAndOsintEngine {
@@ -124,11 +128,19 @@ object PhoneReputationAndOsintEngine {
                 withTimeoutOrNull(7_000L) { probeMessagingPlatforms(telecom, sourceHealth) }.orEmpty()
             }
 
+            // 4. Local FastAPI workstation bridge (Telegram MTProto + Truecaller, over LAN/Tailscale)
+            val fastApiDef = async {
+                withTimeoutOrNull(6_000L) {
+                    LocalFastApiPhoneBridge.queryWorkstation(telecom.e164Format, telecom.countryCode)
+                } ?: FastApiPhoneResult(serverReachable = false)
+            }
+
             val repParts = listOf(whoCalledDef.await(), shouldIAnswerDef.await(), tellowsDef.await())
             val mergedReputation = mergeReputationSummaries(repParts)
             val webPages = webHitsDef.await()
             val corporateFilings = corporateDef.await()
             val messagingApps = messagingDef.await()
+            val fastApi = fastApiDef.await()
 
             // 4. Extract Entities with Strict Proximity Validation (Eliminates Screwfix/Gov.uk spam noise)
             val emails = mutableListOf<AttributedValue>()
@@ -171,7 +183,117 @@ object PhoneReputationAndOsintEngine {
                 }
             }
 
+            // Merge workstation findings before the masked-email pivot so any name or @handle it
+            // uncovers is fed into the unmasker too.
+            if (fastApi.serverReachable) {
+                sourceHealth += SourceHealthItem(
+                    sourceName = "Workstation FastAPI Bridge",
+                    status = "OK",
+                    confidence = "High",
+                    detail = "Connected to Linux Mint workstation (Telegram: ${if (fastApi.tgRegistered) "Registered" else "Not Registered"})"
+                )
+
+                // Truecaller identity, email, city & carrier
+                fastApi.tcName?.let { names += AttributedValue(it, "Truecaller Address Book") }
+                fastApi.tcEmail?.let { emails += AttributedValue(it, "Truecaller Profile") }
+                fastApi.tcCity?.let { addresses += AttributedValue(it, "Truecaller Location") }
+
+                // Telegram MTProto identity & handle
+                fastApi.tgFullName?.let { names += AttributedValue(it, "Telegram MTProto") }
+                fastApi.tgUsername?.let { handle ->
+                    socials += AttributedProfileLink(
+                        handle = handle,
+                        platform = "Telegram",
+                        url = "https://t.me/$handle"
+                    )
+                }
+            } else {
+                sourceHealth += SourceHealthItem(
+                    sourceName = "Workstation FastAPI Bridge",
+                    status = "OFFLINE",
+                    confidence = "Unverified",
+                    detail = "Could not reach http://192.168.1.190:8099"
+                )
+            }
+
+            val finalMessagingApps = messagingApps.toMutableList()
+            if (fastApi.tgRegistered) {
+                val existingTgIndex = finalMessagingApps.indexOfFirst { it.platform == "Telegram" }
+                val tgDetails = buildList {
+                    fastApi.tgFullName?.let { add("Profile: $it") }
+                    fastApi.tgUsername?.let { add("@$it") }
+                    add("Seen: ${fastApi.tgLastSeen ?: "Unknown"}")
+                    fastApi.tgUserId?.let { add("ID: $it") }
+                    fastApi.tgEstimatedCreated?.let { add("Est. Created: $it") }
+                    fastApi.tgDcRegion?.let { add("DC: $it") }
+                    if (fastApi.tgHasPhoto) {
+                        val photoMeta = buildString {
+                            append("Photos: ${fastApi.tgPhotoCount.coerceAtLeast(1)}")
+                            fastApi.tgLatestPhotoDate?.let { append(" (Latest: $it)") }
+                        }
+                        add(photoMeta)
+                    }
+                    fastApi.tgBio?.let { add("Bio: $it") }
+                    fastApi.tgBirthday?.let { add("DOB: $it") }
+                    fastApi.tgBusinessLocation?.let { add("Business Loc: $it") }
+                    if (fastApi.tgCommonChatsCount > 0) add("Shared Groups: ${fastApi.tgCommonChatsCount}")
+                    if (fastApi.tgHasPinnedStories) add("Stories: Active/Pinned")
+                    if (fastApi.tgIsPremium) add("Badge: Telegram Premium")
+                    if (fastApi.tgIsScam || fastApi.tgIsFake) add("ALERT: Flagged Scam/Fake")
+                }.joinToString(" • ")
+
+                val digitsOnlyPhone = telecom.e164Format.removePrefix("+")
+                val telegramDeepLink = when {
+                    !fastApi.tgUsername.isNullOrBlank() -> "tg://resolve?domain=${fastApi.tgUsername}"
+                    fastApi.tgUserId != null -> "tg://openmessage?user_id=${fastApi.tgUserId}"
+                    else -> "tg://resolve?phone=$digitsOnlyPhone"
+                }
+
+                val defaultTgApp = MessagingAppLinkage(
+                    platform = "Telegram",
+                    status = "Pending",
+                    checkUrl = telegramDeepLink,
+                    verifiedPresence = false
+                )
+
+                val tgAppToUpdate = if (existingTgIndex >= 0) finalMessagingApps[existingTgIndex] else defaultTgApp
+
+                val updatedTgApp = tgAppToUpdate.copy(
+                    status = "Verified via MTProto Contact Sync",
+                    displayName = tgDetails.ifBlank { "Registered Telegram User" },
+                    bioOrStatus = fastApi.tgBio ?: tgAppToUpdate.bioOrStatus,
+                    checkUrl = telegramDeepLink,
+                    verifiedPresence = true,
+                    avatarBase64 = fastApi.tgPhotoBase64
+                )
+
+                if (existingTgIndex >= 0) {
+                    finalMessagingApps[existingTgIndex] = updatedTgApp
+                } else {
+                    finalMessagingApps.add(updatedTgApp)
+                }
+            }
+
             val (riskScore, riskGrade) = computeThreatScore(telecom, mergedReputation)
+
+            val pivotReport = MaskedEmailPivotEngine.runPivot(
+                e164Phone = telecom.e164Format,
+                compactNationalPhone = telecom.compactNational,
+                discoveredNames = names.distinctBy { it.value.lowercase() },
+                discoveredHandles = socials.map { it.handle }.distinct(),
+                discoveredEmails = emails.distinctBy { it.value.lowercase() },
+                webSnippets = webPages.map { "${it.title} ${it.snippet}" }
+            )
+
+            // Promote high-confidence unmasked emails directly into discoveredEmails
+            pivotReport.unmaskedCandidates
+                .filter { it.confidenceScore >= 80 }
+                .forEach { unmasked ->
+                    emails += AttributedValue(
+                        value = unmasked.resolvedEmail,
+                        source = "Unmasked from ${unmasked.maskedHint} (${unmasked.confidenceScore}%)"
+                    )
+                }
 
             UnifiedPhoneIntelligenceReport(
                 telecom = telecom,
@@ -184,8 +306,11 @@ object PhoneReputationAndOsintEngine {
                 discoveredNames = names.distinctBy { it.value.lowercase() },
                 discoveredAddresses = addresses.distinctBy { it.value.lowercase() },
                 discoveredSocials = socials.distinctBy { it.url.lowercase() },
-                messagingApps = messagingApps,
-                sourceHealth = sourceHealth.toList()
+                messagingApps = finalMessagingApps,
+                sourceHealth = sourceHealth.toList(),
+                maskedPivotReport = pivotReport,
+                fastApiResult = fastApi,
+                telegramPhotoBase64 = fastApi.tgPhotoBase64
             )
         }
     }

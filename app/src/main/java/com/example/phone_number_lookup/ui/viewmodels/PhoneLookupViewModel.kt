@@ -100,6 +100,8 @@ class PhoneLookupViewModel(application: Application) : AndroidViewModel(applicat
 
             val report = runCatching {
                 PhoneReputationAndOsintEngine.analyzePhoneNumber(rawNumber)
+            }.onFailure {
+                it.printStackTrace()
             }.getOrNull()
 
             _uiState.update {

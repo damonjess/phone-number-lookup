@@ -562,109 +562,64 @@ object OsintDatasets {
         }.getOrNull()
     }
 
-    fun cleanProfileUrl(siteName: String, rawUrl: String): String {
-        val siteLower = siteName.trim().lowercase()
-        val rawLower = rawUrl.trim().lowercase()
+    /**
+     * Converts backend API / oEmbed probe URLs (from Blackbird, Sherlock, Tookie, or Curated probes)
+     * into human-viewable web profile URLs before displaying or opening them in the In-App Browser.
+     */
+    fun cleanProfileUrl(siteName: String, rawUrl: String, accountHint: String = ""): String {
+        val trimmed = rawUrl.trim()
+        if (trimmed.isBlank()) return ""
 
-        if (siteLower == "twitter" || siteLower == "x" || siteLower == "x / twitter" ||
-            siteLower.contains("twitter") || rawLower.contains("twitter.com") || 
-            rawLower.contains("//x.com") || rawLower.contains(".x.com")
-        ) {
-            if (rawLower.contains("email_available") || rawLower.contains("/i/users/") ||
-                rawLower.contains("api.twitter.com") || rawLower.contains("api.x.com") ||
-                rawLower.endsWith(".json") || rawLower.contains(".json?")
-            ) {
-                return "https://x.com/"
-            }
-            val cleaned = rawUrl.replace("{account}", "").trimEnd('/')
-            if (cleaned == "https://twitter.com" || cleaned == "https://x.com" ||
-                cleaned == "https://twitter.com/i" || cleaned == "https://x.com/i" ||
-                cleaned.contains("/i/users")
-            ) {
-                return "https://x.com/"
-            }
-            return if (rawUrl.contains("{account}")) {
-                rawUrl.replace("{account}", "")
-            } else {
-                rawUrl
-            }.replace("twitter.com", "x.com")
-        }
-
-        if (siteLower == "spotify" || rawLower.contains("spotify.com")) {
-            return "https://open.spotify.com/"
-        }
-        if (siteLower.contains("firefox") || rawLower.contains("accounts.firefox.com")) {
-            return "https://accounts.firefox.com/"
-        }
-        if (siteLower == "chess.com" || rawLower.contains("chess.com")) {
-            return "https://www.chess.com/"
-        }
-        if (siteLower == "github" || rawLower.contains("github.com")) {
-            return "https://github.com/"
-        }
-        if (siteLower == "duolingo" || rawLower.contains("duolingo.com")) {
-            return "https://www.duolingo.com/"
-        }
-        if (siteLower == "gravatar" || rawLower.contains("gravatar.com")) {
-            return "https://gravatar.com/"
-        }
-        if (siteLower.contains("wordpress") || rawLower.contains("wordpress.com")) {
-            return "https://wordpress.com/"
-        }
-        if (siteLower == "keybase" || rawLower.contains("keybase.io")) {
-            return "https://keybase.io/"
-        }
-        if (siteLower.contains("mastodon") || rawLower.contains("mastodon.social")) {
-            return "https://mastodon.social/"
-        }
-        if (siteLower == "replit" || rawLower.contains("replit.com")) {
-            return "https://replit.com/"
-        }
-        if (siteLower == "gitlab" || rawLower.contains("gitlab.com")) {
-            return "https://gitlab.com/"
-        }
-        if (siteLower == "figma" || rawLower.contains("figma.com")) {
-            return "https://www.figma.com/"
-        }
-        if (siteLower.contains("docker") || rawLower.contains("docker.com")) {
-            return "https://hub.docker.com/"
-        }
-        if (siteLower == "substack" || rawLower.contains("substack.com")) {
-            return "https://substack.com/"
-        }
-        if (siteLower == "letterboxd" || rawLower.contains("letterboxd.com")) {
-            return "https://letterboxd.com/"
-        }
-        if (siteLower == "imgur" || rawLower.contains("imgur.com")) {
-            return "https://imgur.com/"
-        }
-        if (siteLower == "tumblr" || rawLower.contains("tumblr.com")) {
-            return "https://www.tumblr.com/"
-        }
-        if (siteLower == "pornhub" || rawLower.contains("pornhub.com")) {
-            return "https://www.pornhub.com/"
-        }
-        if (siteLower == "atlassian" || rawLower.contains("atlassian.com")) {
-            return "https://id.atlassian.com/"
-        }
-
-        if (rawLower.contains("spclient") || rawLower.contains("/api/") || rawLower.contains("/v1/") ||
-            rawLower.contains("/v2/") || rawLower.contains("check_email") || rawLower.contains("validate=")
-        ) {
-            val uri = runCatching { java.net.URI(rawUrl) }.getOrNull()
-            if (uri?.host != null) {
-                val scheme = uri.scheme ?: "https"
-                var host = uri.host
-                if (host.startsWith("spclient.wg.")) {
-                    host = "open.spotify.com"
-                } else if (host.startsWith("api.")) {
-                    host = host.removePrefix("api.")
-                }
-                return "$scheme://$host/"
+        // 1. Unwrap any oEmbed endpoint (?url=https://www.tiktok.com/@user, YouTube, SoundCloud, etc.)
+        if (trimmed.contains("/oembed", ignoreCase = true) && trimmed.contains("url=")) {
+            val embedded = trimmed.substringAfter("url=").substringBefore('&')
+            val decoded = runCatching { java.net.URLDecoder.decode(embedded, "UTF-8") }.getOrDefault(embedded)
+            if (decoded.startsWith("http")) {
+                return decoded
             }
         }
 
-        return rawUrl.replace("{account}", "").trimEnd('/')
+        val lower = trimmed.lowercase()
+        val handle = accountHint.trim().removePrefix("@").ifBlank {
+            trimmed.substringBefore('?').trimEnd('/').substringAfterLast('/').removePrefix("@")
+        }
+
+        // 2. Rewrite known JSON / XML / Syndication probe endpoints to human profile pages
+        return when {
+            "tiktok.com" in lower && "/oembed" in lower ->
+                "https://www.tiktok.com/@$handle"
+            "syndication.twitter.com" in lower ->
+                "https://x.com/$handle"
+            "reddit.com/user/" in lower && lower.endsWith("/about.json") ->
+                trimmed.removeSuffix("/about.json").removeSuffix("about.json")
+            "steamcommunity.com/id/" in lower && lower.endsWith("?xml=1") ->
+                trimmed.substringBefore("?xml=1")
+            "duolingo.com/2017-06-30/users" in lower ->
+                "https://www.duolingo.com/profile/${trimmed.substringAfter("username=").substringBefore('&')}"
+            "public.api.bsky.app" in lower ->
+                "https://bsky.app/profile/${trimmed.substringAfter("actor=").substringBefore('&')}"
+            "mastodon.social/api/v1/accounts/lookup" in lower ->
+                "https://mastodon.social/@${trimmed.substringAfter("acct=").substringBefore('&')}"
+            "lichess.org/api/user/" in lower ->
+                "https://lichess.org/@/$handle"
+            "api.chess.com/pub/player/" in lower ->
+                "https://www.chess.com/member/$handle"
+            "dev.to/api/users/by_username" in lower ->
+                "https://dev.to/${trimmed.substringAfter("url=").substringBefore('&')}"
+            "hacker-news.firebaseio.com/v0/user/" in lower ->
+                "https://news.ycombinator.com/user?id=${handle.removeSuffix(".json")}"
+            "hub.docker.com/v2/users/" in lower ->
+                "https://hub.docker.com/u/$handle"
+            "vimeo.com/api/v2/" in lower ->
+                "https://vimeo.com/${trimmed.substringAfter("/api/v2/").substringBefore('/')}"
+            "api.dailymotion.com/user/" in lower ->
+                "https://www.dailymotion.com/$handle"
+            "api.scratch.mit.edu/users/" in lower ->
+                "https://scratch.mit.edu/users/$handle"
+            "en.gravatar.com/" in lower && lower.endsWith(".json") ->
+                "https://gravatar.com/${handle.removeSuffix(".json")}"
+            else -> trimmed
+        }
     }
 
     private fun sanitizeProfile(template: String): String = cleanProfileUrl("", template)

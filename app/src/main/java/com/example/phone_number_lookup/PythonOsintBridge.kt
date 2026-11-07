@@ -225,11 +225,14 @@ object PythonOsintBridge {
                         val h = hitsArr.optJSONObject(i) ?: continue
                         val src = h.optString("source", "Python")
                         datasetCounts[src] = (datasetCounts[src] ?: 0) + 1
+                        val site = displaySite(h.optString("site", "Unknown"))
+                        val rawUrl = h.optString("profileUrl", "")
+                        val cleanUrl = OsintDatasets.cleanProfileUrl(site, rawUrl, username)
                         hits += UsernameHit(
-                            site = displaySite(h.optString("site", "Unknown")),
+                            site = site,
                             category = h.optString("category", "general"),
                             source = src,
-                            profileUrl = h.optString("profileUrl", ""),
+                            profileUrl = cleanUrl,
                             statusCode = h.optInt("statusCode", 200),
                             evidence = h.optString("evidence", "Matched in Python"),
                             confidence = "Medium (Upstream Match)",
